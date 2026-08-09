@@ -1,49 +1,51 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode, useEffect } from 'react';
 
 interface SettingsContextType {
-  stealthMode: boolean;
-  setStealthMode: (val: boolean) => void;
-  burnOnRead: boolean;
-  setBurnOnRead: (val: boolean) => void;
-  crtEffect: boolean;
-  setCrtEffect: (val: boolean) => void;
-  timeFormat: 'UTC' | 'LOCAL';
-  setTimeFormat: (val: 'UTC' | 'LOCAL') => void;
-  panicState: boolean;
-  setPanicState: (val: boolean) => void;
+  burnerMode: boolean;
+  setBurnerMode: (val: boolean) => void;
+  isDarkMode: boolean;
+  setIsDarkMode: (val: boolean) => void;
+  enterToSend: boolean;
+  setEnterToSend: (val: boolean) => void;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export const SettingsProvider = ({ children }: { children: ReactNode }) => {
-  const [stealthMode, setStealthMode] = useState(false);
-  const [burnOnRead, setBurnOnRead] = useState(true);
-  const [crtEffect, setCrtEffect] = useState(true);
-  const [timeFormat, setTimeFormat] = useState<'UTC' | 'LOCAL'>('UTC');
-  const [panicState, setPanicState] = useState(false);
+  const [burnerMode, setBurnerMode] = useState(false);
+  
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('axon_dark_mode');
+    return saved !== null ? saved === 'true' : true;
+  });
 
-  // Apply CRT effect class to body
+  const [enterToSend, setEnterToSend] = useState(() => {
+    const saved = localStorage.getItem('axon_enter_send');
+    return saved !== null ? saved === 'true' : true;
+  });
+
   useEffect(() => {
-    if (crtEffect) {
-      document.body.classList.add('crt-scanlines', 'crt-vignette');
+    localStorage.setItem('axon_dark_mode', isDarkMode.toString());
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
     } else {
-      document.body.classList.remove('crt-scanlines', 'crt-vignette');
+      document.documentElement.classList.remove('dark');
     }
-  }, [crtEffect]);
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    localStorage.setItem('axon_enter_send', enterToSend.toString());
+  }, [enterToSend]);
 
   return (
     <SettingsContext.Provider
       value={{
-        stealthMode,
-        setStealthMode,
-        burnOnRead,
-        setBurnOnRead,
-        crtEffect,
-        setCrtEffect,
-        timeFormat,
-        setTimeFormat,
-        panicState,
-        setPanicState
+        burnerMode,
+        setBurnerMode,
+        isDarkMode,
+        setIsDarkMode,
+        enterToSend,
+        setEnterToSend
       }}
     >
       {children}

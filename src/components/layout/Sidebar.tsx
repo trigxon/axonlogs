@@ -1,109 +1,144 @@
-import { Network, Users, ShieldAlert, Activity, UserPlus, Power, X } from 'lucide-react';
-import { useCrypto } from '../../contexts/CryptoContext';
-import { useSettings } from '../../contexts/SettingsContext';
+import React, { useState } from 'react';
+import { Settings, Plus, MessageSquare, Copy, Edit2, X, Trash2 } from 'lucide-react';
+import { useCrypto, type Chat } from '../../contexts/CryptoContext';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SidebarProps {
   isOpen: boolean;
   close: () => void;
-  openSettings?: () => void;
+  openSettings: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, close, openSettings }) => {
-  const { nodeId, activeNodes, username, roomCode, injectSystemMessage } = useCrypto();
-  const { stealthMode, setStealthMode } = useSettings();
+  const { chats, activeChat, setActiveChat, createChat, joinChat, leaveChat, renameChat } = useCrypto();
+  const [joinCode, setJoinCode] = useState('');
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
 
-  const handleInvite = () => {
-    navigator.clipboard.writeText(window.location.href);
-    // Could add a toast here
+  const handleJoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (joinCode.trim()) {
+      joinChat(joinCode.trim());
+      setJoinCode('');
+    }
   };
 
-  const handleTerminate = () => {
-    window.location.href = 'about:blank';
+  const startEditing = (chat: Chat) => {
+    setEditingChatId(chat.id);
+    setEditName(chat.name);
+  };
+
+  const saveEdit = () => {
+    if (editingChatId && editName.trim()) {
+      renameChat(editingChatId, editName.trim());
+    }
+    setEditingChatId(null);
+  };
+
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    // Simple inline feedback could go here
   };
 
   const sidebarContent = (
-    <div className="w-[260px] flex-shrink-0 bg-[#0a0a0f] border-r border-white/10 flex flex-col h-full z-30 relative">
-      <div className="p-4 border-b border-white/10 flex justify-between items-center">
-        <div>
-          <div className="text-xs text-muted-gray mb-1">AXON_ROOT</div>
-          <div className="text-matrix flex items-center gap-2 text-sm font-bold">
-            <span className="w-2 h-2 rounded-full bg-matrix" />
-            NODE: {nodeId}
-          </div>
-        </div>
-        <button className="md:hidden text-muted-gray p-1" onClick={close}>
+    <div className="w-[280px] flex-shrink-0 bg-panel border-r border-border flex flex-col h-full z-30 relative shadow-2xl">
+      <div className="p-4 border-b border-border flex justify-between items-center">
+        <div className="font-bold text-lg tracking-tight">Direct Messages</div>
+        <button className="md:hidden text-text-secondary hover:text-text-primary p-1" onClick={close}>
           <X className="w-5 h-5" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        <div>
-          <div className="text-cyan-neon border border-cyan-neon/30 bg-cyan-neon/10 text-xs px-2 py-1 rounded inline-block mb-4">
-            [SYSADMIN]
-          </div>
-        </div>
-
-        <nav className="space-y-1">
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-cyan-neon bg-white/5 rounded transition-colors">
-            <Network className="w-4 h-4" />
-            <span>Channels</span>
-          </button>
-          <button 
-            onClick={() => injectSystemMessage(`[SCAN COMPLETE] Tracking ${activeNodes} active node(s) in local range.`, 'system')}
-            className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
-          >
-            <Users className="w-4 h-4" />
-            <span>Nodes ({activeNodes})</span>
-          </button>
-          <button 
-            onClick={() => {
-              if (openSettings) {
-                openSettings();
-                close();
-              }
-            }}
-            className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
-          >
-            <ShieldAlert className="w-4 h-4" />
-            <span>Security</span>
-          </button>
-          <button 
-            onClick={() => injectSystemMessage(`[SESSION_INFO] \n> ALIAS: ${username} \n> ROOM: ${roomCode} \n> CIPHER: AES-256`, 'system')}
-            className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
-          >
-            <Activity className="w-4 h-4" />
-            <span>Session</span>
-          </button>
-        </nav>
-      </div>
-
-      <div className="p-4 border-t border-white/10 space-y-4">
-        <div className="flex items-center justify-between px-2 text-sm">
-          <span className="text-muted-gray">STEALTH MODE</span>
-          <button 
-            className={cn("w-8 h-4 rounded-full relative transition-colors", stealthMode ? "bg-cyan-neon" : "bg-white/20")}
-            onClick={() => setStealthMode(!stealthMode)}
-          >
-            <span className={cn("absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform", stealthMode ? "translate-x-4" : "translate-x-0")} />
-          </button>
-        </div>
-
+      <div className="p-4 space-y-4 border-b border-border">
         <button 
-          onClick={handleInvite}
-          className="w-full flex items-center justify-center gap-2 border border-white/20 hover:border-cyan-neon hover:text-cyan-neon text-muted-gray py-2 rounded transition-colors"
+          onClick={createChat}
+          className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white py-2 rounded-lg transition-colors font-medium text-sm"
         >
-          <UserPlus className="w-4 h-4" />
-          [ INVITE NODE ]
+          <Plus className="w-4 h-4" />
+          New Chat
         </button>
 
+        <form onSubmit={handleJoin} className="flex gap-2">
+          <input 
+            type="text" 
+            placeholder="Invite Code..." 
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-accent transition-colors"
+          />
+          <button type="submit" className="bg-white/10 hover:bg-white/20 px-3 rounded-lg text-sm transition-colors">
+            Join
+          </button>
+        </form>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        {chats.length === 0 ? (
+          <div className="text-center text-sm text-text-secondary p-4 mt-10">
+            No active chats.<br/>Create or join one!
+          </div>
+        ) : (
+          chats.map(chat => (
+            <div 
+              key={chat.id}
+              className={cn(
+                "group flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all",
+                activeChat?.id === chat.id ? "bg-accent/10 text-accent font-medium" : "hover:bg-white/5 text-text-secondary hover:text-text-primary"
+              )}
+              onClick={() => setActiveChat(chat)}
+            >
+              {editingChatId === chat.id ? (
+                <input 
+                  type="text"
+                  autoFocus
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  onBlur={saveEdit}
+                  onKeyDown={e => e.key === 'Enter' && saveEdit()}
+                  className="bg-background border border-accent rounded px-2 py-1 text-sm w-full text-text-primary"
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    <MessageSquare className="w-4 h-4 flex-shrink-0" />
+                    <span className="truncate text-sm">{chat.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); copyCode(chat.share_code); }}
+                      className="p-1 hover:bg-white/10 rounded" title="Copy Invite Code"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); startEditing(chat); }}
+                      className="p-1 hover:bg-white/10 rounded" title="Rename"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); leaveChat(chat.share_code); }}
+                      className="p-1 hover:bg-danger/20 text-danger rounded" title="Leave Chat"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="p-4 border-t border-border mt-auto">
         <button 
-          onClick={handleTerminate}
-          className="w-full flex items-center justify-center gap-2 bg-cyan-neon text-void font-bold py-2 rounded hover:bg-cyan-neon/80 transition-colors"
+          onClick={() => { openSettings(); close(); }}
+          className="w-full flex items-center gap-3 text-text-secondary hover:text-text-primary hover:bg-white/5 p-2 rounded-lg transition-colors text-sm font-medium"
         >
-          <Power className="w-4 h-4" />
-          TERMINATE SESSION
+          <Settings className="w-5 h-5" />
+          Settings
         </button>
       </div>
     </div>
@@ -112,7 +147,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, close, openSettings }) => {
   return (
     <>
       {/* Desktop */}
-      <div className="hidden md:block h-full">
+      <div className="hidden md:block h-full shadow-2xl z-20 relative">
         {sidebarContent}
       </div>
 
@@ -124,7 +159,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, close, openSettings }) => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-20"
+              className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
               onClick={close}
             />
             <motion.div
@@ -132,7 +167,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, close, openSettings }) => {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="md:hidden fixed inset-y-0 left-0 z-30"
+              className="md:hidden fixed inset-y-0 left-0 z-50 shadow-2xl"
             >
               {sidebarContent}
             </motion.div>
