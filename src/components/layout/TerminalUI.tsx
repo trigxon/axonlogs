@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key } from 'lucide-react';
 
 const TerminalUI: React.FC = () => {
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword } = useCrypto();
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
@@ -21,7 +21,12 @@ const TerminalUI: React.FC = () => {
 
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState('');
-  
+
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, chatId: string } | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [targetChatId, setTargetChatId] = useState<string | null>(null);
+
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +39,13 @@ const TerminalUI: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Click away for context menu
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,9 +136,18 @@ const TerminalUI: React.FC = () => {
 
   const handleRenameChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (activeChat && renameInput.trim()) {
-      await renameChat(activeChat.id, renameInput.trim());
+    const id = targetChatId || activeChat?.id;
+    if (id && renameInput.trim()) {
+      await renameChat(id, renameInput.trim());
       setShowRenameModal(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (targetChatId && passwordInput.trim()) {
+      await changeChatPassword(targetChatId, passwordInput.trim().toUpperCase());
+      setShowPasswordModal(false);
     }
   };
 
@@ -146,11 +167,15 @@ const TerminalUI: React.FC = () => {
 
         {/* Dynamic Chats List */}
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2">CHANNELS</div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2">TERMINALS</div>
           {chats.map(chat => (
             <button 
               key={chat.id}
               onClick={() => setActiveChat(chat)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({ x: e.pageX, y: e.pageY, chatId: chat.id });
+              }}
               className={`w-full flex flex-col items-start px-3 py-2 text-sm transition-colors border-l-2 ${
                 activeChat?.id === chat.id 
                   ? 'text-cyan-400 bg-cyan-400/5 border-cyan-400' 
@@ -257,10 +282,11 @@ const TerminalUI: React.FC = () => {
         {/* Sub Header */}
         <div className="px-8 pt-8 pb-4 shrink-0">
           <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
-            CHANNEL // [{activeChat?.share_code || 'STANDBY'}]
+            TERMINAL // [{activeChat?.share_code || 'STANDBY'}]
             {activeChat && (
               <button 
                 onClick={() => {
+                  setTargetChatId(activeChat.id);
                   setRenameInput(activeChat.name);
                   setShowRenameModal(true);
                 }}
@@ -534,6 +560,95 @@ const TerminalUI: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-red-500/50 w-full max-w-md p-6 relative">
+            <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-red-500 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
+              <Key className="w-5 h-5" /> KEY ROTATION
+            </h3>
+            
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-500 text-xs mb-4">
+                WARNING: Changing the terminal password will rotate the encryption key. Existing messages will become unreadable!
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW PASSPHRASE</label>
+                <input 
+                  type="text" 
+                  value={passwordInput}
+                  onChange={e => setPasswordInput(e.target.value.toUpperCase())}
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-red-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  autoFocus
+                />
+              </div>
+              <div className="pt-4">
+                <button type="submit" className="w-full bg-red-500 hover:bg-red-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
+                  EXECUTE KEY ROTATION
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {contextMenu && (
+        <div 
+          className="fixed z-[100] bg-[#080808] border border-zinc-700 shadow-xl shadow-black py-1 w-48 text-xs text-zinc-300 font-mono"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button 
+            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
+            onClick={() => {
+              const chat = chats.find(c => c.id === contextMenu.chatId);
+              if (chat) {
+                setTargetChatId(chat.id);
+                setRenameInput(chat.name);
+                setShowRenameModal(true);
+              }
+              setContextMenu(null);
+            }}
+          >
+            Rename Terminal
+          </button>
+          <button 
+            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
+            onClick={() => {
+              setTargetChatId(contextMenu.chatId);
+              setPasswordInput('');
+              setShowPasswordModal(true);
+              setContextMenu(null);
+            }}
+          >
+            Rotate Password Key
+          </button>
+          <button 
+            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
+            onClick={() => {
+              archiveChat(contextMenu.chatId);
+              setContextMenu(null);
+            }}
+          >
+            Archive Locally
+          </button>
+          <div className="h-px bg-zinc-800 my-1"></div>
+          <button 
+            className="w-full text-left px-4 py-2 hover:bg-red-900/30 text-red-500 hover:text-red-400"
+            onClick={() => {
+              if (confirm("WARNING: This will permanently wipe this terminal and all its messages globally. Proceed?")) {
+                deleteChat(contextMenu.chatId);
+              }
+              setContextMenu(null);
+            }}
+          >
+            Wipe Terminal (Global)
+          </button>
         </div>
       )}
 

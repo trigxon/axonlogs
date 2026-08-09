@@ -41,6 +41,9 @@ interface CryptoContextType {
   addSystemMessage: (text: string) => void;
   deleteMessageLocally: (id: string) => void;
   renameChat: (id: string, newName: string) => Promise<void>;
+  archiveChat: (id: string) => void;
+  deleteChat: (id: string) => Promise<void>;
+  changeChatPassword: (id: string, newCode: string) => Promise<boolean>;
   updateAlias: (newAlias: string) => void;
   systemLogs: SystemLog[];
   addLog: (msg: string) => void;
@@ -184,7 +187,44 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (activeChat?.id === id) {
       setActiveChat(prev => prev ? { ...prev, name: newName } : null);
     }
-    addLog(`Renamed channel to ${newName}`);
+    addLog(`Renamed terminal to ${newName}`);
+  };
+
+  const archiveChat = (id: string) => {
+    const stored = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
+    const updated = stored.filter((chatId: string) => chatId !== id);
+    localStorage.setItem('axon_known_chats', JSON.stringify(updated));
+    setChats(prev => prev.filter(c => c.id !== id));
+    if (activeChat?.id === id) setActiveChat(null);
+    addLog(`Archived terminal locally`);
+  };
+
+  const deleteChat = async (id: string) => {
+    if (!supabase) return;
+    const { error } = await supabase.from('chats').delete().eq('id', id);
+    if (error) {
+      console.error("Delete chat error:", error);
+      return;
+    }
+    archiveChat(id);
+    addLog(`Deleted terminal globally`);
+  };
+
+  const changeChatPassword = async (id: string, newCode: string) => {
+    if (!supabase) return false;
+    // We update the share code in DB. Existing messages will become unreadable unless re-encrypted. 
+    // This acts as a security burn/key rotation.
+    const { error } = await supabase.from('chats').update({ share_code: newCode }).eq('id', id);
+    if (error) {
+      console.error("Change password error:", error);
+      return false;
+    }
+    setChats(prev => prev.map(c => c.id === id ? { ...c, share_code: newCode } : c));
+    if (activeChat?.id === id) {
+      setActiveChat(prev => prev ? { ...prev, share_code: newCode } : null);
+    }
+    addLog(`Rotated encryption key for terminal`);
+    return true;
   };
 
   const updateAlias = useCallback((newAlias: string) => {
@@ -355,6 +395,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         addSystemMessage,
         deleteMessageLocally,
         renameChat,
+        archiveChat,
+        deleteChat,
+        changeChatPassword,
         updateAlias,
         systemLogs,
         addLog,
