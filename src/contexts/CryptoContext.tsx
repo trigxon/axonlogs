@@ -64,12 +64,31 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const clearMessages = useCallback(() => {
     setMessages([]);
-  }, []);
+    if (roomCode) {
+      localStorage.removeItem(`axon_logs_${roomCode}`);
+    }
+  }, [roomCode]);
 
   const connectToRoom = useCallback((user: string, room: string) => {
     setUsername(user);
     setRoomCode(room);
     setShouldConnect(true);
+
+    // Attempt to load from local storage
+    try {
+      const saved = localStorage.getItem(`axon_logs_${room}`);
+      if (saved) {
+        const decrypted = CryptoJS.AES.decrypt(saved, room).toString(CryptoJS.enc.Utf8);
+        if (decrypted) {
+          const parsed = JSON.parse(decrypted);
+          if (Array.isArray(parsed)) {
+            setMessages(parsed);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load local logs or decryption failed');
+    }
   }, []);
 
   // BroadcastChannel Fallback Logic
@@ -137,6 +156,24 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       setActiveNodes(knownNodes.size);
     }
   }, [knownNodes]);
+
+  // Local Storage Auto-Save Logic
+  useEffect(() => {
+    if (!shouldConnect || !roomCode) return;
+    
+    // Use a small timeout to avoid spamming localStorage on rapid message bursts
+    const timer = setTimeout(() => {
+      try {
+        const serialized = JSON.stringify(messages);
+        const encrypted = CryptoJS.AES.encrypt(serialized, roomCode).toString();
+        localStorage.setItem(`axon_logs_${roomCode}`, encrypted);
+      } catch (e) {
+        console.error('Failed to encrypt/save local logs');
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [messages, shouldConnect, roomCode]);
 
 
   // Supabase Logic
