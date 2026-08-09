@@ -132,8 +132,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const createChat = async (customName?: string, customCode?: string) => {
-    if (!supabase) return false;
-    const shareCode = customCode ? customCode.toUpperCase() : `AXN-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    if (!supabase || !customCode) return false;
+    const shareCode = customCode.toUpperCase();
     const newChat = {
       name: customName || `CONSOLE_${chats.length + 1}`,
       share_code: shareCode

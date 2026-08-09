@@ -131,6 +131,10 @@ const TerminalUI: React.FC = () => {
 
   const handleCreateChat = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newChatPassphrase.trim()) {
+      alert("A custom passphrase is required to initialize a new tunnel.");
+      return;
+    }
     const success = await createChat(newChatName.trim(), newChatPassphrase.trim());
     if (success) {
       setShowCreateModal(false);
@@ -537,12 +541,12 @@ const TerminalUI: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">CUSTOM PASSPHRASE (OPTIONAL)</label>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">CUSTOM PASSPHRASE (REQUIRED)</label>
                 <input 
                   type="text" 
                   value={newChatPassphrase}
                   onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
-                  placeholder="LEAVE BLANK FOR AUTO-GEN"
+                  placeholder="ENTER SECURE PASSPHRASE"
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                 />
               </div>
