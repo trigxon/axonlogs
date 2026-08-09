@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Mic, Square } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Mic, Square, Lock, Search, Video } from 'lucide-react';
+import { encodeSteganography, decodeSteganography } from '../../utils/steg';
+import * as webllm from '@mlc-ai/web-llm';
 import ReactMarkdown from 'react-markdown';
+import { VideoTunnel } from './VideoTunnel';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -57,6 +60,20 @@ const TerminalUI: React.FC = () => {
   const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
   const [joinCode, setJoinCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [showVideoTunnel, setShowVideoTunnel] = useState(false);
+
+  const [isIdleLocked, setIsIdleLocked] = useState(false);
+  const idleTimeoutRef = useRef<any>(null);
+  const [keystrokeTimings, setKeystrokeTimings] = useState<number[]>([]);
+  const lastKeyTimeRef = useRef<number>(0);
+
+  const [useSteganography, setUseSteganography] = useState(false);
+  const [decodedStego, setDecodedStego] = useState<Record<string, string>>({});
+
+  const [aiEngine, setAiEngine] = useState<webllm.MLCEngine | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
   
   const [showSettings, setShowSettings] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
@@ -98,6 +115,42 @@ const TerminalUI: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Idle Timer
+  useEffect(() => {
+    const resetIdle = () => {
+      if (isIdleLocked) return;
+      if (idleTimeoutRef.current) clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = setTimeout(() => {
+        setIsIdleLocked(true);
+      }, 60000); // 60s idle
+    };
+    window.addEventListener('mousemove', resetIdle);
+    window.addEventListener('keydown', resetIdle);
+    resetIdle();
+    return () => {
+      window.removeEventListener('mousemove', resetIdle);
+      window.removeEventListener('keydown', resetIdle);
+      if (idleTimeoutRef.current) clearTimeout(idleTimeoutRef.current);
+    };
+  }, [isIdleLocked]);
+
+  // AI Initialization
+  const initAI = async () => {
+    if (aiEngine) return;
+    setIsAiLoading(true);
+    addSystemMessage('[SYSTEM: INITIALIZING LOCAL WEBGPU AI NODE... THIS MAY TAKE A MOMENT TO CACHE THE MODEL]');
+    try {
+      const engine = new webllm.MLCEngine();
+      await engine.reload("Llama-3-8B-Instruct-q4f32_1-MLC");
+      setAiEngine(engine);
+      addSystemMessage('[SYSTEM: @AxonNode ONLINE. LOCAL AI IS READY.]');
+    } catch (e) {
+      console.error(e);
+      addSystemMessage('[SYSTEM: ERROR STARTING AI. WEBGPU MIGHT NOT BE SUPPORTED.]');
+    }
+    setIsAiLoading(false);
+  };
 
   // Click away for context menu
   useEffect(() => {
@@ -145,8 +198,49 @@ const TerminalUI: React.FC = () => {
       return;
     }
 
-    await sendMessage(cmd, file, replyToId);
+    let finalFile = file;
+    if (file && useSteganography && file.type.startsWith('image/')) {
+      const stegoMessage = prompt("Enter secret message to embed via Steganography:");
+      if (stegoMessage) {
+        try {
+          finalFile = await encodeSteganography(file, stegoMessage);
+          addSystemMessage('[STEG: PAYLOAD EMBEDDED IN LSB]');
+        } catch (e) {
+          alert('Steganography encoding failed');
+        }
+      }
+    }
+
+    await sendMessage(cmd, finalFile, replyToId);
     setReplyToId(null);
+    setUseSteganography(false);
+
+    // AI Trigger
+    if (cmd.includes('@AxonNode')) {
+      if (!aiEngine && !isAiLoading) {
+        initAI().then(async () => {
+          // Send prompt after init
+          const reply = await generateAIResponse(cmd);
+          sendMessage(`[AxonNode]: ${reply}`);
+        });
+      } else if (aiEngine) {
+        generateAIResponse(cmd).then(reply => {
+          sendMessage(`[AxonNode]: ${reply}`);
+        });
+      }
+    }
+  };
+
+  const generateAIResponse = async (prompt: string) => {
+    if (!aiEngine) return "ERROR: AI offline.";
+    addSystemMessage('[AxonNode is thinking...]');
+    try {
+      const messages: webllm.ChatCompletionMessageParam[] = [{ role: 'user', content: prompt }];
+      const reply = await aiEngine.chat.completions.create({ messages });
+      return reply.choices[0].message.content || 'NO RESPONSE';
+    } catch (e) {
+      return "ERROR: AI generation failed.";
+    }
   };
 
   const toggleRecording = async () => {
@@ -214,9 +308,19 @@ const TerminalUI: React.FC = () => {
     }
   };
 
-  const renderFile = (fileUrl: string | null) => {
+  const decodeImage = async (id: string, url: string) => {
+    try {
+      const msg = await decodeSteganography(url);
+      setDecodedStego(prev => ({ ...prev, [id]: msg }));
+    } catch (e) {
+      setDecodedStego(prev => ({ ...prev, [id]: '[NO HIDDEN PAYLOAD]' }));
+    }
+  };
+
+  const renderFile = (msgId: string, fileUrl: string | null) => {
     if (!fileUrl) return null;
     
+    const isImage = fileUrl.match(/\.(jpeg|jpg|gif|png|webp)(\?.*)?$/i);
     const isAudio = fileUrl.match(/\.(webm|mp3|ogg|wav)(\?.*)?$/i);
 
     if (isAudio) {
@@ -227,6 +331,25 @@ const TerminalUI: React.FC = () => {
       );
     }
     
+    if (isImage) {
+      return (
+        <div className="mt-2 group relative">
+          <img src={fileUrl} alt="Secure Upload" className="max-w-full rounded border border-zinc-800 max-h-64 object-contain bg-black/50" />
+          <button 
+            onClick={() => decodeImage(msgId, fileUrl)}
+            className="absolute top-2 right-2 bg-black/80 p-1 text-xs text-cyan-400 border border-cyan-400/30 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            Extract Steg
+          </button>
+          {decodedStego[msgId] && (
+            <div className="mt-2 p-2 bg-indigo-950/40 border border-indigo-500/50 text-indigo-300 text-xs font-mono">
+              [STEG DECODED]: {decodedStego[msgId]}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     try {
       const file = JSON.parse(fileUrl);
       return (
@@ -285,6 +408,14 @@ const TerminalUI: React.FC = () => {
     }
   };
 
+  const handlePasswordKeyDown = () => {
+    const now = Date.now();
+    if (lastKeyTimeRef.current > 0) {
+      setKeystrokeTimings(prev => [...prev, now - lastKeyTimeRef.current]);
+    }
+    lastKeyTimeRef.current = now;
+  };
+
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (targetChatId && passwordInput.trim()) {
@@ -295,6 +426,28 @@ const TerminalUI: React.FC = () => {
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Keystroke Dynamics Analysis
+    const avgKeystroke = keystrokeTimings.length > 0 
+      ? keystrokeTimings.reduce((a,b)=>a+b, 0) / keystrokeTimings.length 
+      : 0;
+    
+    const baseline = Number(localStorage.getItem('axon_keystroke_baseline'));
+    
+    if (!baseline && avgKeystroke > 0) {
+      localStorage.setItem('axon_keystroke_baseline', avgKeystroke.toString());
+    } else if (baseline > 0 && avgKeystroke > 0) {
+      const diff = Math.abs(avgKeystroke - baseline) / baseline;
+      if (diff > 0.4) {
+        // High deviation -> divert to decoy
+        setIsDecoyMode(true);
+        setShowUnlockModal(false);
+        setKeystrokeTimings([]);
+        return;
+      }
+    }
+    setKeystrokeTimings([]);
+
     if (unlockPassword.trim() === decoyPassphrase) {
       setIsDecoyMode(true);
       setShowUnlockModal(false);
@@ -344,8 +497,27 @@ const TerminalUI: React.FC = () => {
     );
   }
 
+  if (isIdleLocked) {
+    return (
+      <div className="h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] flex flex-col items-center justify-center font-mono relative overflow-hidden backdrop-blur-3xl">
+        <div className="absolute inset-0 bg-black/60 z-10"></div>
+        <div className="z-20 flex flex-col items-center">
+          <Lock className="w-16 h-16 text-cyan-500 mb-6" />
+          <h1 className="text-2xl font-bold tracking-widest text-cyan-400 mb-4 uppercase">BIOMETRIC LOCK ENGAGED</h1>
+          <p className="text-zinc-500 text-sm mb-8 text-center max-w-md">Idle limit exceeded. Terminal locked to prevent unauthorized physical access.</p>
+          <button 
+            onClick={() => setIsIdleLocked(false)}
+            className="px-8 py-3 bg-cyan-400/10 border border-cyan-400 text-cyan-400 hover:bg-cyan-400 hover:text-black transition-all uppercase tracking-widest font-bold"
+          >
+            Re-Authenticate
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden relative">
+    <div className={`flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden relative ${isIdleLocked ? 'blur-xl' : ''}`}>
       
       {/* WATERMARK */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.02] flex flex-wrap gap-4 z-50 select-none items-center justify-center">
@@ -369,7 +541,21 @@ const TerminalUI: React.FC = () => {
 
         {/* Dynamic Chats List */}
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2">TERMINALS</div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2 flex justify-between items-center">
+            TERMINALS
+          </div>
+          <div className="px-2 mb-4">
+            <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 px-2 py-1 focus-within:border-cyan-400/50">
+              <Search className="w-3 h-3 text-zinc-500" />
+              <input 
+                type="text" 
+                placeholder="LOCAL SEARCH..." 
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none outline-none text-[10px] text-zinc-300 w-full placeholder:text-zinc-700 uppercase"
+              />
+            </div>
+          </div>
           {chats.map(chat => (
             <button 
               key={chat.id}
@@ -480,6 +666,14 @@ const TerminalUI: React.FC = () => {
             <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
               NETWORK: {networkStatus}
             </div>
+            {activeChat && (
+              <button 
+                onClick={() => setShowVideoTunnel(!showVideoTunnel)}
+                className={`border px-3 py-1 items-center gap-2 hidden md:flex transition-colors ${showVideoTunnel ? 'bg-cyan-500 text-black border-cyan-500' : 'border-cyan-500/30 text-cyan-500 hover:bg-cyan-500 hover:text-black'}`}
+              >
+                <Video size={12} className="inline mr-1" /> COMM-LINK
+              </button>
+            )}
             <button 
               onClick={purgeTerminal}
               className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors"
@@ -519,6 +713,10 @@ const TerminalUI: React.FC = () => {
         {/* Chat Feed */}
         <div ref={feedRef} className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6">
           
+          {showVideoTunnel && activeChat && (
+            <VideoTunnel chatId={activeChat.id} onClose={() => setShowVideoTunnel(false)} />
+          )}
+
           {!activeChat ? (
             <div className="text-zinc-600 text-sm mt-4">
               [SYSTEM: NO CHANNEL SELECTED. CREATE OR JOIN TO INITIATE.]
@@ -528,7 +726,9 @@ const TerminalUI: React.FC = () => {
               [SYSTEM: CHANNEL SECURE. AWAITING TRANSMISSIONS...]
             </div>
           ) : (
-            messages.map(msg => {
+            messages
+              .filter(msg => !searchQuery || (msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase())))
+              .map(msg => {
               const isSelf = msg.sender_id === deviceId;
               const isSystem = msg.sender_id === 'SYSTEM';
 
@@ -609,7 +809,7 @@ const TerminalUI: React.FC = () => {
                           </div>
                         </div>
                       )}
-                      {renderFile(msg.file_url)}
+                      {renderFile(msg.id, msg.file_url)}
                     </>
                   )}
                 </div>
@@ -662,7 +862,18 @@ const TerminalUI: React.FC = () => {
                 <div className="absolute bottom-full left-0 mb-2 ml-4 flex items-center gap-3 bg-[#0a0a0f] border border-cyan-400/30 px-3 py-2">
                   <Paperclip className="w-4 h-4 text-cyan-400" />
                   <span className="text-xs text-zinc-300 truncate max-w-[200px]">{selectedFile.name}</span>
-                  <button type="button" onClick={() => setSelectedFile(null)} className="text-zinc-500 hover:text-red-500 ml-2">
+                  {selectedFile.type.startsWith('image/') && (
+                    <label className="flex items-center gap-2 ml-4 border-l border-zinc-800 pl-4 cursor-pointer text-xs">
+                      <input 
+                        type="checkbox" 
+                        checked={useSteganography} 
+                        onChange={e => setUseSteganography(e.target.checked)}
+                        className="accent-cyan-400"
+                      />
+                      <span className="text-zinc-400 uppercase tracking-widest">Lsb Steg</span>
+                    </label>
+                  )}
+                  <button type="button" onClick={() => { setSelectedFile(null); setUseSteganography(false); }} className="text-zinc-500 hover:text-red-500 ml-2">
                     <X className="w-3 h-3" />
                   </button>
                 </div>
@@ -953,6 +1164,7 @@ const TerminalUI: React.FC = () => {
                   type="password" 
                   value={unlockPassword}
                   onChange={e => setUnlockPassword(e.target.value)}
+                  onKeyDown={handlePasswordKeyDown}
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                   autoFocus
                 />
