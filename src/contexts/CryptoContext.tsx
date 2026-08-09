@@ -264,10 +264,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       if (data) {
         const decryptedMsgs = data.map(msg => {
           const decryptedText = decryptText(msg.text, activeChat.share_code);
+          const decryptedFileUrl = decryptText(msg.file_url, activeChat.share_code);
+          const hasTextError = msg.text ? !decryptedText : false;
+          const hasFileError = msg.file_url ? !decryptedFileUrl : false;
           return {
             ...msg,
-            text: decryptedText || '[DECRYPTION FAILED - INVALID KEY]',
-            isDecryptionError: !decryptedText
+            text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
+            file_url: hasFileError ? null : decryptedFileUrl,
+            isDecryptionError: hasTextError || hasFileError
           };
         });
         setMessages(decryptedMsgs);
@@ -299,10 +303,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         }
 
         const decryptedText = decryptText(newMsg.text, activeChat.share_code);
+        const decryptedFileUrl = decryptText(newMsg.file_url, activeChat.share_code);
+        const hasTextError = newMsg.text ? !decryptedText : false;
+        const hasFileError = newMsg.file_url ? !decryptedFileUrl : false;
         setMessages(prev => [...prev, {
           ...newMsg,
-          text: decryptedText || '[DECRYPTION FAILED - INVALID KEY]',
-          isDecryptionError: !decryptedText
+          text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
+          file_url: hasFileError ? null : decryptedFileUrl,
+          isDecryptionError: hasTextError || hasFileError
         }]);
 
         if (newMsg.burn_on_read && newMsg.sender_id !== deviceId) {
