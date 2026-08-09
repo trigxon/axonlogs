@@ -42,7 +42,11 @@ const Terminal = () => {
       />
       
       <div className="flex flex-1 overflow-hidden relative z-10">
-        <Sidebar isOpen={isSidebarOpen} close={() => setIsSidebarOpen(false)} />
+        <Sidebar 
+          isOpen={isSidebarOpen} 
+          close={() => setIsSidebarOpen(false)} 
+          openSettings={() => setIsSettingsOpen(true)}
+        />
         
         <main className="flex-1 flex flex-col h-full bg-void/90 border-l border-white/5 relative">
           <ChatFeed />

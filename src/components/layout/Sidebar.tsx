@@ -7,10 +7,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface SidebarProps {
   isOpen: boolean;
   close: () => void;
+  openSettings?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, close }) => {
-  const { nodeId, activeNodes, injectSystemMessage } = useCrypto();
+const Sidebar: React.FC<SidebarProps> = ({ isOpen, close, openSettings }) => {
+  const { nodeId, activeNodes, username, roomCode, injectSystemMessage } = useCrypto();
   const { stealthMode, setStealthMode } = useSettings();
 
   const handleInvite = () => {
@@ -50,21 +51,26 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, close }) => {
             <span>Channels</span>
           </button>
           <button 
-            onClick={() => injectSystemMessage('[ACCESS DENIED] Insufficient privileges for Nodes module.', 'error')}
+            onClick={() => injectSystemMessage(`[SCAN COMPLETE] Tracking ${activeNodes} active node(s) in local range.`, 'system')}
             className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
           >
             <Users className="w-4 h-4" />
             <span>Nodes ({activeNodes})</span>
           </button>
           <button 
-            onClick={() => injectSystemMessage('[ACCESS DENIED] Insufficient privileges for Security module.', 'error')}
+            onClick={() => {
+              if (openSettings) {
+                openSettings();
+                close();
+              }
+            }}
             className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
           >
             <ShieldAlert className="w-4 h-4" />
             <span>Security</span>
           </button>
           <button 
-            onClick={() => injectSystemMessage('[ACCESS DENIED] Insufficient privileges for Session module.', 'error')}
+            onClick={() => injectSystemMessage(`[SESSION_INFO] \n> ALIAS: ${username} \n> ROOM: ${roomCode} \n> CIPHER: AES-256`, 'system')}
             className="w-full flex items-center gap-3 px-3 py-2 text-muted-gray hover:text-white hover:bg-white/5 rounded transition-colors"
           >
             <Activity className="w-4 h-4" />
