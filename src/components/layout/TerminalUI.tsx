@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Mic, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -64,6 +64,11 @@ const TerminalUI: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newChatName, setNewChatName] = useState('');
   const [newChatPassphrase, setNewChatPassphrase] = useState('');
+
+  const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState('');
@@ -138,7 +143,48 @@ const TerminalUI: React.FC = () => {
       return;
     }
 
-    await sendMessage(cmd, file);
+    await sendMessage(cmd, file, replyToId);
+    setReplyToId(null);
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+          
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = null;
+            broadcastTyping(false);
+          }
+          await sendMessage('', audioFile, replyToId);
+          setReplyToId(null);
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error('Microphone access denied or error', err);
+        alert('Microphone access denied. Please check permissions.');
+      }
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,10 +212,21 @@ const TerminalUI: React.FC = () => {
     }
   };
 
-  const renderFile = (fileUrlStr: string | null) => {
-    if (!fileUrlStr) return null;
+  const renderFile = (fileUrl: string | null) => {
+    if (!fileUrl) return null;
+    
+    const isAudio = fileUrl.match(/\.(webm|mp3|ogg|wav)(\?.*)?$/i);
+
+    if (isAudio) {
+      return (
+        <div className="mt-4 p-2 bg-black/40 border border-zinc-800 rounded">
+          <audio controls src={fileUrl} className="w-full h-8" />
+        </div>
+      );
+    }
+    
     try {
-      const file = JSON.parse(fileUrlStr);
+      const file = JSON.parse(fileUrl);
       return (
         <div className="mt-2 border border-emerald-500/30 p-3 max-w-sm flex items-center justify-between bg-[#080808]">
           <div className="flex items-center gap-3 overflow-hidden">
@@ -435,21 +492,46 @@ const TerminalUI: React.FC = () => {
               return (
                 <div 
                   key={msg.id} 
-                  className={`flex flex-col w-full max-w-3xl border p-4 relative ${
+                  id={`msg-${msg.id}`}
+                  className={`flex flex-col w-full max-w-3xl border p-4 relative group ${
                     isSelf 
                       ? 'ml-auto border-cyan-400/50 bg-cyan-950/10' 
                       : 'border-zinc-800 border-l-2 border-l-emerald-500/50 bg-[#080808]'
                   }`}
                 >
-                  <div className="flex justify-between items-center mb-3">
+                  <button 
+                    onClick={() => setReplyToId(msg.id)}
+                    className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-cyan-400 transition-opacity bg-black/50 p-1 rounded"
+                    title="Reply to message"
+                  >
+                    <Reply size={14} />
+                  </button>
+                  <div className="flex justify-between items-center mb-3 pr-8">
                     <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelf ? 'text-cyan-400' : 'text-emerald-500'}`}>
                       {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
                     </span>
-                    <span className="text-[10px] text-zinc-600">
+                    <span className="text-[10px] text-zinc-600 flex items-center gap-1">
                       {new Date(msg.created_at).toLocaleTimeString([], { hour12: false, timeZone: 'UTC' })} UTC
+                      {isSelf && (
+                        <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-500' : 'text-zinc-600'}>
+                          {msg.read_by && msg.read_by.length > 0 ? '✓✓' : '✓'}
+                        </span>
+                      )}
                     </span>
                   </div>
                   
+                  {msg.reply_to_id && (
+                    <div 
+                      className="mb-2 p-2 bg-black/20 border-l-2 border-zinc-700 text-xs text-zinc-500 truncate cursor-pointer hover:bg-black/40 transition-colors"
+                      onClick={() => {
+                        const el = document.getElementById(`msg-${msg.reply_to_id}`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}
+                    >
+                      {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
+                    </div>
+                  )}
+
                   {msg.isDecryptionError ? (
                     <div className="bg-red-500/10 border border-red-500/50 text-red-500 p-2 text-xs uppercase tracking-widest font-bold">
                       [DECRYPTION FAILED - INVALID KEY]
@@ -496,6 +578,14 @@ const TerminalUI: React.FC = () => {
         {/* Input Footer */}
         {activeChat && (
           <footer className="shrink-0 p-4 bg-[#050505]">
+            {replyToId && (
+              <div className="mb-2 p-2 bg-zinc-900 border-l-2 border-cyan-500 text-xs text-zinc-400 flex justify-between items-center max-w-full">
+                <span className="truncate">REPLYING TO: {messages.find(m => m.id === replyToId)?.text || 'AUDIO / ATTACHMENT'}</span>
+                <button onClick={() => setReplyToId(null)} className="text-zinc-500 hover:text-white p-1">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             <form 
               onSubmit={handleSubmit} 
               className="flex items-center gap-2 sm:gap-4 bg-[#0a0a0f] border border-zinc-800 focus-within:border-cyan-400/50 transition-colors p-2"
@@ -543,9 +633,17 @@ const TerminalUI: React.FC = () => {
               >
                 <Paperclip className="w-4 h-4" />
               </button>
+              <button 
+                type="button"
+                onClick={toggleRecording}
+                className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-zinc-500 hover:text-cyan-400'}`}
+              >
+                {isRecording ? <Square size={18} /> : <Mic size={18} />}
+              </button>
               
               <button 
                 type="submit"
+                disabled={(!input.trim() && !selectedFile && !isRecording)}
                 className="bg-cyan-400 hover:bg-cyan-300 text-black px-4 sm:px-6 py-2 text-xs font-bold tracking-widest flex items-center gap-2 transition-colors uppercase shrink-0"
               >
                 <span className="hidden sm:inline">EXECUTE</span>

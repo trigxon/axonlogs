@@ -16,6 +16,8 @@ export interface Message {
   text: string;
   file_url: string | null;
   burn_on_read: boolean;
+  reply_to_id?: string | null;
+  read_by?: string[];
   created_at: string;
   isDecryptionError?: boolean;
 }
@@ -36,7 +38,7 @@ interface CryptoContextType {
   setActiveChat: (chat: Chat) => void;
   createChat: (customName?: string, customCode?: string) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
-  sendMessage: (text: string, file?: File | null) => Promise<void>;
+  sendMessage: (text: string, file?: File | null, replyToId?: string | null) => Promise<void>;
   purgeTerminal: () => void;
   addSystemMessage: (text: string) => void;
   deleteMessageLocally: (id: string) => void;
@@ -277,10 +279,19 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             ...msg,
             text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
             file_url: hasFileError ? null : decryptedFileUrl,
-            isDecryptionError: hasTextError || hasFileError
+            isDecryptionError: hasTextError || hasFileError,
+            read_by: msg.read_by || []
           };
         });
         setMessages(decryptedMsgs);
+
+        // Process read receipts
+        decryptedMsgs.forEach(msg => {
+          if (msg.sender_id !== deviceId && !msg.isDecryptionError && (!msg.read_by || !msg.read_by.includes(deviceId))) {
+            const newReadBy = [...(msg.read_by || []), deviceId];
+            supabase.from('messages').update({ read_by: newReadBy }).eq('id', msg.id).then();
+          }
+        });
 
         // Delete burn-on-read messages that aren't ours
         data.forEach(msg => {
@@ -300,7 +311,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
     channel
       .on('postgres_changes', { 
-        event: 'INSERT', 
+        event: '*', 
         schema: 'public', 
         table: 'messages',
         filter: `chat_id=eq.${activeChat.id}`
@@ -315,12 +326,27 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         const decryptedFileUrl = newMsg.file_url ? decryptText(newMsg.file_url, activeChat.share_code) : null;
         const hasTextError = newMsg.text ? !decryptedText : false;
         const hasFileError = newMsg.file_url ? !decryptedFileUrl : false;
-        setMessages(prev => [...prev, {
+        
+        const completeMsg = {
           ...newMsg,
           text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
           file_url: hasFileError ? null : decryptedFileUrl,
-          isDecryptionError: hasTextError || hasFileError
-        }]);
+          isDecryptionError: hasTextError || hasFileError,
+          read_by: newMsg.read_by || []
+        };
+        
+        // If this is an UPDATE event (e.g. read_by array changed), just update the existing message
+        if (payload.eventType === 'UPDATE') {
+          setMessages(prev => prev.map(m => m.id === completeMsg.id ? completeMsg : m));
+          return;
+        }
+
+        setMessages(prev => [...prev, completeMsg]);
+
+        if (newMsg.sender_id !== deviceId && !hasTextError && !hasFileError && (!newMsg.read_by || !newMsg.read_by.includes(deviceId))) {
+          const newReadBy = [...(newMsg.read_by || []), deviceId];
+          supabase.from('messages').update({ read_by: newReadBy }).eq('id', newMsg.id).then();
+        }
 
         if (newMsg.burn_on_read && newMsg.sender_id !== deviceId) {
           supabase.from('messages').delete().eq('id', newMsg.id).then();
@@ -372,7 +398,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [presenceChannel, deviceId, alias]);
 
-  const sendMessage = async (text: string, file?: File | null) => {
+  const sendMessage = async (text: string, file?: File | null, replyToId?: string | null) => {
     if (!supabase || !activeChat || !deviceId) return;
 
     const encryptedText = encryptText(text, activeChat.share_code);
@@ -386,29 +412,24 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const { data: uploadData } = await supabase.storage
         .from('chat_files')
         .upload(fileName, file);
-
+      
       if (uploadData) {
-        // Construct public URL
-        const { data: urlData } = supabase.storage
+        const { data: { publicUrl } } = supabase.storage
           .from('chat_files')
           .getPublicUrl(uploadData.path);
         
-        fileUrl = JSON.stringify({
-          url: urlData.publicUrl,
-          name: file.name,
-          size: file.size,
-          type: file.type
-        });
+        fileUrl = encryptText(publicUrl, activeChat.share_code);
       }
     }
 
-    // Always burn on read by default for security, or let users toggle it. We'll set true for ephemeral nature.
     await supabase.from('messages').insert({
       chat_id: activeChat.id,
       sender_id: deviceId,
       text: encryptedText,
       file_url: fileUrl,
-      burn_on_read: true
+      burn_on_read: true,
+      reply_to_id: replyToId,
+      read_by: []
     });
     
     addLog(`Sent payload to ${activeChat.share_code}`);
