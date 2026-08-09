@@ -15,13 +15,14 @@ export interface MessagePayload {
 interface CryptoContextType {
   nodeId: string;
   roomCode: string;
-  setRoomCode: (code: string) => void;
+  username: string;
   messages: MessagePayload[];
   sendMessage: (rawMessage: string) => void;
   clearMessages: () => void;
   injectSystemMessage: (content: string, type?: 'system' | 'error') => void;
   connected: boolean;
   activeNodes: number;
+  connectToRoom: (user: string, room: string) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -39,10 +40,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     return newId;
   });
 
-  const [roomCode, setRoomCode] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('room') || 'DEFAULT_SECURE_LINK';
-  });
+  const [roomCode, setRoomCode] = useState('');
+  const [username, setUsername] = useState('');
+  const [shouldConnect, setShouldConnect] = useState(false);
 
   const [messages, setMessages] = useState<MessagePayload[]>([]);
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
@@ -66,9 +66,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setMessages([]);
   }, []);
 
+  const connectToRoom = useCallback((user: string, room: string) => {
+    setUsername(user);
+    setRoomCode(room);
+    setShouldConnect(true);
+  }, []);
+
   // BroadcastChannel Fallback Logic
   useEffect(() => {
-    if (supabase) return; // Skip if we have Supabase
+    if (!shouldConnect || supabase) return; 
 
     const bc = new BroadcastChannel(`axon_room_${roomCode}`);
     setLocalChannel(bc);
@@ -123,7 +129,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       bc.removeEventListener('message', handleMessage);
       bc.close();
     };
-  }, [roomCode, nodeId, injectSystemMessage]);
+  }, [shouldConnect, roomCode, nodeId, injectSystemMessage]);
 
   // Update active nodes count for local mode
   useEffect(() => {
@@ -135,7 +141,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   // Supabase Logic
   useEffect(() => {
-    if (!supabase) return;
+    if (!shouldConnect || !supabase) return;
 
     const currentChannel = supabase.channel(`room:${roomCode}`, {
       config: {
@@ -188,15 +194,17 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       supabase.removeChannel(currentChannel);
     };
-  }, [roomCode, nodeId, injectSystemMessage]);
+  }, [shouldConnect, roomCode, nodeId, injectSystemMessage]);
 
   const sendMessage = useCallback((rawMessage: string) => {
+    if (!shouldConnect) return;
+
     const encryptedPayload = CryptoJS.AES.encrypt(rawMessage, roomCode).toString();
     
     setMessages(prev => [...prev, {
       id: crypto.randomUUID(),
       senderId: nodeId,
-      senderAlias: `NODE_${nodeId}`,
+      senderAlias: username,
       content: rawMessage,
       timestamp: Date.now(),
       type: 'message'
@@ -208,7 +216,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         event: 'message',
         payload: {
           senderId: nodeId,
-          senderAlias: `NODE_${nodeId}`,
+          senderAlias: username,
           encryptedContent: encryptedPayload,
           timestamp: Date.now(),
         },
@@ -217,25 +225,26 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       localChannel.postMessage({
         type: 'message',
         senderId: nodeId,
-        senderAlias: `NODE_${nodeId}`,
+        senderAlias: username,
         encryptedContent: encryptedPayload,
         timestamp: Date.now(),
       });
     }
-  }, [channel, localChannel, connected, nodeId, roomCode]);
+  }, [shouldConnect, channel, localChannel, connected, nodeId, roomCode, username]);
 
   return (
     <CryptoContext.Provider
       value={{
         nodeId,
         roomCode,
-        setRoomCode,
+        username,
         messages,
         sendMessage,
         clearMessages,
         injectSystemMessage,
         connected,
-        activeNodes
+        activeNodes,
+        connectToRoom
       }}
     >
       {children}
