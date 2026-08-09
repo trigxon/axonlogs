@@ -1,12 +1,10 @@
 import { createContext, useContext, useState, type ReactNode, useEffect } from 'react';
 
-export type AppTheme = 'Terminal' | 'Cyberpunk' | 'Minimalist';
-
 interface SettingsContextType {
   burnerMode: boolean;
   setBurnerMode: (val: boolean) => void;
-  appTheme: AppTheme;
-  setAppTheme: (val: AppTheme) => void;
+  isDarkMode: boolean;
+  setIsDarkMode: (val: boolean) => void;
   stealthMode: boolean;
   setStealthMode: (val: boolean) => void;
   enterToSend: boolean;
@@ -23,13 +21,14 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
     return saved !== null ? saved === 'true' : false;
   });
 
-  const [enterToSend, setEnterToSend] = useState(() => {
-    const saved = localStorage.getItem('axon_enter_send');
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('axon_dark_mode');
     return saved !== null ? saved === 'true' : true;
   });
 
-  const [appTheme, setAppTheme] = useState<AppTheme>(() => {
-    return (localStorage.getItem('axon_app_theme') as AppTheme) || 'Minimalist';
+  const [enterToSend, setEnterToSend] = useState(() => {
+    const saved = localStorage.getItem('axon_enter_send');
+    return saved !== null ? saved === 'true' : true;
   });
 
   useEffect(() => {
@@ -41,26 +40,24 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   }, [enterToSend]);
 
   useEffect(() => {
-    localStorage.setItem('axon_app_theme', appTheme);
+    localStorage.setItem('axon_dark_mode', isDarkMode.toString());
     const root = document.documentElement;
+    // Strip old theme classes if they exist
     root.classList.remove('theme-terminal', 'theme-cyberpunk', 'theme-minimalist');
-    
-    if (appTheme === 'Terminal') {
-      root.classList.add('theme-terminal');
-    } else if (appTheme === 'Cyberpunk') {
-      root.classList.add('theme-cyberpunk');
+    if (isDarkMode) {
+      root.classList.add('dark');
     } else {
-      root.classList.add('theme-minimalist');
+      root.classList.remove('dark');
     }
-  }, [appTheme]);
+  }, [isDarkMode]);
 
   return (
     <SettingsContext.Provider
       value={{
         burnerMode,
         setBurnerMode,
-        appTheme,
-        setAppTheme,
+        isDarkMode,
+        setIsDarkMode,
         stealthMode,
         setStealthMode,
         enterToSend,

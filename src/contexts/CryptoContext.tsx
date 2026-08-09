@@ -68,10 +68,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   // Fetch chats on mount / when savedCodes changes
   useEffect(() => {
-    if (!supabase || savedCodes.length === 0) {
-      setChats([]);
+    if (!supabase) return;
+    
+    // Auto-create chat if none exist
+    if (savedCodes.length === 0) {
+      createChat();
       return;
     }
+    
     const fetchChats = async () => {
       const { data, error } = await supabase
         .from('chats')

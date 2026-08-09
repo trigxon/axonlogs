@@ -6,7 +6,7 @@ import { Flame } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const ChatFeed = () => {
-  const { messages, activeChat } = useCrypto();
+  const { messages, activeChat, deviceId } = useCrypto();
   const { burnerMode, setBurnerMode } = useSettings();
   const feedRef = useRef<HTMLDivElement>(null);
 
@@ -51,7 +51,7 @@ const ChatFeed = () => {
       >
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-text-secondary/40 space-y-3 select-none">
-            <MessageBubble msg={{
+            <MessageBubble message={{
               id: 'placeholder',
               chat_id: activeChat.id,
               sender_id: 'system',
@@ -59,12 +59,12 @@ const ChatFeed = () => {
               file_url: null,
               burn_on_read: false,
               created_at: new Date().toISOString()
-            }} />
+            }} isOwn={false} />
           </div>
         ) : (
           <div className="flex flex-col">
             {messages.map(msg => (
-              <MessageBubble key={msg.id} msg={msg} />
+              <MessageBubble key={msg.id} message={msg} isOwn={msg.sender_id === deviceId} />
             ))}
           </div>
         )}

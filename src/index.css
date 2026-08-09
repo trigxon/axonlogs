@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -13,53 +13,31 @@
 }
 
 @layer base {
-
   :root {
-    /* Minimalist Default */
-    --bg: #050505;
-    --panel: #0a0a0f;
-    --text-primary: #ffffff;
-    --text-secondary: #a1a1aa;
-    --border: #27272a;
-    --accent: #4f46e5;
-    --accent-hover: #4338ca;
+    /* Minimalist Light Default */
+    --bg: #ffffff;
+    --panel: #f8f9fa;
+    --text-primary: #111827;
+    --text-secondary: #6b7280;
+    --border: #e5e7eb;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
     
-    --font-mono: 'Fira Code', monospace;
     --font-sans: 'Inter', sans-serif;
   }
 
-  :root.theme-terminal {
-    --bg: #050505;
-    --panel: #0a0a0f;
-    --text-primary: #4ade80;
-    --text-secondary: #166534;
-    --border: #14532d;
-    --accent: #22c55e;
-    --accent-hover: #16a34a;
-  }
-
-  :root.theme-cyberpunk {
-    --bg: #050505;
-    --panel: #0a0a0f;
-    --text-primary: #f472b6;
-    --text-secondary: #be185d;
-    --border: #831843;
-    --accent: #06b6d4;
-    --accent-hover: #0891b2;
-  }
-
-  :root.theme-minimalist {
-    --bg: #050505;
-    --panel: #0a0a0f;
+  :root.dark {
+    --bg: #000000;
+    --panel: #111111;
     --text-primary: #ffffff;
-    --text-secondary: #a1a1aa;
+    --text-secondary: #9ca3af;
     --border: #27272a;
-    --accent: #4f46e5;
-    --accent-hover: #4338ca;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
   }
 
   body {
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
   
@@ -71,7 +49,7 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-white/10 rounded-full hover:bg-white/20;
+    @apply bg-black/10 dark:bg-white/10 rounded-full hover:bg-black/20 dark:hover:bg-white/20;
   }
 }
 

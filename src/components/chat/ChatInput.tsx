@@ -12,7 +12,7 @@ const ChatInput = () => {
   const [isUploading, setIsUploading] = useState(false);
   
   const { sendMessage, activeChat } = useCrypto();
-  const { burnerMode, enterToSend } = useSettings();
+  const { burnerMode, enterToSend, isDarkMode } = useSettings();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -114,9 +114,9 @@ const ChatInput = () => {
       {/* Emoji Picker */}
       <AnimatePresence>
         {showEmojiPicker && (
-          <div ref={pickerRef} className="absolute bottom-full mb-2 right-4 z-50 shadow-2xl rounded-xl overflow-hidden border border-border">
+          <div ref={pickerRef} className="absolute bottom-full mb-2 right-4 z-50 shadow-2xl rounded-2xl overflow-hidden border border-border">
             <EmojiPicker 
-              theme={Theme.DARK}
+              theme={isDarkMode ? Theme.DARK : Theme.LIGHT}
               onEmojiClick={onEmojiClick}
               autoFocusSearch={false}
               skinTonesDisabled
@@ -125,13 +125,12 @@ const ChatInput = () => {
         )}
       </AnimatePresence>
 
-      <div className="flex items-end gap-2 bg-panel border border-border rounded-sm p-1.5 focus-within:border-accent transition-colors shadow-sm max-w-4xl mx-auto">
+      <div className="flex items-end gap-2 bg-panel border border-border rounded-3xl p-1.5 focus-within:border-accent transition-colors shadow-sm max-w-4xl mx-auto">
         
         <input 
           type="file" 
           ref={fileInputRef} 
           onChange={handleFileUpload}
-          accept="*"
           multiple
           className="hidden" 
         />
@@ -139,7 +138,7 @@ const ChatInput = () => {
         <button 
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-sm transition-colors flex-shrink-0"
+          className="p-2.5 ml-1 text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors flex-shrink-0"
           title="Attach Files"
           disabled={isUploading}
         >
@@ -160,7 +159,7 @@ const ChatInput = () => {
           <button 
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-2 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-sm transition-colors"
+            className="p-2 text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors"
           >
             <Smile className="w-5 h-5" />
           </button>
@@ -168,9 +167,9 @@ const ChatInput = () => {
           <button 
             onClick={handleSend}
             disabled={!input.trim() && !isUploading}
-            className="p-2 bg-accent text-white rounded-sm hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:hover:bg-accent"
+            className="p-2 mr-1 bg-accent text-white rounded-full hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:hover:bg-accent"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-5 h-5 ml-0.5" />
           </button>
         </div>
 
