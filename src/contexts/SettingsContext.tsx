@@ -1,19 +1,16 @@
 import { createContext, useContext, useState, type ReactNode, useEffect } from 'react';
 
-export type FontSize = 'S' | 'M' | 'L';
-export type CornerStyle = 'Sharp' | 'Rounded' | 'Pill';
+export type AppTheme = 'Terminal' | 'Cyberpunk' | 'Minimalist';
 
 interface SettingsContextType {
   burnerMode: boolean;
   setBurnerMode: (val: boolean) => void;
-  isDarkMode: boolean;
-  setIsDarkMode: (val: boolean) => void;
+  appTheme: AppTheme;
+  setAppTheme: (val: AppTheme) => void;
+  stealthMode: boolean;
+  setStealthMode: (val: boolean) => void;
   enterToSend: boolean;
   setEnterToSend: (val: boolean) => void;
-  fontSize: FontSize;
-  setFontSize: (val: FontSize) => void;
-  cornerStyle: CornerStyle;
-  setCornerStyle: (val: CornerStyle) => void;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -21,9 +18,9 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   const [burnerMode, setBurnerMode] = useState(false);
   
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('axon_dark_mode');
-    return saved !== null ? saved === 'true' : true;
+  const [stealthMode, setStealthMode] = useState(() => {
+    const saved = localStorage.getItem('axon_stealth_mode');
+    return saved !== null ? saved === 'true' : false;
   });
 
   const [enterToSend, setEnterToSend] = useState(() => {
@@ -31,56 +28,43 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
     return saved !== null ? saved === 'true' : true;
   });
 
-  const [fontSize, setFontSize] = useState<FontSize>(() => {
-    return (localStorage.getItem('axon_font_size') as FontSize) || 'M';
-  });
-
-  const [cornerStyle, setCornerStyle] = useState<CornerStyle>(() => {
-    return (localStorage.getItem('axon_corner_style') as CornerStyle) || 'Rounded';
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => {
+    return (localStorage.getItem('axon_app_theme') as AppTheme) || 'Minimalist';
   });
 
   useEffect(() => {
-    localStorage.setItem('axon_dark_mode', isDarkMode.toString());
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [isDarkMode]);
+    localStorage.setItem('axon_stealth_mode', stealthMode.toString());
+  }, [stealthMode]);
 
   useEffect(() => {
     localStorage.setItem('axon_enter_send', enterToSend.toString());
   }, [enterToSend]);
 
   useEffect(() => {
-    localStorage.setItem('axon_font_size', fontSize);
+    localStorage.setItem('axon_app_theme', appTheme);
     const root = document.documentElement;
-    if (fontSize === 'S') root.style.setProperty('--font-scale', '0.875rem');
-    else if (fontSize === 'M') root.style.setProperty('--font-scale', '1rem');
-    else if (fontSize === 'L') root.style.setProperty('--font-scale', '1.125rem');
-  }, [fontSize]);
-
-  useEffect(() => {
-    localStorage.setItem('axon_corner_style', cornerStyle);
-    const root = document.documentElement;
-    if (cornerStyle === 'Sharp') root.style.setProperty('--radius', '0px');
-    else if (cornerStyle === 'Rounded') root.style.setProperty('--radius', '0.75rem');
-    else if (cornerStyle === 'Pill') root.style.setProperty('--radius', '9999px');
-  }, [cornerStyle]);
+    root.classList.remove('theme-terminal', 'theme-cyberpunk', 'theme-minimalist');
+    
+    if (appTheme === 'Terminal') {
+      root.classList.add('theme-terminal');
+    } else if (appTheme === 'Cyberpunk') {
+      root.classList.add('theme-cyberpunk');
+    } else {
+      root.classList.add('theme-minimalist');
+    }
+  }, [appTheme]);
 
   return (
     <SettingsContext.Provider
       value={{
         burnerMode,
         setBurnerMode,
-        isDarkMode,
-        setIsDarkMode,
+        appTheme,
+        setAppTheme,
+        stealthMode,
+        setStealthMode,
         enterToSend,
-        setEnterToSend,
-        fontSize,
-        setFontSize,
-        cornerStyle,
-        setCornerStyle
+        setEnterToSend
       }}
     >
       {children}

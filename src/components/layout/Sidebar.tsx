@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Plus, MessageSquare, Copy, X, Hash } from 'lucide-react';
+import { Settings, Plus, MessageSquare, Copy, X, Hash, LogIn } from 'lucide-react';
 import { useCrypto } from '../../contexts/CryptoContext';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,8 +11,10 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMobileOpen }) => {
-  const { chats, activeChat, setActiveChat, createChat, joinChat, deviceId } = useCrypto();
+  const { chats, activeChat, setActiveChat, createChat, joinChat } = useCrypto();
   const [showNewModal, setShowNewModal] = useState(false);
+  const [modalMode, setModalMode] = useState<'create' | 'join'>('create');
+  
   const [joinCode, setJoinCode] = useState('');
   const [newName, setNewName] = useState('');
 
@@ -36,7 +38,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
 
   return (
     <>
-      {/* Mobile overlay */}
       <AnimatePresence>
         {isMobileOpen && (
           <motion.div
@@ -55,13 +56,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
       )}>
         
         {/* BRANDING */}
-        <div className="p-6 flex items-center justify-between shrink-0">
+        <div className="p-6 flex items-center justify-between shrink-0 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-accent to-purple-500 flex items-center justify-center shadow-lg shadow-accent/20">
-              <Hash className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-              AXON LOGS
+            <Hash className="w-5 h-5 text-accent" />
+            <h1 className="font-bold text-lg tracking-tight text-white uppercase" style={{ fontFamily: 'var(--font-mono)' }}>
+              AXON // DASHBOARD
             </h1>
           </div>
           <button className="md:hidden p-2 text-text-secondary hover:text-white" onClick={() => setIsMobileOpen(false)}>
@@ -69,39 +68,44 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
           </button>
         </div>
 
-        {/* NEW WORKSPACE BUTTON */}
-        <div className="px-4 pb-4">
+        {/* WORKSPACE CONTROLS */}
+        <div className="p-4 space-y-2 border-b border-border">
           <button 
-            onClick={() => setShowNewModal(true)}
-            className="w-full py-2.5 px-4 bg-white/5 hover:bg-white/10 text-white rounded-xl border border-white/10 transition-colors flex items-center justify-center gap-2 font-medium text-sm"
-            style={{ borderRadius: 'var(--radius)' }}
+            onClick={() => { setModalMode('create'); setShowNewModal(true); }}
+            className="w-full py-2.5 px-4 bg-accent/10 hover:bg-accent/20 text-accent rounded-sm border border-accent/20 transition-colors flex items-center justify-center gap-2 font-medium text-sm font-mono"
           >
             <Plus className="w-4 h-4" />
-            New Workspace
+            [ INITIALIZE TUNNEL ]
+          </button>
+          
+          <button 
+            onClick={() => { setModalMode('join'); setShowNewModal(true); }}
+            className="w-full py-2.5 px-4 bg-white/5 hover:bg-white/10 text-white rounded-sm border border-white/10 transition-colors flex items-center justify-center gap-2 font-medium text-sm font-mono"
+          >
+            <LogIn className="w-4 h-4" />
+            [ JOIN TUNNEL ]
           </button>
         </div>
 
         {/* CHAT LIST */}
-        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-6">
-          
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
           <div>
-            <div className="px-3 mb-2 text-xs font-semibold tracking-wider text-text-secondary uppercase">
-              Workspaces
+            <div className="px-3 mb-2 text-xs font-semibold tracking-wider text-text-secondary font-mono">
+              // ACTIVE_TUNNELS
             </div>
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 font-mono">
               {chats.map(chat => (
                 <div 
                   key={chat.id}
                   onClick={() => { setActiveChat(chat); setIsMobileOpen(false); }}
                   className={cn(
-                    "group flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors",
-                    activeChat?.id === chat.id ? "bg-accent/10 text-accent" : "text-text-secondary hover:bg-white/5 hover:text-text-primary"
+                    "group flex items-center justify-between p-2 rounded-sm cursor-pointer transition-colors text-sm",
+                    activeChat?.id === chat.id ? "bg-accent/10 text-accent border-l-2 border-accent" : "text-text-secondary hover:bg-white/5 hover:text-text-primary border-l-2 border-transparent"
                   )}
-                  style={{ borderRadius: 'var(--radius)' }}
                 >
                   <div className="flex items-center gap-3 truncate">
                     <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span className="font-medium truncate text-sm">{chat.name}</span>
+                    <span className="truncate">{chat.name}</span>
                   </div>
                   
                   <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -110,7 +114,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
                         e.stopPropagation();
                         navigator.clipboard.writeText(chat.share_code);
                       }}
-                      className="p-1.5 hover:bg-white/10 rounded-md text-text-secondary hover:text-white transition-colors"
+                      className="p-1 hover:bg-white/10 rounded-sm text-text-secondary hover:text-white transition-colors"
                       title="Copy Share Code"
                     >
                       <Copy className="w-3.5 h-3.5" />
@@ -119,40 +123,28 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
                 </div>
               ))}
               {chats.length === 0 && (
-                <div className="px-3 py-2 text-sm text-text-secondary italic">
-                  No active workspaces.
+                <div className="px-3 py-2 text-xs text-text-secondary/50">
+                  NO ACTIVE CONNECTIONS.
                 </div>
               )}
             </div>
           </div>
-
         </div>
 
-        {/* PROFILE CARD */}
+        {/* CONFIG BUTTON */}
         <div className="p-4 border-t border-border bg-panel shrink-0">
-          <div className="flex items-center justify-between bg-background border border-border p-3" style={{ borderRadius: 'var(--radius)' }}>
-            <div className="flex items-center gap-3 truncate">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0 text-white font-bold text-sm shadow-inner">
-                {deviceId.slice(5, 7).toUpperCase()}
-              </div>
-              <div className="flex flex-col truncate">
-                <span className="text-sm font-semibold text-text-primary truncate">Anonymous Agent</span>
-                <span className="text-xs text-text-secondary truncate">{deviceId}</span>
-              </div>
-            </div>
-            <button 
-              onClick={onOpenSettings}
-              className="p-2 hover:bg-white/5 rounded-lg text-text-secondary hover:text-white transition-colors shrink-0"
-              style={{ borderRadius: 'var(--radius)' }}
-            >
-              <Settings className="w-5 h-5" />
-            </button>
-          </div>
+          <button 
+            onClick={onOpenSettings}
+            className="w-full flex items-center justify-center gap-2 p-3 bg-background hover:bg-white/5 border border-border rounded-sm text-text-secondary hover:text-white transition-colors font-mono text-sm"
+          >
+            <Settings className="w-4 h-4" />
+            [ CONFIG ]
+          </button>
         </div>
 
       </div>
 
-      {/* NEW MODAL */}
+      {/* NEW/JOIN MODAL */}
       <AnimatePresence>
         {showNewModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -163,50 +155,48 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSettings, isMobileOpen, setIsMo
             />
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="relative w-full max-w-md bg-panel border border-border p-6 shadow-2xl"
-              style={{ borderRadius: 'var(--radius)' }}
+              className="relative w-full max-w-md bg-panel border border-border p-6 shadow-2xl font-mono"
             >
-              <h2 className="text-xl font-bold mb-4">Initialize Workspace</h2>
+              <h2 className="text-xl font-bold mb-4 text-white">
+                {modalMode === 'create' ? '// INITIALIZE_NEW_TUNNEL' : '// JOIN_EXISTING_TUNNEL'}
+              </h2>
               
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-text-secondary mb-1">Create New</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Workspace Name..."
-                      className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors"
-                      onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                    />
-                    <button onClick={handleCreate} className="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                      Create
-                    </button>
+                {modalMode === 'create' ? (
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-2">TUNNEL_DESIGNATION</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder="Enter name..."
+                        className="flex-1 bg-background border border-border px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors text-white"
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+                      />
+                      <button onClick={handleCreate} className="bg-accent hover:bg-accent-hover text-black px-4 py-2 text-sm font-bold transition-colors">
+                        EXECUTE
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div className="relative py-2">
-                  <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border"></div></div>
-                  <div className="relative flex justify-center"><span className="bg-panel px-2 text-xs text-text-secondary">OR</span></div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-text-secondary mb-1">Join Existing</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text"
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value)}
-                      placeholder="Paste Share Code..."
-                      className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors"
-                      onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-                    />
-                    <button onClick={handleJoin} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                      Join
-                    </button>
+                ) : (
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-2">SHARE_CODE_AUTH</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={joinCode}
+                        onChange={(e) => setJoinCode(e.target.value)}
+                        placeholder="AXN-XXXX"
+                        className="flex-1 bg-background border border-border px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors text-white uppercase"
+                        onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
+                      />
+                      <button onClick={handleJoin} className="bg-accent hover:bg-accent-hover text-black px-4 py-2 text-sm font-bold transition-colors">
+                        CONNECT
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </motion.div>
           </div>

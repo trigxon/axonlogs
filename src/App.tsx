@@ -25,7 +25,7 @@ const Workspace = () => {
         <header className="md:hidden flex items-center h-14 border-b border-border bg-panel/80 backdrop-blur px-4 shrink-0 z-10">
           <button 
             onClick={() => setIsSidebarOpen(true)}
-            className="p-2 -ml-2 mr-2 text-text-secondary hover:text-text-primary"
+            className="p-2 -ml-2 mr-2 text-text-secondary hover:text-accent transition-colors"
           >
             <Menu className="w-6 h-6" />
           </button>
@@ -46,7 +46,7 @@ const Workspace = () => {
         )}
       </main>
 
-      <SettingsModal isOpen={isSettingsOpen} close={() => setIsSettingsOpen(false)} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };

@@ -125,7 +125,7 @@ const ChatInput = () => {
         )}
       </AnimatePresence>
 
-      <div className="flex items-end gap-2 bg-panel border border-border rounded-2xl p-1.5 focus-within:border-accent transition-colors shadow-sm max-w-4xl mx-auto">
+      <div className="flex items-end gap-2 bg-panel border border-border rounded-sm p-1.5 focus-within:border-accent transition-colors shadow-sm max-w-4xl mx-auto">
         
         <input 
           type="file" 
@@ -139,7 +139,7 @@ const ChatInput = () => {
         <button 
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-full transition-colors flex-shrink-0"
+          className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-sm transition-colors flex-shrink-0"
           title="Attach Files"
           disabled={isUploading}
         >
@@ -152,7 +152,7 @@ const ChatInput = () => {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Message..."
-          className="flex-1 max-h-[120px] bg-transparent border-none outline-none text-text-primary placeholder:text-text-secondary/70 resize-none py-2.5 px-1 text-[15px] leading-relaxed"
+          className="flex-1 max-h-[120px] bg-transparent border-none outline-none text-text-primary placeholder:text-text-secondary/70 resize-none py-2.5 px-1 text-[15px] leading-relaxed font-chat"
           rows={1}
         />
 
@@ -160,7 +160,7 @@ const ChatInput = () => {
           <button 
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-2 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-full transition-colors"
+            className="p-2 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded-sm transition-colors"
           >
             <Smile className="w-5 h-5" />
           </button>
@@ -168,7 +168,7 @@ const ChatInput = () => {
           <button 
             onClick={handleSend}
             disabled={!input.trim() && !isUploading}
-            className="p-2 bg-accent text-white rounded-full hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:hover:bg-accent"
+            className="p-2 bg-accent text-white rounded-sm hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:hover:bg-accent"
           >
             <Send className="w-5 h-5" />
           </button>

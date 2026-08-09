@@ -1,11 +1,13 @@
 import { format } from 'date-fns';
 import { useCrypto, type MessagePayload } from '../../contexts/CryptoContext';
+import { useSettings } from '../../contexts/SettingsContext';
 import { cn } from '../../lib/utils';
 import { Trash2, Flame } from 'lucide-react';
 import FileViewer from './FileViewer';
 
 const MessageBubble = ({ msg }: { msg: MessagePayload }) => {
   const { deviceId, deleteMessage } = useCrypto();
+  const { stealthMode } = useSettings();
   const isSelf = msg.sender_id === deviceId;
 
   const timeString = format(new Date(msg.created_at), 'HH:mm');
@@ -23,28 +25,23 @@ const MessageBubble = ({ msg }: { msg: MessagePayload }) => {
     <div className={cn("flex flex-col mb-4 group", isSelf ? "items-end" : "items-start")}>
       <div 
         className={cn(
-          "max-w-[75%] px-4 py-2.5 break-words shadow-sm",
+          "max-w-[75%] px-4 py-3 break-words shadow-sm transition-all duration-300",
           isSelf 
-            ? "bg-accent/90 text-white" 
-            : "bg-panel border border-border text-text-primary"
+            ? "bg-accent/20 border border-accent/40 text-accent rounded-sm rounded-br-none" 
+            : "bg-panel border border-border text-text-primary rounded-sm rounded-bl-none",
+          stealthMode ? "blur-sm hover:blur-none" : ""
         )}
-        style={{
-          borderTopLeftRadius: 'var(--radius)',
-          borderTopRightRadius: 'var(--radius)',
-          borderBottomLeftRadius: isSelf ? 'var(--radius)' : '0px',
-          borderBottomRightRadius: isSelf ? '0px' : 'var(--radius)',
-        }}
       >
         {filePayload && (
           <div className="mb-2">
             <FileViewer url={filePayload.url} filename={filePayload.name} mimeType={filePayload.mimeType} />
           </div>
         )}
-        {msg.text && <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>}
+        {msg.text && <p className="whitespace-pre-wrap leading-relaxed font-chat text-[0.95rem]">{msg.text}</p>}
         
         <div className={cn(
-          "flex items-center gap-1.5 mt-1 text-[0.8em]",
-          isSelf ? "text-white/70 justify-end" : "text-text-secondary justify-start"
+          "flex items-center gap-1.5 mt-2 text-[0.7em] font-mono tracking-widest",
+          isSelf ? "text-accent/70 justify-end" : "text-text-secondary justify-start"
         )}>
           {msg.burn_on_read && (
             <span title="Burns on refresh">

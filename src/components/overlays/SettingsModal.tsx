@@ -1,36 +1,22 @@
 import React from 'react';
-import { X, Moon, Monitor, EyeOff, Download, Trash2, Edit3 } from 'lucide-react';
-import { useSettings, type FontSize, type CornerStyle } from '../../contexts/SettingsContext';
-import { useCrypto } from '../../contexts/CryptoContext';
+import { X, EyeOff, Trash2, Terminal, Monitor, Sparkles } from 'lucide-react';
+import { useSettings, type AppTheme } from '../../contexts/SettingsContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '../../lib/utils';
 
 interface SettingsModalProps {
   isOpen: boolean;
-  close: () => void;
+  onClose: () => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, close }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { 
-    isDarkMode, setIsDarkMode, 
-    fontSize, setFontSize, 
-    cornerStyle, setCornerStyle,
+    appTheme, setAppTheme,
+    stealthMode, setStealthMode,
     burnerMode, setBurnerMode
   } = useSettings();
 
-  const { messages, activeChat } = useCrypto();
-
-  const handleExportJSON = () => {
-    if (!activeChat) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
-    const dlAnchorElem = document.createElement('a');
-    dlAnchorElem.setAttribute("href", dataStr);
-    dlAnchorElem.setAttribute("download", `axon_chat_${activeChat.name.replace(/\s+/g, '_')}.json`);
-    dlAnchorElem.click();
-  };
-
-  const handleDeleteData = () => {
-    if (confirm("Are you sure you want to delete all local session data? This will log you out.")) {
+  const handleReset = () => {
+    if (confirm('WARNING: This will wipe all local keys and disconnect you from all tunnels. Proceed?')) {
       localStorage.clear();
       window.location.reload();
     }
@@ -41,167 +27,107 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, close }) => {
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            onClick={close}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            onClick={onClose}
           />
-          
           <motion.div 
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 20, opacity: 0 }}
-            className="relative w-full max-w-2xl bg-background rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-            style={{ borderRadius: 'var(--radius)' }}
+            initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }}
+            className="relative w-full max-w-lg bg-panel border border-border shadow-2xl overflow-hidden font-mono"
           >
-            <div className="p-5 border-b border-border flex justify-between items-center bg-panel shrink-0">
-              <h2 className="font-semibold text-lg">Settings</h2>
-              <button onClick={close} className="p-1.5 hover:bg-white/10 rounded-lg text-text-secondary hover:text-text-primary transition-colors">
+            {/* Header */}
+            <div className="p-4 border-b border-border flex items-center justify-between bg-background">
+              <h2 className="text-lg font-bold text-white">// SYSTEM_CONFIG</h2>
+              <button onClick={onClose} className="p-1 text-text-secondary hover:text-white transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-6 space-y-8 max-h-[80vh] overflow-y-auto">
               
-              {/* APPEARANCE SECTION */}
-              <div className="bg-panel border border-border overflow-hidden" style={{ borderRadius: 'var(--radius)' }}>
-                <div className="flex items-center gap-2 px-4 py-3 bg-white/5 border-b border-border text-xs font-semibold tracking-wider text-text-secondary uppercase border-l-[3px] border-l-[#d946ef]">
-                  <Edit3 className="w-4 h-4" /> Appearance
+              {/* THEME SELECTOR */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-text-secondary tracking-widest">// THEME_ENGINE</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { id: 'Terminal', icon: Terminal, label: 'TERMINAL', desc: 'Classic matrix' },
+                    { id: 'Cyberpunk', icon: Sparkles, label: 'CYBERPUNK', desc: 'Neon overdrive' },
+                    { id: 'Minimalist', icon: Monitor, label: 'MINIMALIST', desc: 'Clean slate' }
+                  ].map(theme => {
+                    const isActive = appTheme === theme.id;
+                    const Icon = theme.icon;
+                    return (
+                      <button
+                        key={theme.id}
+                        onClick={() => setAppTheme(theme.id as AppTheme)}
+                        className={`p-3 border text-left transition-all flex flex-col gap-2 ${
+                          isActive 
+                            ? 'border-accent bg-accent/10 text-accent' 
+                            : 'border-border bg-background hover:border-text-secondary/50 text-text-secondary'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <div>
+                          <div className="text-sm font-bold">{theme.label}</div>
+                          <div className="text-[10px] opacity-70 mt-0.5">{theme.desc}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
+
+              {/* SECURITY & PRIVACY */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-text-secondary tracking-widest">// SECURITY_PROTOCOLS</label>
                 
-                <div className="p-4 space-y-4">
-                  {/* Theme */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-3">
+                  {/* Stealth Mode */}
+                  <div className="flex items-center justify-between p-4 bg-background border border-border">
                     <div>
-                      <div className="font-medium text-text-primary">Theme Mode</div>
-                      <div className="text-sm text-text-secondary">Toggle dark or light aesthetics.</div>
+                      <div className="text-sm font-bold text-white mb-1">Stealth Mode</div>
+                      <div className="text-xs text-text-secondary">Obfuscate messages until hovered</div>
                     </div>
-                    <div className="flex bg-background border border-border p-1 rounded-lg">
-                      <button 
-                        onClick={() => setIsDarkMode(true)} 
-                        className={cn("px-4 py-1.5 text-sm rounded flex items-center gap-2 transition-colors", isDarkMode ? "bg-panel shadow text-text-primary" : "text-text-secondary hover:text-text-primary")}
-                      >
-                        <Moon className="w-4 h-4" /> Dark
-                      </button>
-                      <button 
-                        onClick={() => setIsDarkMode(false)} 
-                        className={cn("px-4 py-1.5 text-sm rounded flex items-center gap-2 transition-colors", !isDarkMode ? "bg-panel shadow text-text-primary" : "text-text-secondary hover:text-text-primary")}
-                      >
-                        <Monitor className="w-4 h-4" /> Light
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setStealthMode(!stealthMode)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${stealthMode ? 'bg-accent' : 'bg-border'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${stealthMode ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </div>
 
-                  <hr className="border-border" />
-
-                  {/* Font Size */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  {/* Burn on Refresh */}
+                  <div className="flex items-center justify-between p-4 bg-background border border-border">
                     <div>
-                      <div className="font-medium text-text-primary">UI Text Size</div>
-                      <div className="text-sm text-text-secondary">Affects labels and body text.</div>
+                      <div className="flex items-center gap-2 text-sm font-bold text-white mb-1">
+                        <EyeOff className="w-4 h-4 text-accent" />
+                        Burn on Refresh
+                      </div>
+                      <div className="text-xs text-text-secondary">Delete messages from DB instantly on read</div>
                     </div>
-                    <div className="flex bg-background border border-border p-1 rounded-lg">
-                      {(['S', 'M', 'L'] as FontSize[]).map(size => (
-                        <button 
-                          key={size}
-                          onClick={() => setFontSize(size)} 
-                          className={cn(
-                            "w-10 py-1.5 text-sm rounded font-medium transition-colors", 
-                            fontSize === size ? "bg-panel shadow text-text-primary" : "text-text-secondary hover:text-text-primary"
-                          )}
-                        >
-                          {size}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <hr className="border-border" />
-
-                  {/* Corner Style */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="font-medium text-text-primary">Border Radius</div>
-                      <div className="text-sm text-text-secondary">How rounded cards and buttons appear.</div>
-                    </div>
-                    <div className="flex bg-background border border-border p-1 rounded-lg">
-                      {(['Sharp', 'Rounded', 'Pill'] as CornerStyle[]).map(style => (
-                        <button 
-                          key={style}
-                          onClick={() => setCornerStyle(style)} 
-                          className={cn(
-                            "px-3 py-1.5 text-sm rounded font-medium transition-colors", 
-                            cornerStyle === style ? "bg-panel shadow text-text-primary" : "text-text-secondary hover:text-text-primary"
-                          )}
-                        >
-                          {style}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* PRIVACY SECTION */}
-              <div className="bg-panel border border-border overflow-hidden" style={{ borderRadius: 'var(--radius)' }}>
-                <div className="flex items-center gap-2 px-4 py-3 bg-white/5 border-b border-border text-xs font-semibold tracking-wider text-text-secondary uppercase border-l-[3px] border-l-[#3b82f6]">
-                  <EyeOff className="w-4 h-4" /> Privacy
-                </div>
-                <div className="p-4">
-                  <div 
-                    onClick={() => setBurnerMode(!burnerMode)}
-                    className="flex items-center justify-between cursor-pointer group"
-                  >
-                    <div>
-                      <div className="font-medium text-text-primary group-hover:text-accent transition-colors">Burner Mode</div>
-                      <div className="text-sm text-text-secondary">Messages are deleted from the database on read.</div>
-                    </div>
-                    <div className={cn("w-11 h-6 rounded-full p-1 transition-colors relative shrink-0", burnerMode ? "bg-accent" : "bg-border")}>
-                      <div className={cn("w-4 h-4 bg-white rounded-full shadow transition-transform", burnerMode ? "translate-x-5" : "translate-x-0")} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* DATA SECTION */}
-              <div className="bg-panel border border-border overflow-hidden" style={{ borderRadius: 'var(--radius)' }}>
-                <div className="flex items-center gap-2 px-4 py-3 bg-white/5 border-b border-border text-xs font-semibold tracking-wider text-text-secondary uppercase border-l-[3px] border-l-[#10b981]">
-                  <Download className="w-4 h-4" /> Export
-                </div>
-                <div className="p-0">
-                  <div 
-                    onClick={handleExportJSON}
-                    className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors"
-                  >
-                    <div>
-                      <div className="font-medium text-text-primary">Export JSON Backup</div>
-                      <div className="text-sm text-text-secondary">Download all your chat data as a portable file.</div>
-                    </div>
+                    <button
+                      onClick={() => setBurnerMode(!burnerMode)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${burnerMode ? 'bg-accent' : 'bg-border'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${burnerMode ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </div>
                 </div>
               </div>
 
               {/* DANGER ZONE */}
-              <div className="bg-panel border border-border overflow-hidden" style={{ borderRadius: 'var(--radius)' }}>
-                <div className="flex items-center gap-2 px-4 py-3 bg-danger/10 border-b border-danger/20 text-xs font-semibold tracking-wider text-danger uppercase border-l-[3px] border-l-danger">
-                  <Trash2 className="w-4 h-4" /> Danger Zone
-                </div>
-                <div className="p-0">
-                  <div 
-                    onClick={handleDeleteData}
-                    className="flex items-center justify-between p-4 cursor-pointer hover:bg-danger/10 transition-colors group"
-                  >
-                    <div>
-                      <div className="font-medium text-danger">Reset All Data</div>
-                      <div className="text-sm text-text-secondary group-hover:text-danger/70 transition-colors">Permanently delete your local workspace data.</div>
-                    </div>
-                  </div>
-                </div>
+              <div className="space-y-3 pt-4 border-t border-border">
+                <label className="block text-xs font-bold text-danger tracking-widest">// DANGER_ZONE</label>
+                <button
+                  onClick={handleReset}
+                  className="w-full flex items-center justify-center gap-2 p-3 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 hover:border-danger transition-colors text-sm font-bold"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  INITIATE MASTER RESET
+                </button>
               </div>
 
             </div>
-
           </motion.div>
         </div>
       )}

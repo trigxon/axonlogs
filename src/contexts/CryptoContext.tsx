@@ -194,7 +194,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const createChat = async (name?: string) => {
     if (!supabase) return;
-    const shareCode = 'ax-' + Math.random().toString(36).substring(2, 10);
+    const shareCode = 'AXN-' + Math.random().toString(16).substring(2, 6).toUpperCase();
     const { data, error } = await supabase
       .from('chats')
       .insert({ name: name || 'New Chat', share_code: shareCode })

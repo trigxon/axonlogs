@@ -1,10 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
   --color-background: var(--bg);
   --color-panel: var(--panel);
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-border: var(--border);
@@ -12,27 +13,53 @@
 }
 
 @layer base {
+
   :root {
-    --bg: #ffffff;
-    --panel: #f4f4f5;
-    --text-primary: #18181b;
-    --text-secondary: #71717a;
-    --border: #e4e4e7;
-    --radius: 0.5rem;
-    --font-scale: 1rem;
-  }
-  
-  :root.dark {
-    --bg: #09090b;
-    --panel: #121214;
+    /* Minimalist Default */
+    --bg: #050505;
+    --panel: #0a0a0f;
     --text-primary: #ffffff;
     --text-secondary: #a1a1aa;
     --border: #27272a;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    
+    --font-mono: 'Fira Code', monospace;
+    --font-sans: 'Inter', sans-serif;
+  }
+
+  :root.theme-terminal {
+    --bg: #050505;
+    --panel: #0a0a0f;
+    --text-primary: #4ade80;
+    --text-secondary: #166534;
+    --border: #14532d;
+    --accent: #22c55e;
+    --accent-hover: #16a34a;
+  }
+
+  :root.theme-cyberpunk {
+    --bg: #050505;
+    --panel: #0a0a0f;
+    --text-primary: #f472b6;
+    --text-secondary: #be185d;
+    --border: #831843;
+    --accent: #06b6d4;
+    --accent-hover: #0891b2;
+  }
+
+  :root.theme-minimalist {
+    --bg: #050505;
+    --panel: #0a0a0f;
+    --text-primary: #ffffff;
+    --text-secondary: #a1a1aa;
+    --border: #27272a;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
   }
 
   body {
-    font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-    font-size: var(--font-scale);
+    font-family: var(--font-mono);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
   
@@ -49,5 +76,7 @@
 }
 
 @layer utilities {
-  /* Utility classes can be added here if needed */
+  .font-chat {
+    font-family: var(--font-sans);
+  }
 }
