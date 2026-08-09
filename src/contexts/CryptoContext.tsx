@@ -263,8 +263,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
       if (data) {
         const decryptedMsgs = data.map(msg => {
-          const decryptedText = decryptText(msg.text, activeChat.share_code);
-          const decryptedFileUrl = decryptText(msg.file_url, activeChat.share_code);
+          const decryptedText = msg.text ? decryptText(msg.text, activeChat.share_code) : '';
+          const decryptedFileUrl = msg.file_url ? decryptText(msg.file_url, activeChat.share_code) : null;
           const hasTextError = msg.text ? !decryptedText : false;
           const hasFileError = msg.file_url ? !decryptedFileUrl : false;
           return {
@@ -302,8 +302,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
            setLatency(Date.now() - msgTime);
         }
 
-        const decryptedText = decryptText(newMsg.text, activeChat.share_code);
-        const decryptedFileUrl = decryptText(newMsg.file_url, activeChat.share_code);
+        const decryptedText = newMsg.text ? decryptText(newMsg.text, activeChat.share_code) : '';
+        const decryptedFileUrl = newMsg.file_url ? decryptText(newMsg.file_url, activeChat.share_code) : null;
         const hasTextError = newMsg.text ? !decryptedText : false;
         const hasFileError = newMsg.file_url ? !decryptedFileUrl : false;
         setMessages(prev => [...prev, {
