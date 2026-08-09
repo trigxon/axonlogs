@@ -10,7 +10,10 @@ const ChatFeed = () => {
   // Auto-scroll logic anchored to bottom
   useEffect(() => {
     if (feedRef.current) {
-      feedRef.current.scrollTop = feedRef.current.scrollHeight;
+      feedRef.current.scrollTo({
+        top: feedRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
     }
   }, [messages]);
 

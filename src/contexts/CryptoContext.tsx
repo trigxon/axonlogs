@@ -6,7 +6,7 @@ export interface MessagePayload {
   id: string;
   senderId: string;
   senderAlias: string;
-  content: string; // The encrypted content over the wire, decrypted locally
+  content: string;
   timestamp: number;
   type: 'message' | 'system' | 'error';
   isDecryptionError?: boolean;
@@ -26,7 +26,6 @@ interface CryptoContextType {
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
-// Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
@@ -47,8 +46,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const [messages, setMessages] = useState<MessagePayload[]>([]);
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
+  const [localChannel, setLocalChannel] = useState<BroadcastChannel | null>(null);
   const [connected, setConnected] = useState(false);
   const [activeNodes, setActiveNodes] = useState(1);
+  const [knownNodes, setKnownNodes] = useState<Set<string>>(new Set([nodeId]));
 
   const injectSystemMessage = useCallback((content: string, type: 'system' | 'error' = 'system') => {
     setMessages(prev => [...prev, {
@@ -65,11 +66,76 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setMessages([]);
   }, []);
 
+  // BroadcastChannel Fallback Logic
+  useEffect(() => {
+    if (supabase) return; // Skip if we have Supabase
+
+    const bc = new BroadcastChannel(`axon_room_${roomCode}`);
+    setLocalChannel(bc);
+    setConnected(true);
+
+    const handleMessage = (event: MessageEvent) => {
+      const payload = event.data;
+
+      if (payload.type === 'ping') {
+        setKnownNodes(prev => new Set([...prev, payload.nodeId]));
+        bc.postMessage({ type: 'pong', nodeId });
+        return;
+      }
+      if (payload.type === 'pong') {
+        setKnownNodes(prev => new Set([...prev, payload.nodeId]));
+        return;
+      }
+
+      if (payload.type === 'message') {
+        const { senderId, senderAlias, encryptedContent, timestamp } = payload;
+        
+        let decryptedContent = '';
+        let isDecryptionError = false;
+
+        try {
+          const bytes = CryptoJS.AES.decrypt(encryptedContent, roomCode);
+          decryptedContent = bytes.toString(CryptoJS.enc.Utf8);
+          if (!decryptedContent) isDecryptionError = true;
+        } catch (err) {
+          isDecryptionError = true;
+        }
+
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          senderId,
+          senderAlias,
+          content: isDecryptionError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedContent,
+          timestamp,
+          type: 'message',
+          isDecryptionError
+        }]);
+      }
+    };
+
+    bc.addEventListener('message', handleMessage);
+    
+    // Announce presence
+    bc.postMessage({ type: 'ping', nodeId });
+    injectSystemMessage(`[LOCAL MODE ACTIVE] Uplink established to [${roomCode}]. Channel secure.`);
+
+    return () => {
+      bc.removeEventListener('message', handleMessage);
+      bc.close();
+    };
+  }, [roomCode, nodeId, injectSystemMessage]);
+
+  // Update active nodes count for local mode
   useEffect(() => {
     if (!supabase) {
-      injectSystemMessage('CRITICAL: Supabase credentials missing. Offline mode active.', 'error');
-      return;
+      setActiveNodes(knownNodes.size);
     }
+  }, [knownNodes]);
+
+
+  // Supabase Logic
+  useEffect(() => {
+    if (!supabase) return;
 
     const currentChannel = supabase.channel(`room:${roomCode}`, {
       config: {
@@ -88,9 +154,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         try {
           const bytes = CryptoJS.AES.decrypt(encryptedContent, roomCode);
           decryptedContent = bytes.toString(CryptoJS.enc.Utf8);
-          if (!decryptedContent) {
-            isDecryptionError = true;
-          }
+          if (!decryptedContent) isDecryptionError = true;
         } catch (err) {
           isDecryptionError = true;
         }
@@ -127,11 +191,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   }, [roomCode, nodeId, injectSystemMessage]);
 
   const sendMessage = useCallback((rawMessage: string) => {
-    // Optimistic UI updates could happen here if we wanted, but we also want it to go through the wire
-    // Or we just inject locally and broadcast
     const encryptedPayload = CryptoJS.AES.encrypt(rawMessage, roomCode).toString();
     
-    // Inject locally immediately for better UX
     setMessages(prev => [...prev, {
       id: crypto.randomUUID(),
       senderId: nodeId,
@@ -141,7 +202,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       type: 'message'
     }]);
 
-    if (channel && connected) {
+    if (supabase && channel && connected) {
       channel.send({
         type: 'broadcast',
         event: 'message',
@@ -152,8 +213,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           timestamp: Date.now(),
         },
       });
+    } else if (!supabase && localChannel) {
+      localChannel.postMessage({
+        type: 'message',
+        senderId: nodeId,
+        senderAlias: `NODE_${nodeId}`,
+        encryptedContent: encryptedPayload,
+        timestamp: Date.now(),
+      });
     }
-  }, [channel, connected, nodeId, roomCode]);
+  }, [channel, localChannel, connected, nodeId, roomCode]);
 
   return (
     <CryptoContext.Provider

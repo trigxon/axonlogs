@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Paperclip, Play } from 'lucide-react';
 import { useCrypto } from '../../contexts/CryptoContext';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -8,6 +8,25 @@ const CommandInput = () => {
   const { sendMessage, clearMessages, injectSystemMessage } = useCrypto();
   const { setPanicState } = useSettings();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Global focus handler to ensure typing always goes to the prompt
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key.length === 1 && 
+        !e.ctrlKey && 
+        !e.metaKey && 
+        !e.altKey &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA'
+      ) {
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +93,7 @@ const CommandInput = () => {
         <div className="md:hidden text-matrix font-bold">_&gt;</div>
 
         <input
+          ref={inputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
