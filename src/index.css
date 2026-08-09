@@ -17,11 +17,11 @@
     /* Hacker Terminal Aesthetic */
     --bg: #050505;
     --panel: #0a0a0f;
-    --text-primary: #10b981; /* Matrix Green */
-    --text-secondary: #059669;
-    --border: rgba(16, 185, 129, 0.2);
-    --accent: #10b981;
-    --accent-hover: #34d399;
+    --text-primary: #a3a3a3; /* Neutral Gray for base text */
+    --text-secondary: #52525b;
+    --border: #27272a;
+    --accent: #22d3ee; /* Cyan */
+    --accent-hover: #06b6d4;
     
     --font-mono: 'Fira Code', monospace;
   }
@@ -39,7 +39,16 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-accent/20 hover:bg-accent/40 rounded-sm;
+    @apply bg-zinc-800 rounded-sm;
+  }
+  
+  /* Input autofill override */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover, 
+  input:-webkit-autofill:focus, 
+  input:-webkit-autofill:active{
+      -webkit-box-shadow: 0 0 0 30px #050505 inset !important;
+      -webkit-text-fill-color: #22d3ee !important;
   }
 }
 
