@@ -34,7 +34,7 @@ interface CryptoContextType {
   messages: Message[];
   latency: number;
   setActiveChat: (chat: Chat) => void;
-  createChat: () => Promise<void>;
+  createChat: (customName?: string, customCode?: string) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
   sendMessage: (text: string, file?: File | null) => Promise<void>;
   purgeTerminal: () => void;
@@ -128,11 +128,11 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const createChat = async () => {
-    if (!supabase) return;
-    const shareCode = `AXN-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const createChat = async (customName?: string, customCode?: string) => {
+    if (!supabase) return false;
+    const shareCode = customCode ? customCode.toUpperCase() : `AXN-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const newChat = {
-      name: `CHANNEL_${shareCode}`,
+      name: customName || `CHANNEL_${shareCode}`,
       share_code: shareCode
     };
 
@@ -141,16 +141,21 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       console.error("Create chat error:", error);
       alert(`Database Error: ${error.message}\nURL being used: ${supabaseUrl}`);
       // Fallback local chat so UI renders
-      const mockChat = { id: 'mock', name: 'LOCAL_FALLBACK', share_code: 'ERR', created_at: new Date().toISOString() };
-      setChats(prev => [mockChat, ...prev]);
-      setActiveChat(mockChat);
-      return;
+      if (!customCode) {
+        const mockChat = { id: 'mock', name: 'LOCAL_FALLBACK', share_code: 'ERR', created_at: new Date().toISOString() };
+        setChats(prev => [mockChat, ...prev]);
+        setActiveChat(mockChat);
+      }
+      return false;
     }
     if (data) {
       saveKnownChat(data.id);
       setChats(prev => [data, ...prev]);
       setActiveChat(data);
+      addLog(`Created channel ${data.name}`);
+      return true;
     }
+    return false;
   };
 
   const joinChat = async (code: string) => {

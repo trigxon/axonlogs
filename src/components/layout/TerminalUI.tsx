@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Key, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Key, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server } from 'lucide-react';
 
 const TerminalUI: React.FC = () => {
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat } = useCrypto();
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
@@ -14,6 +14,13 @@ const TerminalUI: React.FC = () => {
   const [showLogs, setShowLogs] = useState(false);
   const [aliasInput, setAliasInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newChatName, setNewChatName] = useState('');
+  const [newChatPassphrase, setNewChatPassphrase] = useState('');
+
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameInput, setRenameInput] = useState('');
   
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -105,6 +112,24 @@ const TerminalUI: React.FC = () => {
     setShowSettings(false);
   };
 
+  const handleCreateChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await createChat(newChatName.trim(), newChatPassphrase.trim());
+    if (success) {
+      setShowCreateModal(false);
+      setNewChatName('');
+      setNewChatPassphrase('');
+    }
+  };
+
+  const handleRenameChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (activeChat && renameInput.trim()) {
+      await renameChat(activeChat.id, renameInput.trim());
+      setShowRenameModal(false);
+    }
+  };
+
   return (
     <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
       
@@ -160,7 +185,7 @@ const TerminalUI: React.FC = () => {
               <button onClick={() => setIsJoining(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-cyan-400/30 p-2">
                 <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
               </button>
-              <button onClick={createChat} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-emerald-500/30 p-2">
+              <button onClick={() => setShowCreateModal(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-emerald-500/30 p-2">
                 <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
               </button>
             </>
@@ -239,6 +264,17 @@ const TerminalUI: React.FC = () => {
         <div className="px-8 pt-8 pb-4 shrink-0">
           <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
             CHANNEL // [{activeChat?.share_code || 'STANDBY'}]
+            {activeChat && (
+              <button 
+                onClick={() => {
+                  setRenameInput(activeChat.name);
+                  setShowRenameModal(true);
+                }}
+                className="text-zinc-600 hover:text-cyan-400 transition-colors ml-2"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+            )}
           </h2>
           <div className="text-emerald-500 text-xs">{activeChat ? 'Uplink Established' : 'Awaiting Connection...'}</div>
         </div>
@@ -431,6 +467,78 @@ const TerminalUI: React.FC = () => {
                 ))
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-md p-6 relative">
+            <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-emerald-500 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
+              <Server className="w-5 h-5" /> INITIALIZE NEW TUNNEL
+            </h3>
+            
+            <form onSubmit={handleCreateChat} className="space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">TUNNEL NAME (OPTIONAL)</label>
+                <input 
+                  type="text" 
+                  value={newChatName}
+                  onChange={e => setNewChatName(e.target.value)}
+                  placeholder="e.g. PROJECT_OMEGA"
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">CUSTOM PASSPHRASE (OPTIONAL)</label>
+                <input 
+                  type="text" 
+                  value={newChatPassphrase}
+                  onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
+                  placeholder="LEAVE BLANK FOR AUTO-GEN"
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                />
+              </div>
+              <div className="pt-4">
+                <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
+                  CREATE TUNNEL
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showRenameModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-cyan-400/50 w-full max-w-md p-6 relative">
+            <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-cyan-400 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
+              <Edit2 className="w-5 h-5" /> RENAME TUNNEL
+            </h3>
+            
+            <form onSubmit={handleRenameChat} className="space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW TUNNEL NAME</label>
+                <input 
+                  type="text" 
+                  value={renameInput}
+                  onChange={e => setRenameInput(e.target.value)}
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-400 p-2 text-white font-mono text-sm outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="pt-4">
+                <button type="submit" className="w-full bg-cyan-400 hover:bg-cyan-300 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
+                  SAVE NAME
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
