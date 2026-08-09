@@ -74,21 +74,27 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (!supabase || !deviceId) return;
 
     const fetchChats = async () => {
-      // For simplicity in this anonymous model, we'll just fetch all chats this device created or joined.
-      // To simulate "joined" chats being remembered, we store known chat IDs in localStorage.
       const storedChats = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
       
-      const { data } = await supabase
+      if (storedChats.length === 0) {
+        await createChat();
+        return;
+      }
+
+      const { data, error } = await supabase
         .from('chats')
         .select('*')
         .in('id', storedChats)
         .order('created_at', { ascending: false });
 
+      if (error) {
+        console.error("Fetch chats error:", error);
+      }
+
       if (data && data.length > 0) {
         setChats(data);
         setActiveChat(data[0]);
       } else {
-        // Create first chat automatically if none exist
         await createChat();
       }
     };
@@ -112,7 +118,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       share_code: shareCode
     };
 
-    const { data } = await supabase.from('chats').insert(newChat).select().single();
+    const { data, error } = await supabase.from('chats').insert(newChat).select().single();
+    if (error) {
+      console.error("Create chat error:", error);
+      alert("Database error: Could not create chat. Check Supabase RLS policies.");
+      // Fallback local chat so UI renders
+      const mockChat = { id: 'mock', name: 'LOCAL_FALLBACK', share_code: 'ERR', created_at: new Date().toISOString() };
+      setChats(prev => [mockChat, ...prev]);
+      setActiveChat(mockChat);
+      return;
+    }
     if (data) {
       saveKnownChat(data.id);
       setChats(prev => [data, ...prev]);
@@ -122,7 +137,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const joinChat = async (code: string) => {
     if (!supabase) return false;
-    const { data } = await supabase.from('chats').select('*').eq('share_code', code).single();
+    const { data, error } = await supabase.from('chats').select('*').eq('share_code', code).single();
+    if (error) {
+      console.error("Join chat error:", error);
+    }
     if (data) {
       saveKnownChat(data.id);
       setChats(prev => {
@@ -137,7 +155,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const renameChat = async (id: string, newName: string) => {
     if (!supabase) return;
-    await supabase.from('chats').update({ name: newName }).eq('id', id);
+    const { error } = await supabase.from('chats').update({ name: newName }).eq('id', id);
+    if (error) console.error("Rename chat error:", error);
     setChats(prev => prev.map(c => c.id === id ? { ...c, name: newName } : c));
     if (activeChat?.id === id) {
       setActiveChat(prev => prev ? { ...prev, name: newName } : null);
