@@ -1,9 +1,55 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
 import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+const CodeBlock = ({ inline, className, children, ...props }: any) => {
+  const match = /language-(\w+)/.exec(className || '');
+  const codeString = String(children).replace(/\n$/, '');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(codeString);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  if (!inline && match) {
+    return (
+      <div className="relative mt-2 mb-4 group font-mono">
+        <div className="flex justify-between items-center bg-[#1e1e1e] px-4 py-1 border border-zinc-800 border-b-0">
+          <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">{match[1]}</span>
+          <button 
+            onClick={handleCopy}
+            className="text-[10px] text-cyan-500 hover:text-cyan-400 uppercase tracking-widest font-bold"
+          >
+            {copied ? 'COPIED' : 'COPY'}
+          </button>
+        </div>
+        <SyntaxHighlighter
+          style={vscDarkPlus}
+          language={match[1]}
+          PreTag="div"
+          className="border border-zinc-800 !m-0 !bg-[#0a0a0f] text-xs"
+          {...props}
+        >
+          {codeString}
+        </SyntaxHighlighter>
+      </div>
+    );
+  }
+  return (
+    <code className="bg-zinc-800 text-cyan-300 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>
+      {children}
+    </code>
+  );
+};
 
 const TerminalUI: React.FC = () => {
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword, onlineUsers, typingUsers, broadcastTyping } = useCrypto();
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
@@ -35,6 +81,7 @@ const TerminalUI: React.FC = () => {
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     setAliasInput(alias);
@@ -56,12 +103,26 @@ const TerminalUI: React.FC = () => {
     e.preventDefault();
     if (!input.trim() && !selectedFile) return;
 
+    if (input.trim() === '/nuke' && activeChat) {
+      if (confirm("WARNING: NUCLEAR PROTOCOL INITIATED. THIS WILL PERMANENTLY DESTROY THIS TERMINAL AND ALL DATA GLOBALLY. PROCEED?")) {
+        deleteChat(activeChat.id);
+        setInput('');
+        return;
+      }
+    }
+
     const cmd = input.trim();
     const file = selectedFile;
     
     setInput('');
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+      broadcastTyping(false);
+    }
 
     // Slash command interpreter (only if text command)
     if (cmd === '/clear' && !file) {
@@ -78,6 +139,19 @@ const TerminalUI: React.FC = () => {
     }
 
     await sendMessage(cmd, file);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value);
+    if (!typingTimeoutRef.current) {
+      broadcastTyping(true);
+    } else {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    typingTimeoutRef.current = setTimeout(() => {
+      broadcastTyping(false);
+      typingTimeoutRef.current = null;
+    }, 2000);
   };
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
@@ -324,7 +398,14 @@ const TerminalUI: React.FC = () => {
               </button>
             )}
           </h2>
-          <div className="text-emerald-500 text-xs">{activeChat ? 'Uplink Established' : 'Awaiting Connection...'}</div>
+          <div className="text-emerald-500 text-xs mt-1">
+            {activeChat ? 'Uplink Established' : 'Awaiting Connection...'}
+            {activeChat && Object.keys(onlineUsers).length > 0 && (
+              <span className="ml-4 text-cyan-400">
+                ACTIVE NODES: {Object.values(onlineUsers).join(', ')}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Chat Feed */}
@@ -377,7 +458,22 @@ const TerminalUI: React.FC = () => {
                     <>
                       {msg.text && (
                         <div className={`text-sm text-zinc-300 leading-relaxed ${stealthMode ? 'filter blur-sm hover:blur-none transition-all cursor-crosshair' : ''}`}>
-                          {msg.text}
+                          <div className="break-words space-y-2">
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]} 
+                              components={{
+                                code: CodeBlock,
+                                p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
+                                a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank">{children}</a> },
+                                ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
+                                ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
+                                li({children}) { return <li className="mb-1">{children}</li> },
+                                blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       )}
                       {renderFile(msg.file_url)}
@@ -386,6 +482,12 @@ const TerminalUI: React.FC = () => {
                 </div>
               );
             })
+          )}
+
+          {Object.keys(typingUsers).filter(id => id !== deviceId).length > 0 && (
+            <div className="text-[10px] text-cyan-500/70 font-mono tracking-widest uppercase mb-4 animate-pulse">
+              [{Object.values(typingUsers).filter((_, i) => Object.keys(typingUsers)[i] !== deviceId).join(', ')} IS TYPING...]
+            </div>
           )}
 
           <div ref={messagesEndRef} />
@@ -406,7 +508,7 @@ const TerminalUI: React.FC = () => {
               <input 
                 type="text" 
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={handleInputChange}
                 className="flex-1 bg-transparent border-none outline-none text-zinc-200 font-mono text-sm placeholder:text-zinc-700 min-w-0 px-2"
                 placeholder="Enter command or message..."
                 autoFocus

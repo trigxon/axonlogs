@@ -48,6 +48,9 @@ interface CryptoContextType {
   systemLogs: SystemLog[];
   addLog: (msg: string) => void;
   networkStatus: string;
+  onlineUsers: Record<string, string>;
+  typingUsers: Record<string, string>;
+  broadcastTyping: (isTyping: boolean) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -65,6 +68,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const [latency, setLatency] = useState(0);
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
   const [networkStatus, setNetworkStatus] = useState<string>('CONNECTING...');
+  const [onlineUsers, setOnlineUsers] = useState<Record<string, string>>({});
+  const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
+  const [presenceChannel, setPresenceChannel] = useState<any>(null);
 
   const addLog = useCallback((msg: string) => {
     setSystemLogs(prev => [{ id: crypto.randomUUID(), time: new Date().toISOString(), msg }, ...prev]);
@@ -287,8 +293,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
     fetchMessages();
 
-    // Subscribe to new messages
-    const subscription = supabase.channel(`public:messages:chat_id=${activeChat.id}`)
+    // Subscribe to new messages and presence
+    const channel = supabase.channel(`room:${activeChat.id}`, {
+      config: { presence: { key: deviceId } }
+    });
+
+    channel
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
@@ -296,7 +306,6 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         filter: `chat_id=eq.${activeChat.id}`
       }, (payload) => {
         const newMsg = payload.new as Message;
-        // Calculate latency for incoming messages
         if (newMsg.sender_id !== deviceId) {
            const msgTime = new Date(newMsg.created_at).getTime();
            setLatency(Date.now() - msgTime);
@@ -317,12 +326,51 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           supabase.from('messages').delete().eq('id', newMsg.id).then();
         }
       })
-      .subscribe();
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const online: Record<string, string> = {};
+        for (const [key, presences] of Object.entries(state)) {
+           if (presences.length > 0) {
+              online[key] = (presences[0] as any).alias;
+           }
+        }
+        setOnlineUsers(online);
+      })
+      .on('broadcast', { event: 'typing' }, (payload) => {
+        const { deviceId: senderId, alias: senderAlias, isTyping } = payload.payload;
+        if (isTyping) {
+          setTypingUsers(prev => ({ ...prev, [senderId]: senderAlias }));
+        } else {
+          setTypingUsers(prev => {
+            const next = { ...prev };
+            delete next[senderId];
+            return next;
+          });
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ alias });
+        }
+      });
+
+    setPresenceChannel(channel);
 
     return () => {
-      supabase.removeChannel(subscription);
+      supabase.removeChannel(channel);
+      setPresenceChannel(null);
     };
-  }, [activeChat, deviceId, decryptText]);
+  }, [activeChat, deviceId, alias, decryptText]);
+
+  const broadcastTyping = useCallback((isTyping: boolean) => {
+    if (presenceChannel) {
+      presenceChannel.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { deviceId, alias, isTyping }
+      });
+    }
+  }, [presenceChannel, deviceId, alias]);
 
   const sendMessage = async (text: string, file?: File | null) => {
     if (!supabase || !activeChat || !deviceId) return;
@@ -389,27 +437,11 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   return (
     <CryptoContext.Provider
       value={{
-        deviceId,
-        alias,
-        chats,
-        activeChat,
-        messages,
-        latency,
-        setActiveChat,
-        createChat,
-        joinChat,
-        sendMessage,
-        purgeTerminal,
-        addSystemMessage,
-        deleteMessageLocally,
-        renameChat,
-        archiveChat,
-        deleteChat,
-        changeChatPassword,
-        updateAlias,
-        systemLogs,
-        addLog,
-        networkStatus
+        deviceId, alias, chats, activeChat, messages, latency, 
+        setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, 
+        addSystemMessage, deleteMessageLocally, updateAlias, systemLogs, 
+        addLog, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword,
+        onlineUsers, typingUsers, broadcastTyping
       }}
     >
       {children}
