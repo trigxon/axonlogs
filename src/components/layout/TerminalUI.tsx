@@ -142,9 +142,6 @@ const TerminalUI: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             <span>NODE: {deviceId.substring(0,6).toUpperCase()}</span>
           </div>
-          <div className="inline-block border border-cyan-400/50 text-cyan-400 text-[10px] px-2 py-0.5 font-bold tracking-widest uppercase">
-            [SYSADMIN]
-          </div>
         </div>
 
         {/* Dynamic Chats List */}
@@ -234,19 +231,19 @@ const TerminalUI: React.FC = () => {
         {/* Top Header */}
         <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 shrink-0">
           <div className="flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden">
-            <span className="text-cyan-400 shrink-0">AXON_NETWORK</span>
             <button onClick={() => setShowSettings(true)} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
-              {alias}
+              ALIAS: {alias}
             </button>
-            <span className="text-zinc-500 truncate hidden md:inline">NODE_{deviceId.substring(0,4).toUpperCase()}</span>
           </div>
 
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
-            <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
-              LATENCY: {latency > 0 ? `${latency}MS` : '---'}
-            </div>
+            {latency > 0 && (
+              <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
+                LATENCY: {latency}MS
+              </div>
+            )}
             <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
-              AES-256 {networkStatus}
+              NETWORK: {networkStatus}
             </div>
             <button 
               onClick={purgeTerminal}
@@ -254,9 +251,6 @@ const TerminalUI: React.FC = () => {
             >
               PURGE TERMINAL
             </button>
-            <div className="flex items-center gap-2 text-zinc-500 ml-2 hidden sm:flex">
-              <Key className="w-4 h-4" />
-            </div>
           </div>
         </header>
 
