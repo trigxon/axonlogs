@@ -139,7 +139,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const { data, error } = await supabase.from('chats').insert(newChat).select().single();
     if (error) {
       console.error("Create chat error:", error);
-      alert("Database error: Could not create chat. Check Supabase RLS policies.");
+      alert(`Database Error: ${error.message}`);
       // Fallback local chat so UI renders
       const mockChat = { id: 'mock', name: 'LOCAL_FALLBACK', share_code: 'ERR', created_at: new Date().toISOString() };
       setChats(prev => [mockChat, ...prev]);
