@@ -27,6 +27,11 @@ const TerminalUI: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState('');
   const [targetChatId, setTargetChatId] = useState<string | null>(null);
 
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [unlockTargetId, setUnlockTargetId] = useState<string | null>(null);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState(false);
+
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -151,6 +156,17 @@ const TerminalUI: React.FC = () => {
     }
   };
 
+  const handleUnlockSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const chat = chats.find(c => c.id === unlockTargetId);
+    if (chat && unlockPassword.trim().toUpperCase() === chat.share_code) {
+      setActiveChat(chat);
+      setShowUnlockModal(false);
+    } else {
+      setUnlockError(true);
+    }
+  };
+
   return (
     <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
       
@@ -171,7 +187,13 @@ const TerminalUI: React.FC = () => {
           {chats.map(chat => (
             <button 
               key={chat.id}
-              onClick={() => setActiveChat(chat)}
+              onClick={() => {
+                if (activeChat?.id === chat.id) return;
+                setUnlockTargetId(chat.id);
+                setUnlockPassword('');
+                setUnlockError(false);
+                setShowUnlockModal(true);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({ x: e.pageX, y: e.pageY, chatId: chat.id });
@@ -183,7 +205,9 @@ const TerminalUI: React.FC = () => {
               }`}
             >
               <div className="truncate w-full text-left">{chat.name}</div>
-              <div className="text-[10px] opacity-60 font-mono tracking-widest mt-0.5">{chat.share_code}</div>
+              <div className="text-[10px] opacity-60 font-mono tracking-widest mt-0.5">
+                {activeChat?.id === chat.id ? '*** UNLOCKED ***' : '*** LOCKED ***'}
+              </div>
             </button>
           ))}
         </div>
@@ -590,6 +614,42 @@ const TerminalUI: React.FC = () => {
               <div className="pt-4">
                 <button type="submit" className="w-full bg-red-500 hover:bg-red-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
                   EXECUTE KEY ROTATION
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showUnlockModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-md p-6 relative">
+            <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-emerald-500 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
+              <KeyRound className="w-5 h-5" /> UNLOCK TERMINAL
+            </h3>
+            
+            <form onSubmit={handleUnlockSubmit} className="space-y-4">
+              {unlockError && (
+                <div className="p-2 bg-red-500/10 border border-red-500/30 text-red-500 text-xs mb-2">
+                  ERROR: INVALID PASSPHRASE PROVIDED.
+                </div>
+              )}
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">PASSPHRASE</label>
+                <input 
+                  type="password" 
+                  value={unlockPassword}
+                  onChange={e => setUnlockPassword(e.target.value)}
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  autoFocus
+                />
+              </div>
+              <div className="pt-4">
+                <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
+                  DECRYPT & ENTER
                 </button>
               </div>
             </form>
