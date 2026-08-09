@@ -714,7 +714,7 @@ const TerminalUI: React.FC = () => {
         <div ref={feedRef} className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6">
           
           {showVideoTunnel && activeChat && (
-            <VideoTunnel chatId={activeChat.id} onClose={() => setShowVideoTunnel(false)} />
+            <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
           )}
 
           {!activeChat ? (
