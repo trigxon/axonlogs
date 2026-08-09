@@ -20,6 +20,12 @@ export interface Message {
   isDecryptionError?: boolean;
 }
 
+export interface SystemLog {
+  id: string;
+  time: string;
+  msg: string;
+}
+
 interface CryptoContextType {
   deviceId: string;
   alias: string;
@@ -35,6 +41,10 @@ interface CryptoContextType {
   addSystemMessage: (text: string) => void;
   deleteMessageLocally: (id: string) => void;
   renameChat: (id: string, newName: string) => Promise<void>;
+  updateAlias: (newAlias: string) => void;
+  systemLogs: SystemLog[];
+  addLog: (msg: string) => void;
+  networkStatus: string;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -50,6 +60,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [latency, setLatency] = useState(0);
+  const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
+  const [networkStatus, setNetworkStatus] = useState<string>('CONNECTING...');
+
+  const addLog = useCallback((msg: string) => {
+    setSystemLogs(prev => [{ id: crypto.randomUUID(), time: new Date().toISOString(), msg }, ...prev]);
+  }, []);
 
   // Initialize identity
   useEffect(() => {
@@ -67,7 +83,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     
     setDeviceId(storedId);
     setAlias(storedAlias);
-  }, []);
+    addLog(`Identity initialized: ${storedId.substring(0,8)}...`);
+    setNetworkStatus(supabase ? 'ONLINE' : 'OFFLINE');
+  }, [addLog]);
 
   // Fetch chats on init
   useEffect(() => {
@@ -161,7 +179,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (activeChat?.id === id) {
       setActiveChat(prev => prev ? { ...prev, name: newName } : null);
     }
+    addLog(`Renamed channel to ${newName}`);
   };
+
+  const updateAlias = useCallback((newAlias: string) => {
+    const cleanAlias = newAlias.trim().toUpperCase() || `NODE_${deviceId.substring(0,4)}`;
+    setAlias(cleanAlias);
+    localStorage.setItem('axon_alias', cleanAlias);
+    addLog(`Alias updated to ${cleanAlias}`);
+  }, [deviceId, addLog]);
 
   const decryptText = useCallback((encrypted: string, key: string) => {
     if (!encrypted) return '';
@@ -283,6 +309,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       file_url: fileUrl,
       burn_on_read: true
     });
+    
+    addLog(`Sent payload to ${activeChat.share_code}`);
   };
 
   const purgeTerminal = useCallback(() => {
@@ -321,7 +349,11 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         purgeTerminal,
         addSystemMessage,
         deleteMessageLocally,
-        renameChat
+        renameChat,
+        updateAlias,
+        systemLogs,
+        addLog,
+        networkStatus
       }}
     >
       {children}

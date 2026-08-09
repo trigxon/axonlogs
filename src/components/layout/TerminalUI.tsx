@@ -1,18 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Key, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Key, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X } from 'lucide-react';
 
 const TerminalUI: React.FC = () => {
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus } = useCrypto();
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   
+  const [showSettings, setShowSettings] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const [aliasInput, setAliasInput] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setAliasInput(alias);
+  }, [alias]);
 
   // Auto-scroll
   useEffect(() => {
@@ -21,12 +30,13 @@ const TerminalUI: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() && !fileInputRef.current?.files?.[0]) return;
+    if (!input.trim() && !selectedFile) return;
 
     const cmd = input.trim();
-    const file = fileInputRef.current?.files?.[0];
+    const file = selectedFile;
     
     setInput('');
+    setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
 
     // Slash command interpreter (only if text command)
@@ -88,6 +98,12 @@ const TerminalUI: React.FC = () => {
       </div>
     );
   }
+
+  const handleSaveSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateAlias(aliasInput);
+    setShowSettings(false);
+  };
 
   return (
     <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
@@ -166,20 +182,20 @@ const TerminalUI: React.FC = () => {
 
         {/* Footer Nav */}
         <div className="px-4 py-4 space-y-1">
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
+          <button onClick={() => setShowSettings(true)} className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
             <Settings className="w-4 h-4" />
             Settings
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
+          <button onClick={() => setShowLogs(true)} className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
             <FileText className="w-4 h-4" />
             Logs
           </button>
         </div>
 
-        {/* Terminate Session Button (No-op in anonymous mode, maybe just resets) */}
+        {/* Terminate Session Button */}
         <div className="p-4 pt-2 mt-auto">
           <button 
-            onClick={() => localStorage.clear()}
+            onClick={() => { localStorage.clear(); window.location.reload(); }}
             className="w-full bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-[0.2em] py-3 transition-colors"
           >
             TERMINATE SESSION
@@ -194,16 +210,18 @@ const TerminalUI: React.FC = () => {
         <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 shrink-0">
           <div className="flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden">
             <span className="text-cyan-400 shrink-0">AXON_NETWORK</span>
-            <span className="text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors truncate">STATION_ALPHA</span>
-            <span className="text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors truncate hidden md:inline">STATION_BETA</span>
+            <button onClick={() => setShowSettings(true)} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
+              {alias}
+            </button>
+            <span className="text-zinc-500 truncate hidden md:inline">NODE_{deviceId.substring(0,4).toUpperCase()}</span>
           </div>
 
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
             <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
               LATENCY: {latency > 0 ? `${latency}MS` : '---'}
             </div>
-            <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden md:flex">
-              AES-256 ACTIVE
+            <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
+              AES-256 {networkStatus}
             </div>
             <button 
               onClick={purgeTerminal}
@@ -312,12 +330,25 @@ const TerminalUI: React.FC = () => {
                 spellCheck="false"
               />
 
+              {/* Attachment Preview */}
+              {selectedFile && (
+                <div className="absolute bottom-full left-0 mb-2 ml-4 flex items-center gap-3 bg-[#0a0a0f] border border-cyan-400/30 px-3 py-2">
+                  <Paperclip className="w-4 h-4 text-cyan-400" />
+                  <span className="text-xs text-zinc-300 truncate max-w-[200px]">{selectedFile.name}</span>
+                  <button type="button" onClick={() => setSelectedFile(null)} className="text-zinc-500 hover:text-red-500 ml-2">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
               {/* No strict `accept` constraints here, letting mobile natively browse all files */}
               <input 
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                onChange={() => setInput(prev => prev ? prev : fileInputRef.current?.files?.[0]?.name || '')}
+                onChange={(e) => {
+                  if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
+                }}
               />
               <button 
                 type="button" 
@@ -339,6 +370,71 @@ const TerminalUI: React.FC = () => {
         )}
 
       </main>
+
+      {/* MODALS */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-cyan-400/50 w-full max-w-md p-6 relative">
+            <button onClick={() => setShowSettings(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-cyan-400 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
+              <Settings className="w-5 h-5" /> SYSTEM SETTINGS
+            </h3>
+            
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">STATION ALIAS</label>
+                <input 
+                  type="text" 
+                  value={aliasInput}
+                  onChange={e => setAliasInput(e.target.value)}
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-400 p-2 text-white font-mono text-sm outline-none uppercase"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DEVICE IDENTIFIER</label>
+                <div className="w-full bg-[#0a0a0f] border border-zinc-800 p-2 text-zinc-600 font-mono text-xs select-all">
+                  {deviceId}
+                </div>
+              </div>
+              <div className="pt-4">
+                <button type="submit" className="w-full bg-cyan-400 hover:bg-cyan-300 text-black py-2 text-xs font-bold tracking-widest uppercase">
+                  APPLY CHANGES
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showLogs && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-2xl h-[60vh] flex flex-col relative">
+            <button onClick={() => setShowLogs(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <div className="p-4 border-b border-zinc-900 shrink-0">
+              <h3 className="text-emerald-500 font-bold tracking-widest uppercase flex items-center gap-2">
+                <FileText className="w-5 h-5" /> EVENT LOGS
+              </h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {systemLogs.length === 0 ? (
+                <div className="text-zinc-600 text-xs">[NO LOGS AVAILABLE]</div>
+              ) : (
+                systemLogs.map(log => (
+                  <div key={log.id} className="text-xs font-mono text-zinc-400 border-l-2 border-zinc-800 pl-3 py-1">
+                    <span className="text-emerald-500 mr-2">[{new Date(log.time).toLocaleTimeString()}]</span>
+                    {log.msg}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
