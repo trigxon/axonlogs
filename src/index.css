@@ -18,6 +18,8 @@
     --text-primary: #18181b;
     --text-secondary: #71717a;
     --border: #e4e4e7;
+    --radius: 0.5rem;
+    --font-scale: 1rem;
   }
   
   :root.dark {
@@ -30,6 +32,7 @@
 
   body {
     font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    font-size: var(--font-scale);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
   

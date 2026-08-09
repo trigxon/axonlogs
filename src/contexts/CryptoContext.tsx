@@ -26,7 +26,7 @@ interface CryptoContextType {
   activeChat: Chat | null;
   messages: MessagePayload[];
   setActiveChat: (chat: Chat) => void;
-  createChat: () => Promise<void>;
+  createChat: (name?: string) => Promise<void>;
   joinChat: (shareCode: string) => Promise<void>;
   leaveChat: (shareCode: string) => void;
   renameChat: (chatId: string, newName: string) => Promise<void>;
@@ -192,12 +192,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setActiveChatState(chat);
   };
 
-  const createChat = async () => {
+  const createChat = async (name?: string) => {
     if (!supabase) return;
     const shareCode = 'ax-' + Math.random().toString(36).substring(2, 10);
     const { data, error } = await supabase
       .from('chats')
-      .insert({ name: 'New Chat', share_code: shareCode })
+      .insert({ name: name || 'New Chat', share_code: shareCode })
       .select()
       .single();
 

@@ -15,9 +15,9 @@ const Workspace = () => {
   return (
     <div className="h-[100dvh] w-full flex bg-background text-text-primary overflow-hidden">
       <Sidebar 
-        isOpen={isSidebarOpen} 
-        close={() => setIsSidebarOpen(false)} 
-        openSettings={() => setIsSettingsOpen(true)}
+        isMobileOpen={isSidebarOpen} 
+        setIsMobileOpen={setIsSidebarOpen} 
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
       
       <main className="flex-1 flex flex-col min-w-0 h-full relative">

@@ -21,22 +21,29 @@ const MessageBubble = ({ msg }: { msg: MessagePayload }) => {
 
   return (
     <div className={cn("flex flex-col mb-4 group", isSelf ? "items-end" : "items-start")}>
-      <div className={cn(
-        "relative max-w-[85%] md:max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm",
-        isSelf 
-          ? "bg-accent text-white rounded-br-sm" 
-          : "bg-transparent border border-border text-text-primary rounded-bl-sm"
-      )}>
-        {filePayload ? (
-          <FileViewer url={filePayload.url} filename={filePayload.name} mimeType={filePayload.mimeType} />
-        ) : null}
-        
-        {msg.text && (
-          <div className="whitespace-pre-wrap break-words">{msg.text}</div>
+      <div 
+        className={cn(
+          "max-w-[75%] px-4 py-2.5 break-words shadow-sm",
+          isSelf 
+            ? "bg-accent/90 text-white" 
+            : "bg-panel border border-border text-text-primary"
         )}
-
+        style={{
+          borderTopLeftRadius: 'var(--radius)',
+          borderTopRightRadius: 'var(--radius)',
+          borderBottomLeftRadius: isSelf ? 'var(--radius)' : '0px',
+          borderBottomRightRadius: isSelf ? '0px' : 'var(--radius)',
+        }}
+      >
+        {filePayload && (
+          <div className="mb-2">
+            <FileViewer url={filePayload.url} filename={filePayload.name} mimeType={filePayload.mimeType} />
+          </div>
+        )}
+        {msg.text && <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>}
+        
         <div className={cn(
-          "flex items-center gap-1.5 mt-1 text-[11px]",
+          "flex items-center gap-1.5 mt-1 text-[0.8em]",
           isSelf ? "text-white/70 justify-end" : "text-text-secondary justify-start"
         )}>
           {msg.burn_on_read && (
