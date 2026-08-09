@@ -53,6 +53,8 @@ const TerminalUI: React.FC = () => {
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
+  const [isDecoyMode, setIsDecoyMode] = useState(false);
+  const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
   const [joinCode, setJoinCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   
@@ -135,7 +137,7 @@ const TerminalUI: React.FC = () => {
       return;
     }
     if (cmd === '/ping' && !file) {
-      addSystemMessage('Latency calculating...');
+      addSystemMessage(`PING: WebSocket Latency ${latency}ms`);
       return;
     }
     if (cmd === '/panic' && !file) {
@@ -293,6 +295,11 @@ const TerminalUI: React.FC = () => {
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (unlockPassword.trim() === decoyPassphrase) {
+      setIsDecoyMode(true);
+      setShowUnlockModal(false);
+      return;
+    }
     const chat = chats.find(c => c.id === unlockTargetId);
     if (chat && unlockPassword.trim().toUpperCase() === chat.share_code) {
       setActiveChat(chat);
@@ -302,8 +309,52 @@ const TerminalUI: React.FC = () => {
     }
   };
 
+  if (panicMode) {
+    return (
+      <div className="h-[100dvh] w-full bg-white text-black flex flex-col items-center justify-center font-sans">
+        <h1 className="text-4xl font-bold mb-2">404 Not Found</h1>
+        <p className="text-gray-600">The requested URL was not found on this server.</p>
+        <button className="mt-8 text-sm text-blue-600 underline" onClick={() => setPanicMode(false)}>Return Home</button>
+      </div>
+    );
+  }
+
+  if (isDecoyMode) {
+    return (
+      <div className="flex flex-col h-[100dvh] w-full bg-white text-black font-sans p-8 overflow-y-auto">
+        <div className="max-w-2xl mx-auto w-full">
+          <div className="flex justify-between items-center mb-6 border-b pb-4">
+            <h1 className="text-3xl font-bold">Biology 101 Notes</h1>
+            <button onClick={() => setIsDecoyMode(false)} className="text-gray-400 hover:text-black transition-colors">Exit</button>
+          </div>
+          <div className="space-y-4 text-gray-800">
+            <h2 className="text-xl font-semibold">1. Mitosis Overview</h2>
+            <p>Mitosis is a part of the cell cycle in which replicated chromosomes are separated into two new nuclei.</p>
+            <p>Cell division gives rise to genetically identical cells in which the total number of chromosomes is maintained.</p>
+            <h2 className="text-xl font-semibold mt-6">2. Phases of Mitosis</h2>
+            <ul className="list-disc pl-5 space-y-2">
+              <li><strong>Prophase:</strong> Chromatin condenses into chromosomes.</li>
+              <li><strong>Metaphase:</strong> Chromosomes align at the metaphase plate.</li>
+              <li><strong>Anaphase:</strong> Sister chromatids separate to opposite poles.</li>
+              <li><strong>Telophase:</strong> Nuclear envelope reforms.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden relative">
+      
+      {/* WATERMARK */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.02] flex flex-wrap gap-4 z-50 select-none items-center justify-center">
+        {Array.from({length: 150}).map((_, i) => (
+          <span key={i} className="text-white text-xs font-mono font-bold whitespace-nowrap">
+            {deviceId}::{alias}
+          </span>
+        ))}
+      </div>
       
       {/* LEFT SIDEBAR */}
       <aside className="w-[260px] flex-shrink-0 border-r border-zinc-900 flex flex-col bg-[#080808]">
@@ -657,37 +708,92 @@ const TerminalUI: React.FC = () => {
 
       {/* MODALS */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-cyan-400/50 w-full max-w-md p-6 relative">
-            <button onClick={() => setShowSettings(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-cyan-400 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
-              <Settings className="w-5 h-5" /> SYSTEM SETTINGS
-            </h3>
-            
-            <form onSubmit={handleSaveSettings} className="space-y-4">
-              <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">STATION ALIAS</label>
-                <input 
-                  type="text" 
-                  value={aliasInput}
-                  onChange={e => setAliasInput(e.target.value)}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-400 p-2 text-white font-mono text-sm outline-none uppercase"
-                />
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-[#0a0a0f] border border-zinc-800 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-[#050505]">
+              <div className="font-bold tracking-widest text-zinc-300 flex items-center gap-2">
+                <Settings className="w-5 h-5" /> SYSTEM CONFIGURATION
               </div>
-              <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DEVICE IDENTIFIER</label>
-                <div className="w-full bg-[#0a0a0f] border border-zinc-800 p-2 text-zinc-600 font-mono text-xs select-all">
-                  {deviceId}
+              <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="p-6 overflow-y-auto space-y-6">
+              
+              {/* Appearance */}
+              <div className="border-l-4 border-l-pink-500 bg-[#050505] p-4 border border-zinc-800/50">
+                <h3 className="text-pink-500 font-bold mb-4 tracking-widest text-sm uppercase">Appearance & Identity</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">STATION ALIAS</label>
+                    <input 
+                      type="text" 
+                      value={aliasInput}
+                      onChange={e => setAliasInput(e.target.value)}
+                      className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-pink-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                    />
+                  </div>
+                  <button onClick={handleSaveSettings} className="bg-pink-500 hover:bg-pink-400 text-black py-1.5 px-4 text-xs font-bold tracking-widest uppercase transition-colors">
+                    UPDATE ALIAS
+                  </button>
                 </div>
               </div>
-              <div className="pt-4">
-                <button type="submit" className="w-full bg-cyan-400 hover:bg-cyan-300 text-black py-2 text-xs font-bold tracking-widest uppercase">
-                  APPLY CHANGES
-                </button>
+
+              {/* Privacy */}
+              <div className="border-l-4 border-l-blue-500 bg-[#050505] p-4 border border-zinc-800/50">
+                <h3 className="text-blue-500 font-bold mb-4 tracking-widest text-sm uppercase">Privacy & Threat Mitigation</h3>
+                <div className="space-y-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={stealthMode} onChange={e => setStealthMode(e.target.checked)} className="hidden" />
+                    {stealthMode ? <ToggleRight className="text-blue-400 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
+                    <span className="text-sm">Stealth Mode (Blur feed on idle/hover)</span>
+                  </label>
+                  <div>
+                    <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DECOY VAULT PASSPHRASE</label>
+                    <input 
+                      type="text" 
+                      value={decoyPassphrase}
+                      onChange={e => {
+                        setDecoyPassphrase(e.target.value); 
+                        localStorage.setItem('axon_decoy_pass', e.target.value);
+                      }}
+                      className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-blue-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                    />
+                    <p className="text-[10px] text-zinc-500 mt-1">Entering this passphrase during unlock will trigger plausible deniability mode.</p>
+                  </div>
+                </div>
               </div>
-            </form>
+
+              {/* System Control */}
+              <div className="border-l-4 border-l-purple-500 bg-[#050505] p-4 border border-zinc-800/50">
+                <h3 className="text-purple-500 font-bold mb-4 tracking-widest text-sm uppercase">System Control</h3>
+                <div className="space-y-2">
+                  <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DEVICE IDENTIFIER (WATERMARK ID)</label>
+                  <div className="w-full bg-[#0a0a0f] border border-zinc-800 p-2 text-zinc-600 font-mono text-xs select-all">
+                    {deviceId}
+                  </div>
+                </div>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="border-l-4 border-l-red-500 bg-[#050505] p-4 border border-zinc-800/50">
+                <h3 className="text-red-500 font-bold mb-4 tracking-widest text-sm uppercase">Danger Zone</h3>
+                <div className="space-y-4">
+                  <p className="text-xs text-zinc-500">Executing a Nuclear Purge will destroy the entire terminal globally. Do not run this lightly.</p>
+                  <button 
+                    onClick={() => {
+                      if (activeChat && confirm("WARNING: NUCLEAR PROTOCOL INITIATED. THIS WILL PERMANENTLY DESTROY THIS TERMINAL AND ALL DATA GLOBALLY. PROCEED?")) {
+                        deleteChat(activeChat.id);
+                        setShowSettings(false);
+                      }
+                    }}
+                    disabled={!activeChat}
+                    className="w-full bg-red-500/10 border border-red-500/50 hover:bg-red-500 hover:text-black text-red-500 py-1.5 px-4 text-xs font-bold tracking-widest uppercase transition-colors disabled:opacity-50"
+                  >
+                    NUCLEAR PURGE ACTIVE TERMINAL
+                  </button>
+                </div>
+              </div>
+
+            </div>
           </div>
         </div>
       )}
