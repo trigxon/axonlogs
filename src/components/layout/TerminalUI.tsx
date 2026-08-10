@@ -84,6 +84,7 @@ const TerminalUI: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newChatName, setNewChatName] = useState('');
   const [newChatPassphrase, setNewChatPassphrase] = useState('');
+  const [isEphemeralChat, setIsEphemeralChat] = useState(false);
 
   const [replyToId, setReplyToId] = useState<string | null>(null);
 
@@ -347,15 +348,16 @@ const TerminalUI: React.FC = () => {
 
   const handleCreateChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newChatPassphrase.trim()) {
-      alert("A custom passphrase is required to initialize a new tunnel.");
+    if (newChatPassphrase.trim().length < 4) {
+      alert("Passphrase must be at least 4 characters.");
       return;
     }
-    const success = await createChat(newChatName.trim(), newChatPassphrase.trim());
+    const success = await createChat(newChatName, newChatPassphrase, isEphemeralChat);
     if (success) {
       setShowCreateModal(false);
       setNewChatName('');
       setNewChatPassphrase('');
+      setIsEphemeralChat(false);
     }
   };
 
@@ -647,6 +649,11 @@ const TerminalUI: React.FC = () => {
         <div className="px-8 pt-8 pb-4 shrink-0">
           <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
             TERMINAL // [{activeChat?.share_code || 'STANDBY'}]
+            {activeChat?.share_code.startsWith('EPH-') && (
+              <span className="text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 border border-red-500/30 font-bold tracking-[0.2em] animate-pulse">
+                EPHEMERAL
+              </span>
+            )}
             {activeChat && (
               <button 
                 onClick={() => {
@@ -1035,6 +1042,21 @@ const TerminalUI: React.FC = () => {
                   placeholder="ENTER SECURE PASSPHRASE"
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                 />
+              </div>
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer p-3 bg-red-500/5 border border-red-500/20 rounded-sm">
+                  <input 
+                    type="checkbox" 
+                    checked={isEphemeralChat} 
+                    onChange={e => setIsEphemeralChat(e.target.checked)} 
+                    className="hidden" 
+                  />
+                  {isEphemeralChat ? <ToggleRight className="text-red-500 w-5 h-5" /> : <ToggleLeft className="text-zinc-600 w-5 h-5" />}
+                  <div>
+                    <div className="text-red-400 text-xs font-bold tracking-widest uppercase">EPHEMERAL MODE (BURN ON CLOSE)</div>
+                    <div className="text-[10px] text-zinc-500 mt-1">Messages exist only in memory and vanish instantly when the browser is closed.</div>
+                  </div>
+                </label>
               </div>
               <div className="pt-4">
                 <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">

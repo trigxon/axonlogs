@@ -36,7 +36,7 @@ interface CryptoContextType {
   messages: Message[];
   latency: number;
   setActiveChat: (chat: Chat) => void;
-  createChat: (customName?: string, customCode?: string) => Promise<boolean>;
+  createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
   sendMessage: (text: string, file?: File | null, replyToId?: string | null) => Promise<void>;
   purgeTerminal: () => void;
@@ -139,9 +139,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const createChat = async (customName?: string, customCode?: string) => {
+  const createChat = async (customName?: string, customCode?: string, isEphemeral?: boolean) => {
     if (!supabase || !customCode) return false;
-    const shareCode = customCode.toUpperCase();
+    let shareCode = customCode.toUpperCase();
+    if (isEphemeral && !shareCode.startsWith('EPH-')) {
+      shareCode = `EPH-${shareCode}`;
+    }
     const newChat = {
       name: customName || `CONSOLE_${chats.length + 1}`,
       share_code: shareCode
@@ -355,28 +358,49 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         const online: Record<string, string> = {};
-        for (const [key, presences] of Object.entries(state)) {
-           if (presences.length > 0) {
-              online[key] = (presences[0] as any).alias;
-           }
+        for (const id in state) {
+          const presence: any = state[id][0];
+          online[id] = presence.alias || id;
         }
         setOnlineUsers(online);
       })
-      .on('broadcast', { event: 'typing' }, (payload) => {
-        const { deviceId: senderId, alias: senderAlias, isTyping } = payload.payload;
-        if (isTyping) {
-          setTypingUsers(prev => ({ ...prev, [senderId]: senderAlias }));
-        } else {
-          setTypingUsers(prev => {
-            const next = { ...prev };
-            delete next[senderId];
-            return next;
-          });
-        }
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        setTypingUsers(prev => {
+          const next = { ...prev };
+          if (payload.isTyping) {
+            next[payload.deviceId] = payload.alias;
+          } else {
+            delete next[payload.deviceId];
+          }
+          return next;
+        });
+      })
+      .on('broadcast', { event: 'EPH_MSG' }, ({ payload }) => {
+        const { sender_id, text, file_url, reply_to_id, id, created_at } = payload;
+        
+        const decryptedText = text ? decryptText(text, activeChat.share_code) : '';
+        const decryptedFileUrl = file_url ? decryptText(file_url, activeChat.share_code) : null;
+        const hasTextError = text ? !decryptedText : false;
+        const hasFileError = file_url ? !decryptedFileUrl : false;
+
+        const ephMsg: Message = {
+          id,
+          chat_id: activeChat.id,
+          sender_id,
+          text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
+          file_url: hasFileError ? null : decryptedFileUrl,
+          burn_on_read: false,
+          reply_to_id,
+          created_at,
+          isDecryptionError: hasTextError || hasFileError,
+          read_by: []
+        };
+        
+        setMessages(prev => [...prev, ephMsg]);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await channel.track({ alias });
+          await channel.track({ deviceId, alias, onlineAt: new Date().toISOString() });
         }
       });
 
@@ -422,15 +446,47 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       }
     }
 
-    await supabase.from('messages').insert({
-      chat_id: activeChat.id,
-      sender_id: deviceId,
-      text: encryptedText,
-      file_url: fileUrl,
-      burn_on_read: true,
-      reply_to_id: replyToId,
-      read_by: []
-    });
+    if (activeChat.share_code.startsWith('EPH-')) {
+      const ephPayload = {
+        id: crypto.randomUUID(),
+        chat_id: activeChat.id,
+        sender_id: deviceId,
+        text: encryptedText,
+        file_url: fileUrl,
+        reply_to_id: replyToId,
+        created_at: new Date().toISOString()
+      };
+      
+      if (presenceChannel) {
+        presenceChannel.send({
+          type: 'broadcast',
+          event: 'EPH_MSG',
+          payload: ephPayload
+        });
+        
+        const decryptedText = text ? decryptText(encryptedText, activeChat.share_code) : '';
+        const decryptedFileUrl = fileUrl ? decryptText(fileUrl, activeChat.share_code) : null;
+        setMessages(prev => [...prev, {
+          ...ephPayload,
+          text: decryptedText,
+          file_url: decryptedFileUrl,
+          burn_on_read: false,
+          read_by: []
+        }]);
+      } else {
+        console.error("No presence channel available to broadcast ephemeral message.");
+      }
+    } else {
+      await supabase.from('messages').insert({
+        chat_id: activeChat.id,
+        sender_id: deviceId,
+        text: encryptedText,
+        file_url: fileUrl,
+        burn_on_read: true,
+        reply_to_id: replyToId,
+        read_by: []
+      });
+    }
     
     addLog(`Sent payload to ${activeChat.share_code}`);
   };
