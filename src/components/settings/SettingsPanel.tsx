@@ -1,17 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { 
   Settings, 
-  Type, 
   Download, 
   Upload, 
-  FileText, 
   AlertTriangle, 
   ShieldAlert, 
   ToggleRight, 
   ToggleLeft,
   UserCheck,
   Check,
-  X
+  X,
+  ChevronRight,
+  Monitor
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCrypto } from '../../contexts/CryptoContext';
@@ -90,7 +90,6 @@ export const SettingsPanel: React.FC = () => {
     };
     reader.readAsText(file);
 
-    // Reset file input value
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -107,275 +106,185 @@ export const SettingsPanel: React.FC = () => {
     }
   };
 
-  return (
-    <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-y-auto p-6 space-y-6">
-      {/* HEADER BAR */}
-      <div className="flex items-center justify-between pb-4 border-b border-zinc-800 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded bg-pink-500/10 border border-pink-500/30 flex items-center justify-center text-pink-400">
-            <Settings className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold tracking-widest text-pink-400 uppercase">
-              SYSTEM CONFIGURATION & SETTINGS
-            </h1>
-            <p className="text-xs text-zinc-500">
-              Appearance scaling, identity management, data export/import, and danger zone controls
-            </p>
-          </div>
-        </div>
+  // Reusable Layout Components
+  const SectionHeader = ({ icon: Icon, title, color = "text-zinc-500" }: { icon: any, title: string, color?: string }) => (
+    <div className={`flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] uppercase mb-2 px-1 ${color}`}>
+      <Icon className="w-3.5 h-3.5" /> {title}
+    </div>
+  );
 
+  const SectionCard = ({ children }: { children: React.ReactNode }) => (
+    <div className="bg-[#0a0a0f] border border-zinc-800/80 rounded-xl overflow-hidden mb-6 shadow-sm">
+      {children}
+    </div>
+  );
+
+  const SettingRow = ({ title, desc, children, isButton = false, onClick }: { title: string, desc: string, children?: React.ReactNode, isButton?: boolean, onClick?: () => void }) => {
+    const Comp = isButton ? 'button' : 'div';
+    return (
+      <Comp 
+        onClick={onClick}
+        className={`w-full flex items-center justify-between p-4 border-b border-zinc-800/50 last:border-0 ${isButton ? 'hover:bg-zinc-800/30 transition-colors text-left cursor-pointer' : ''}`}
+      >
+        <div className="pr-4 max-w-[60%]">
+          <div className="text-sm font-semibold text-zinc-200 tracking-wide">{title}</div>
+          <div className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed uppercase tracking-wider">{desc}</div>
+        </div>
+        <div className="shrink-0 flex items-center justify-end">
+          {children}
+        </div>
+      </Comp>
+    );
+  };
+
+  const SegmentedControl = ({ options, current, onChange }: { options: string[], current: string, onChange: (val: any) => void }) => (
+    <div className="flex bg-[#050505] border border-zinc-800/80 rounded-lg p-1">
+      {options.map((opt) => (
+        <button
+          key={opt}
+          onClick={() => onChange(opt)}
+          className={`px-4 py-1.5 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors ${
+            current === opt 
+              ? 'bg-cyan-500/20 text-cyan-400' 
+              : 'text-zinc-500 hover:text-zinc-300'
+          }`}
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-y-auto">
+      
+      {/* Header Sticky Bar */}
+      <div className="sticky top-0 z-10 bg-[#050505]/95 backdrop-blur border-b border-zinc-800 p-6 flex justify-between items-center">
+        <div>
+          <h1 className="text-xl font-bold tracking-[0.2em] text-zinc-100 uppercase flex items-center gap-3">
+            <Settings className="w-5 h-5 text-cyan-400" /> SYSTEM PREFERENCES
+          </h1>
+        </div>
         {statusMessage && (
-          <div className={`px-4 py-2 text-xs font-bold rounded border flex items-center gap-2 animate-fade-in ${
+          <div className={`px-4 py-1.5 text-[10px] font-bold tracking-widest uppercase rounded border flex items-center gap-2 animate-fade-in ${
             statusMessage.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
               : 'bg-red-500/10 border-red-500/40 text-red-400'
           }`}>
-            {statusMessage.type === 'success' ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+            {statusMessage.type === 'success' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
             {statusMessage.text}
           </div>
         )}
       </div>
 
-      {/* SECTION 1: STATION ALIAS & IDENTITY */}
-      <div className="border-l-4 border-l-pink-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-4">
-        <div className="flex items-center gap-2 text-pink-500 font-bold tracking-widest text-sm uppercase">
-          <UserCheck className="w-4 h-4" />
-          STATION ALIAS & IDENTITY
-        </div>
-        <form onSubmit={handleAliasSave} className="space-y-4">
-          <div>
-            <label className="block text-xs text-zinc-400 tracking-widest uppercase mb-1">STATION ALIAS</label>
-            <input 
-              type="text" 
-              value={aliasInput}
-              onChange={e => setAliasInput(e.target.value)}
-              placeholder="e.g. OPERATOR_ALPHA"
-              className="w-full max-w-md bg-[#050505] border border-zinc-800 focus:border-pink-500 p-2.5 text-white font-mono text-sm outline-none uppercase rounded ui-input transition-colors"
-            />
-          </div>
-          <button 
-            type="submit"
-            className="bg-pink-500 hover:bg-pink-400 text-black py-2 px-5 text-xs font-bold tracking-widest uppercase transition-colors rounded cursor-pointer"
-          >
-            UPDATE ALIAS
-          </button>
-        </form>
-      </div>
-
-      {/* SECTION 2: DYNAMIC UI APPEARANCE (M4) */}
-      <div className="border-l-4 border-l-cyan-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-5">
-        <div className="flex items-center gap-2 text-cyan-400 font-bold tracking-widest text-sm uppercase">
-          <Type className="w-4 h-4" />
-          DYNAMIC UI APPEARANCE (R3)
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* UI TEXT SIZE */}
-          <div className="space-y-2">
-            <label className="block text-xs text-zinc-400 tracking-widest uppercase flex items-center justify-between">
-              <span>Text Size</span>
-              <span className="text-cyan-400 font-bold">({textSize})</span>
-            </label>
-            <div className="flex gap-2">
-              {(['small', 'medium', 'large'] as const).map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  onClick={() => setTextSize(size)}
-                  className={`flex-1 py-2 px-3 rounded text-xs font-mono uppercase tracking-wider transition-all border cursor-pointer ${
-                    textSize === size
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-400 font-bold shadow-sm shadow-cyan-950/40'
-                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  {size}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] text-zinc-500">
-              Small: 12px | Medium: 14px | Large: 16px
-            </p>
-          </div>
-
-          {/* CARD PADDING */}
-          <div className="space-y-2">
-            <label className="block text-xs text-zinc-400 tracking-widest uppercase flex items-center justify-between">
-              <span>Card Padding</span>
-              <span className="text-cyan-400 font-bold">({cardPadding})</span>
-            </label>
-            <div className="flex gap-2">
-              {(['compact', 'normal', 'relaxed'] as const).map((pad) => (
-                <button
-                  key={pad}
-                  type="button"
-                  onClick={() => setCardPadding(pad)}
-                  className={`flex-1 py-2 px-3 rounded text-xs font-mono uppercase tracking-wider transition-all border cursor-pointer ${
-                    cardPadding === pad
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-400 font-bold shadow-sm shadow-cyan-950/40'
-                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  {pad}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] text-zinc-500">
-              Compact: 8px | Normal: 16px | Relaxed: 24px
-            </p>
-          </div>
-
-          {/* BORDER RADIUS */}
-          <div className="space-y-2">
-            <label className="block text-xs text-zinc-400 tracking-widest uppercase flex items-center justify-between">
-              <span>Border Radius</span>
-              <span className="text-cyan-400 font-bold">({borderRadius})</span>
-            </label>
-            <div className="flex gap-2">
-              {(['sharp', 'rounded', 'pill'] as const).map((rad) => (
-                <button
-                  key={rad}
-                  type="button"
-                  onClick={() => setBorderRadius(rad)}
-                  className={`flex-1 py-2 px-3 rounded text-xs font-mono uppercase tracking-wider transition-all border cursor-pointer ${
-                    borderRadius === rad
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-400 font-bold shadow-sm shadow-cyan-950/40'
-                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                  }`}
-                >
-                  {rad}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] text-zinc-500">
-              Sharp: 0px | Rounded: 8px | Pill: 24px
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: PRIVACY & THREAT MITIGATION */}
-      <div className="border-l-4 border-l-blue-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-4">
-        <div className="text-blue-500 font-bold tracking-widest text-sm uppercase">
-          PRIVACY & THREAT MITIGATION
-        </div>
-        <div className="space-y-4">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <button 
-              type="button" 
-              onClick={() => setStealthMode(!stealthMode)}
-              className="text-zinc-500 hover:text-blue-400 transition-colors"
-            >
-              {stealthMode ? <ToggleRight className="text-blue-400 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
-            </button>
-            <span className="text-xs text-zinc-300">Stealth Mode (Blur terminal feed on idle/hover)</span>
-          </label>
-
-          <div>
-            <label className="block text-xs text-zinc-400 tracking-widest uppercase mb-1">DECOY VAULT PASSPHRASE</label>
-            <input 
-              type="text" 
-              value={decoyPassphrase}
-              onChange={e => {
-                setDecoyPassphrase(e.target.value); 
-                localStorage.setItem('axon_decoy_pass', e.target.value);
-              }}
-              className="w-full max-w-md bg-[#050505] border border-zinc-800 focus:border-blue-500 p-2.5 text-white font-mono text-sm outline-none uppercase rounded ui-input transition-colors"
-            />
-            <p className="text-[10px] text-zinc-500 mt-1">Entering this passphrase during unlock will trigger plausible deniability decoy mode.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 4: FULL DATA MANAGEMENT (M5) */}
-      <div className="border-l-4 border-l-emerald-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-4">
-        <div className="flex items-center gap-2 text-emerald-400 font-bold tracking-widest text-sm uppercase">
-          <Download className="w-4 h-4" />
-          FULL DATA MANAGEMENT (R4)
-        </div>
-        <p className="text-xs text-zinc-400 leading-relaxed">
-          Export all decrypted chat messages, configuration settings, known terminal links, and system logs to JSON or PDF format. Import standard JSON archives to restore full application state.
-        </p>
-
-        <div className="flex flex-wrap gap-4 pt-2">
-          {/* EXPORT JSON BUTTON */}
-          <button
-            type="button"
-            onClick={handleExportJson}
-            className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/40 hover:bg-emerald-500 hover:text-black text-emerald-400 py-2.5 px-5 text-xs font-bold tracking-widest uppercase transition-all rounded cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            EXPORT JSON DATA
-          </button>
-
-          {/* EXPORT PDF BUTTON */}
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            className="flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/40 hover:bg-cyan-500 hover:text-black text-cyan-400 py-2.5 px-5 text-xs font-bold tracking-widest uppercase transition-all rounded cursor-pointer"
-          >
-            <FileText className="w-4 h-4" />
-            EXPORT PDF LOGS
-          </button>
-
-          {/* IMPORT JSON INPUT */}
-          <input
-            type="file"
-            accept=".json,application/json"
-            ref={fileInputRef}
-            onChange={handleImportJson}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/40 hover:bg-purple-500 hover:text-black text-purple-400 py-2.5 px-5 text-xs font-bold tracking-widest uppercase transition-all rounded cursor-pointer"
-          >
-            <Upload className="w-4 h-4" />
-            IMPORT JSON BACKUP
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION 5: SYSTEM CONTROL & DEVICE WATERMARK */}
-      <div className="border-l-4 border-l-purple-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-3">
-        <div className="text-purple-400 font-bold tracking-widest text-sm uppercase">
-          SYSTEM CONTROL & DEVICE IDENTIFIER
-        </div>
+      <div className="p-6 max-w-4xl space-y-2">
+        
+        {/* IDENTITY */}
         <div>
-          <label className="block text-xs text-zinc-400 tracking-widest uppercase mb-1">DEVICE IDENTIFIER (WATERMARK ID)</label>
-          <div className="w-full max-w-md bg-[#050505] border border-zinc-800 p-2.5 text-zinc-400 font-mono text-xs select-all rounded">
-            {deviceId || 'DEV_UNKNOWN'}
-          </div>
+          <SectionHeader icon={UserCheck} title="Identity & Profile" color="text-cyan-500" />
+          <SectionCard>
+            <SettingRow title="Station Alias" desc="Operator handle for identity masking">
+              <form onSubmit={handleAliasSave} className="flex items-center gap-2">
+                <input 
+                  type="text" 
+                  value={aliasInput}
+                  onChange={e => setAliasInput(e.target.value)}
+                  placeholder="OPERATOR_ALPHA"
+                  className="bg-[#050505] border border-zinc-800 focus:border-cyan-500 px-3 py-1.5 text-cyan-400 font-mono text-xs outline-none uppercase rounded-md text-right w-40 transition-colors"
+                />
+                <button type="submit" className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-1.5 rounded-md transition-colors">
+                  <Check className="w-4 h-4" />
+                </button>
+              </form>
+            </SettingRow>
+            <SettingRow title="Device Identifier" desc="Unique watermark ID for current node">
+              <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
+                {deviceId || 'DEV_UNKNOWN'}
+              </div>
+            </SettingRow>
+          </SectionCard>
         </div>
+
+        {/* SECURITY & PRIVACY */}
+        <div>
+          <SectionHeader icon={ShieldAlert} title="Privacy & Mitigation" color="text-blue-500" />
+          <SectionCard>
+            <SettingRow title="Stealth Mode" desc="Blur terminal feed on idle/hover state">
+              <button onClick={() => setStealthMode(!stealthMode)}>
+                {stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+              </button>
+            </SettingRow>
+            <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
+              <input 
+                type="text" 
+                value={decoyPassphrase}
+                onChange={e => {
+                  setDecoyPassphrase(e.target.value); 
+                  localStorage.setItem('axon_decoy_pass', e.target.value);
+                }}
+                className="bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-1.5 text-blue-400 font-mono text-xs outline-none uppercase rounded-md text-right w-48 transition-colors"
+              />
+            </SettingRow>
+          </SectionCard>
+        </div>
+
+        {/* UI CUSTOMIZATION */}
+        <div>
+          <SectionHeader icon={Monitor} title="Interface Styling" />
+          <SectionCard>
+            <SettingRow title="UI Text Size" desc="Scale interface font elements">
+              <SegmentedControl options={['small', 'medium', 'large']} current={textSize} onChange={setTextSize} />
+            </SettingRow>
+            <SettingRow title="Card Padding" desc="Adjust spacing inside containers">
+              <SegmentedControl options={['compact', 'normal', 'relaxed']} current={cardPadding} onChange={setCardPadding} />
+            </SettingRow>
+            <SettingRow title="Border Radius" desc="Shape of buttons and modules">
+              <SegmentedControl options={['sharp', 'rounded', 'pill']} current={borderRadius} onChange={setBorderRadius} />
+            </SettingRow>
+          </SectionCard>
+        </div>
+
+        {/* DATA EXPORT */}
+        <div>
+          <SectionHeader icon={Download} title="Data Export" color="text-emerald-500" />
+          <SectionCard>
+            <SettingRow title="Export PDF Report" desc="Download complete performance logs as PDF" isButton onClick={handleExportPdf}>
+              <ChevronRight className="w-4 h-4 text-zinc-600" />
+            </SettingRow>
+            <SettingRow title="Export JSON Backup" desc="Download local storage dump as JSON archive" isButton onClick={handleExportJson}>
+              <ChevronRight className="w-4 h-4 text-zinc-600" />
+            </SettingRow>
+          </SectionCard>
+        </div>
+
+        {/* DATA IMPORT */}
+        <div>
+          <SectionHeader icon={Upload} title="Data Import" color="text-purple-500" />
+          <SectionCard>
+            <SettingRow title="Import JSON Backup" desc="Restore data from a JSON archive" isButton onClick={() => fileInputRef.current?.click()}>
+              <ChevronRight className="w-4 h-4 text-zinc-600" />
+            </SettingRow>
+            <input type="file" accept=".json,application/json" ref={fileInputRef} onChange={handleImportJson} className="hidden" />
+          </SectionCard>
+        </div>
+
+        {/* DANGER ZONE */}
+        <div>
+          <SectionHeader icon={AlertTriangle} title="Danger Zone" color="text-red-500" />
+          <SectionCard>
+            <SettingRow title="Reset All Data" desc="Permanently wipe all logs and custom settings" isButton onClick={() => setShowResetModal(true)}>
+              <ChevronRight className="w-4 h-4 text-red-500/50 group-hover:text-red-500" />
+            </SettingRow>
+          </SectionCard>
+        </div>
+
       </div>
 
-      {/* SECTION 6: DANGER ZONE (RESET ALL LOCAL DATA) */}
-      <div className="border-l-4 border-l-red-500 bg-[#0a0a0f] p-5 border border-zinc-800/80 rounded ui-card space-y-4">
-        <div className="flex items-center gap-2 text-red-500 font-bold tracking-widest text-sm uppercase">
-          <ShieldAlert className="w-4 h-4" />
-          DANGER ZONE
-        </div>
-        <p className="text-xs text-zinc-400 leading-relaxed">
-          Executing a Danger Zone Reset will permanently wipe all local storage data (`axon_*` keys), decrypted chats, custom settings, and terminal identifiers, restoring Axon Logs to a pristine clean state.
-        </p>
-
-        <button
-          type="button"
-          onClick={() => setShowResetModal(true)}
-          className="bg-red-500/10 border border-red-500/50 hover:bg-red-500 hover:text-black text-red-500 py-2.5 px-5 text-xs font-bold tracking-widest uppercase transition-all rounded cursor-pointer"
-        >
-          RESET ALL LOCAL DATA
-        </button>
-      </div>
-
-      {/* DANGER ZONE CONFIRMATION MODAL */}
+      {/* DANGER ZONE MODAL */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#08080c] border border-red-500/60 w-full max-w-md p-6 rounded shadow-2xl relative space-y-4">
-            <button
-              onClick={() => setShowResetModal(false)}
-              className="absolute top-4 right-4 text-zinc-500 hover:text-white cursor-pointer"
-            >
+          <div className="bg-[#08080c] border border-red-500/60 w-full max-w-md p-6 rounded-xl shadow-2xl relative space-y-4">
+            <button onClick={() => setShowResetModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors">
               <X className="w-5 h-5" />
             </button>
 
@@ -390,24 +299,16 @@ export const SettingsPanel: React.FC = () => {
               Are you completely sure? This action will permanently erase all local application state, custom preferences, active encryption keys, and terminal channels.
             </p>
 
-            <div className="p-3 bg-red-950/30 border border-red-500/30 rounded text-[11px] text-red-400 font-mono">
+            <div className="p-3 bg-red-950/30 border border-red-500/30 rounded-lg text-[10px] text-red-400 font-mono tracking-widest">
               [WARNING]: Action is irreversible.
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowResetModal(false)}
-                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-bold tracking-widest uppercase rounded cursor-pointer transition-colors"
-              >
+              <button onClick={() => setShowResetModal(false)} className="px-4 py-2 text-zinc-300 hover:text-white text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
                 CANCEL
               </button>
-              <button
-                type="button"
-                onClick={handleConfirmReset}
-                className="px-4 py-2 bg-red-500 hover:bg-red-400 text-black text-xs font-bold tracking-widest uppercase rounded cursor-pointer transition-colors"
-              >
-                CONFIRM & WIPE ALL DATA
+              <button onClick={handleConfirmReset} className="px-4 py-2 bg-red-500 hover:bg-red-400 text-black text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
+                CONFIRM & WIPE
               </button>
             </div>
           </div>
