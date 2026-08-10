@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, X, Play, Pause, Trash2 } from 'lucide-react';
+import { Mic, Square, Play, Pause, Trash2 } from 'lucide-react';
 import MicRecorder from 'mic-recorder-to-mp3';
 
 export const VoiceRecorder: React.FC<{
@@ -46,7 +46,7 @@ export const VoiceRecorder: React.FC<{
 
   const stopRecording = () => {
     if (recorderRef.current && isRecording) {
-      recorderRef.current.stop().getMp3().then(([buffer, blob]) => {
+      recorderRef.current.stop().getMp3().then(([buffer]) => {
         const mp3Blob = new Blob(buffer, { type: 'audio/mp3' });
         setAudioBlob(mp3Blob);
         const url = URL.createObjectURL(mp3Blob);

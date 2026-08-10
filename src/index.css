@@ -24,10 +24,16 @@
     --accent-hover: #06b6d4;
     
     --font-mono: 'Fira Code', monospace;
+
+    /* Dynamic UI Theme Settings */
+    --ui-text-size: 14px;
+    --ui-card-padding: 16px;
+    --ui-border-radius: 8px;
   }
 
   body {
     font-family: var(--font-mono);
+    font-size: var(--ui-text-size);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
   
@@ -55,5 +61,19 @@
 @layer utilities {
   .font-chat {
     font-family: var(--font-mono);
+  }
+
+  .ui-card {
+    padding: var(--ui-card-padding);
+    border-radius: var(--ui-border-radius);
+  }
+
+  .ui-input {
+    border-radius: var(--ui-border-radius);
+    font-size: var(--ui-text-size);
+  }
+
+  .ui-text {
+    font-size: var(--ui-text-size);
   }
 }

@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Square, Lock, Search, Video } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, Search, Video } from 'lucide-react';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import * as webllm from '@mlc-ai/web-llm';
 import ReactMarkdown from 'react-markdown';
 import { VideoTunnel } from './VideoTunnel';
 import { VoiceRecorder } from '../chat/VoiceRecorder';
+import Sidebar, { type ActiveView } from './Sidebar';
+import LogsView from '../logs/LogsView';
+import AxonAIShell from '../ai/AxonAIShell';
+import SettingsPanel from '../settings/SettingsPanel';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -52,13 +56,26 @@ const CodeBlock = ({ inline, className, children, ...props }: any) => {
   );
 };
 
-const TerminalUI: React.FC = () => {
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, updateAlias, systemLogs, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword, onlineUsers, typingUsers, broadcastTyping } = useCrypto();
+export interface TerminalUIProps {
+  activeView?: ActiveView;
+  setActiveView?: (view: ActiveView) => void;
+}
+
+export const TerminalUI: React.FC<TerminalUIProps> = ({
+  activeView: propsActiveView,
+  setActiveView: propsSetActiveView,
+}) => {
+  const [internalActiveView, setInternalActiveView] = useState<ActiveView>('dashboard');
+  const activeView = propsActiveView !== undefined ? propsActiveView : internalActiveView;
+  const setActiveView = propsSetActiveView || setInternalActiveView;
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping } = useCrypto();
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
   const [isDecoyMode, setIsDecoyMode] = useState(false);
-  const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
+  const [decoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
   const [joinCode, setJoinCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,9 +93,6 @@ const TerminalUI: React.FC = () => {
   const [aiEngine, setAiEngine] = useState<webllm.MLCEngine | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   
-  const [showSettings, setShowSettings] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
-  const [aliasInput, setAliasInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -105,10 +119,6 @@ const TerminalUI: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
-
-  useEffect(() => {
-    setAliasInput(alias);
-  }, [alias]);
 
   // Auto-scroll
   useEffect(() => {
@@ -194,6 +204,14 @@ const TerminalUI: React.FC = () => {
     }
     if (cmd === '/panic' && !file) {
       setPanicMode(true);
+      return;
+    }
+    if (cmd === '/settings' && !file) {
+      setActiveView('settings');
+      return;
+    }
+    if (cmd === '/logs' && !file) {
+      setActiveView('logs');
       return;
     }
 
@@ -340,12 +358,6 @@ const TerminalUI: React.FC = () => {
     );
   }
 
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateAlias(aliasInput);
-    setShowSettings(false);
-  };
-
   const handleCreateChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newChatPassphrase.trim().length < 4) {
@@ -361,7 +373,7 @@ const TerminalUI: React.FC = () => {
     }
   };
 
-  const handleRenameChat = async (e: React.FormEvent) => {
+  const handleRenameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const id = targetChatId || activeChat?.id;
     if (id && renameInput.trim()) {
@@ -489,529 +501,363 @@ const TerminalUI: React.FC = () => {
           </span>
         ))}
       </div>
-      
-      {/* LEFT SIDEBAR */}
-      <aside className="w-[260px] flex-shrink-0 border-r border-zinc-900 flex flex-col bg-[#080808]">
-        {/* Branding */}
-        <div className="p-6 pb-4">
-          <h1 className="text-cyan-400 font-bold text-lg tracking-wider mb-2">AXON_ROOT</h1>
-          <div className="flex items-center gap-2 text-xs mb-3">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>NODE: {deviceId.substring(0,6).toUpperCase()}</span>
-          </div>
-        </div>
 
-        {/* Dynamic Chats List */}
-        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2 flex justify-between items-center">
-            TERMINALS
-          </div>
-          <div className="px-2 mb-4">
-            <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 px-2 py-1 focus-within:border-cyan-400/50">
-              <Search className="w-3 h-3 text-zinc-500" />
-              <input 
-                type="text" 
-                placeholder="LOCAL SEARCH..." 
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none outline-none text-[10px] text-zinc-300 w-full placeholder:text-zinc-700 uppercase"
-              />
-            </div>
-          </div>
-          {chats.map(chat => (
-            <button 
-              key={chat.id}
-              onClick={() => {
-                if (activeChat?.id === chat.id) return;
-                setUnlockTargetId(chat.id);
-                setUnlockPassword('');
-                setUnlockError(false);
-                setShowUnlockModal(true);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContextMenu({ x: e.pageX, y: e.pageY, chatId: chat.id });
-              }}
-              className={`w-full flex flex-col items-start px-3 py-2 text-sm transition-colors border-l-2 ${
-                activeChat?.id === chat.id 
-                  ? 'text-cyan-400 bg-cyan-400/5 border-cyan-400' 
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border-transparent'
-              }`}
-            >
-              <div className="truncate w-full text-left">{chat.name}</div>
-              <div className="text-[10px] opacity-60 font-mono tracking-widest mt-0.5">
-                {activeChat?.id === chat.id ? '*** UNLOCKED ***' : '*** LOCKED ***'}
-              </div>
-            </button>
-          ))}
-        </div>
+      {/* COLLAPSIBLE NAVIGATION SIDEBAR */}
+      <Sidebar
+        activeView={activeView}
+        setActiveView={setActiveView}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
+      />
 
-        {/* Chat Actions */}
-        <div className="px-4 py-4 border-t border-zinc-900 space-y-3">
-          {isJoining ? (
-            <form onSubmit={handleJoinSubmit} className="flex gap-2">
-              <input
-                type="text"
-                value={joinCode}
-                onChange={e => setJoinCode(e.target.value)}
-                placeholder="LINK CODE"
-                className="w-full bg-[#050505] border border-zinc-700 text-xs px-2 py-1.5 focus:border-cyan-400 outline-none text-white uppercase placeholder:text-zinc-700"
-                autoFocus
-              />
-              <button type="button" onClick={() => setIsJoining(false)} className="text-xs text-zinc-500 hover:text-white px-1">X</button>
-            </form>
-          ) : (
-            <>
-              <button onClick={() => setIsJoining(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-cyan-400/30 p-2">
-                <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
-              </button>
-              <button onClick={() => setShowCreateModal(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-emerald-500/30 p-2">
-                <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* Controls */}
-        <div className="px-4 py-4 border-t border-zinc-900 space-y-4">
-          <div className="flex items-center justify-between text-xs text-zinc-400 uppercase tracking-widest">
-            <span className="flex items-center gap-2">
-              <EyeOff className="w-3 h-3" />
-              Stealth Mode
-            </span>
-            <button onClick={() => setStealthMode(!stealthMode)} className="text-zinc-500 hover:text-cyan-400 transition-colors">
-              {stealthMode ? <ToggleRight className="w-5 h-5 text-cyan-400" /> : <ToggleLeft className="w-5 h-5" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Footer Nav */}
-        <div className="px-4 py-4 space-y-1">
-          <button onClick={() => setShowSettings(true)} className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
-            <Settings className="w-4 h-4" />
-            Settings
-          </button>
-          <button onClick={() => setShowLogs(true)} className="w-full flex items-center gap-3 px-3 py-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-sm transition-colors">
-            <FileText className="w-4 h-4" />
-            Logs
-          </button>
-        </div>
-
-        {/* Terminate Session Button */}
-        <div className="p-4 pt-2 mt-auto">
-          <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
-            className="w-full bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-[0.2em] py-3 transition-colors"
-          >
-            TERMINATE SESSION
-          </button>
-        </div>
-      </aside>
-
-      {/* MAIN CONTENT */}
-      <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
-        
-        {/* Top Header */}
-        <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 shrink-0">
-          <div className="flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden">
-            <button onClick={() => setShowSettings(true)} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
-              ALIAS: {alias}
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
-            {latency > 0 && (
-              <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
-                LATENCY: {latency}MS
-              </div>
-            )}
-            <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
-              NETWORK: {networkStatus}
-            </div>
-            {activeChat && (
-              <button 
-                onClick={() => setShowVideoTunnel(!showVideoTunnel)}
-                className={`border px-3 py-1 items-center gap-2 hidden md:flex transition-colors ${showVideoTunnel ? 'bg-cyan-500 text-black border-cyan-500' : 'border-cyan-500/30 text-cyan-500 hover:bg-cyan-500 hover:text-black'}`}
-              >
-                <Video size={12} className="inline mr-1" /> COMM-LINK
-              </button>
-            )}
-            <button 
-              onClick={purgeTerminal}
-              className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors"
-            >
-              PURGE TERMINAL
-            </button>
-          </div>
-        </header>
-
-        {/* Sub Header */}
-        <div className="px-8 pt-8 pb-4 shrink-0">
-          <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
-            TERMINAL // [{activeChat?.share_code || 'STANDBY'}]
-            {activeChat?.share_code.startsWith('EPH-') && (
-              <span className="text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 border border-red-500/30 font-bold tracking-[0.2em] animate-pulse">
-                EPHEMERAL
-              </span>
-            )}
-            {activeChat && (
-              <button 
-                onClick={() => {
-                  setTargetChatId(activeChat.id);
-                  setRenameInput(activeChat.name);
-                  setShowRenameModal(true);
-                }}
-                className="text-zinc-600 hover:text-cyan-400 transition-colors ml-2"
-              >
-                <Edit2 className="w-4 h-4" />
-              </button>
-            )}
-          </h2>
-          <div className="text-emerald-500 text-xs mt-1">
-            {activeChat ? 'Uplink Established' : 'Awaiting Connection...'}
-            {activeChat && Object.keys(onlineUsers).length > 0 && (
-              <span className="ml-4 text-cyan-400">
-                ACTIVE NODES: {Object.values(onlineUsers).join(', ')}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Chat Feed */}
-        <div 
-          ref={feedRef} 
-          className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6 relative"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
-            backgroundRepeat: 'repeat'
-          }}
-        >
-          
-          {showVideoTunnel && activeChat && (
-            <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
-          )}
-
-          {!activeChat ? (
-            <div className="text-zinc-600 text-sm mt-4">
-              [SYSTEM: NO CHANNEL SELECTED. CREATE OR JOIN TO INITIATE.]
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="text-zinc-600 text-sm mt-4">
-              [SYSTEM: CHANNEL SECURE. AWAITING TRANSMISSIONS...]
-            </div>
-          ) : (
-            messages
-              .filter(msg => !searchQuery || (msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase())))
-              .map(msg => {
-              const isSelf = msg.sender_id === deviceId;
-              const isSystem = msg.sender_id === 'SYSTEM';
-
-              if (isSystem) {
-                return (
-                  <div key={msg.id} className="text-zinc-500 text-xs text-center border-y border-zinc-900 py-2 my-2">
-                    {msg.text}
-                  </div>
-                );
-              }
-
-              return (
-                <div 
-                  key={msg.id} 
-                  id={`msg-${msg.id}`}
-                  className={`flex flex-col w-full max-w-3xl border p-4 relative group ${
-                    isSelf 
-                      ? 'ml-auto border-cyan-400/50 bg-cyan-950/10' 
-                      : 'border-zinc-800 border-l-2 border-l-emerald-500/50 bg-[#080808]'
-                  }`}
-                >
-                  <button 
-                    onClick={() => setReplyToId(msg.id)}
-                    className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-cyan-400 transition-opacity bg-black/50 p-1 rounded"
-                    title="Reply to message"
-                  >
-                    <Reply size={14} />
-                  </button>
-                  <div className="flex justify-between items-center mb-3 pr-8">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelf ? 'text-cyan-400' : 'text-emerald-500'}`}>
-                      {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
-                    </span>
-                    <span className="text-[10px] text-zinc-600 flex items-center gap-1">
-                      {new Date(msg.created_at).toLocaleTimeString([], { hour12: false, timeZone: 'UTC' })} UTC
-                      {isSelf && (
-                        <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-500' : 'text-zinc-600'}>
-                          {msg.read_by && msg.read_by.length > 0 ? '✓✓' : '✓'}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  
-                  {msg.reply_to_id && (
-                    <div 
-                      className="mb-2 p-2 bg-black/20 border-l-2 border-zinc-700 text-xs text-zinc-500 truncate cursor-pointer hover:bg-black/40 transition-colors"
-                      onClick={() => {
-                        const el = document.getElementById(`msg-${msg.reply_to_id}`);
-                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }}
-                    >
-                      {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
-                    </div>
-                  )}
-
-                  {msg.isDecryptionError ? (
-                    <div className="bg-red-500/10 border border-red-500/50 text-red-500 p-2 text-xs uppercase tracking-widest font-bold">
-                      [DECRYPTION FAILED - INVALID KEY]
-                    </div>
-                  ) : (
-                    <>
-                      {msg.text && (
-                        <div className={`text-sm text-zinc-300 leading-relaxed ${stealthMode ? 'filter blur-sm hover:blur-none transition-all cursor-crosshair' : ''}`}>
-                          <div className="break-words space-y-2">
-                            <ReactMarkdown 
-                              remarkPlugins={[remarkGfm]} 
-                              components={{
-                                code: CodeBlock,
-                                p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
-                                a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank">{children}</a> },
-                                ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
-                                ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
-                                li({children}) { return <li className="mb-1">{children}</li> },
-                                blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
-                              }}
-                            >
-                              {msg.text}
-                            </ReactMarkdown>
-                          </div>
-                        </div>
-                      )}
-                      {renderFile(msg.id, msg.file_url)}
-                    </>
-                  )}
+      {/* MAIN VIEW CONTAINER */}
+      <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
+        {activeView === 'dashboard' && (
+          <div className="flex-1 flex min-w-0 h-full overflow-hidden">
+            {/* Terminals list sidebar */}
+            <aside className="w-[260px] flex-shrink-0 border-r border-zinc-900 flex flex-col bg-[#080808]">
+              {/* Branding */}
+              <div className="p-6 pb-4">
+                <h1 className="text-cyan-400 font-bold text-lg tracking-wider mb-2">AXON_ROOT</h1>
+                <div className="flex items-center gap-2 text-xs mb-3">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>NODE: {deviceId.substring(0,6).toUpperCase()}</span>
                 </div>
-              );
-            })
-          )}
+              </div>
 
-          {Object.keys(typingUsers).filter(id => id !== deviceId).length > 0 && (
-            <div className="text-[10px] text-cyan-500/70 font-mono tracking-widest uppercase mb-4 animate-pulse">
-              [{Object.values(typingUsers).filter((_, i) => Object.keys(typingUsers)[i] !== deviceId).join(', ')} IS TYPING...]
-            </div>
-          )}
+              {/* Dynamic Chats List */}
+              <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
+                <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2 flex justify-between items-center">
+                  TERMINALS
+                </div>
+                <div className="px-2 mb-4">
+                  <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 px-2 py-1 focus-within:border-cyan-400/50">
+                    <Search className="w-3 h-3 text-zinc-500" />
+                    <input 
+                      type="text" 
+                      placeholder="LOCAL SEARCH..." 
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="bg-transparent border-none outline-none text-[10px] text-zinc-300 w-full placeholder:text-zinc-700 uppercase"
+                    />
+                  </div>
+                </div>
+                {chats.map(chat => (
+                  <button 
+                    key={chat.id}
+                    onClick={() => {
+                      if (activeChat?.id === chat.id) return;
+                      setUnlockTargetId(chat.id);
+                      setUnlockPassword('');
+                      setUnlockError(false);
+                      setShowUnlockModal(true);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenu({ x: e.pageX, y: e.pageY, chatId: chat.id });
+                    }}
+                    className={`w-full flex flex-col items-start px-3 py-2 text-sm transition-colors border-l-2 ${
+                      activeChat?.id === chat.id 
+                        ? 'text-cyan-400 bg-cyan-400/5 border-cyan-400' 
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border-transparent'
+                    }`}
+                  >
+                    <div className="truncate w-full text-left">{chat.name}</div>
+                    <div className="text-[10px] opacity-60 font-mono tracking-widest mt-0.5">
+                      {activeChat?.id === chat.id ? '*** UNLOCKED ***' : '*** LOCKED ***'}
+                    </div>
+                  </button>
+                ))}
+              </div>
 
-          <div ref={messagesEndRef} />
-        </div>
+              {/* Chat Actions */}
+              <div className="px-4 py-4 border-t border-zinc-900 space-y-3">
+                {isJoining ? (
+                  <form onSubmit={handleJoinSubmit} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={joinCode}
+                      onChange={e => setJoinCode(e.target.value)}
+                      placeholder="LINK CODE"
+                      className="w-full bg-[#050505] border border-zinc-700 text-xs px-2 py-1.5 focus:border-cyan-400 outline-none text-white uppercase placeholder:text-zinc-700"
+                      autoFocus
+                    />
+                    <button type="button" onClick={() => setIsJoining(false)} className="text-xs text-zinc-500 hover:text-white px-1">X</button>
+                  </form>
+                ) : (
+                  <>
+                    <button onClick={() => setIsJoining(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-cyan-400/30 p-2">
+                      <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
+                    </button>
+                    <button onClick={() => setShowCreateModal(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-emerald-500/30 p-2">
+                      <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
+                    </button>
+                  </>
+                )}
+              </div>
 
-        {/* Input Footer */}
-        {activeChat && (
-          <footer className="shrink-0 p-4 bg-[#050505]">
-            {replyToId && (
-              <div className="mb-2 p-2 bg-zinc-900 border-l-2 border-cyan-500 text-xs text-zinc-400 flex justify-between items-center max-w-full">
-                <span className="truncate">REPLYING TO: {messages.find(m => m.id === replyToId)?.text || 'AUDIO / ATTACHMENT'}</span>
-                <button onClick={() => setReplyToId(null)} className="text-zinc-500 hover:text-white p-1">
-                  <X size={14} />
+              {/* Controls */}
+              <div className="px-4 py-4 border-t border-zinc-900 space-y-4">
+                <div className="flex items-center justify-between text-xs text-zinc-400 uppercase tracking-widest">
+                  <span className="flex items-center gap-2">
+                    <EyeOff className="w-3 h-3" />
+                    Stealth Mode
+                  </span>
+                  <button onClick={() => setStealthMode(!stealthMode)} className="text-zinc-500 hover:text-cyan-400 transition-colors">
+                    {stealthMode ? <ToggleRight className="w-5 h-5 text-cyan-400" /> : <ToggleLeft className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Terminate Session Button */}
+              <div className="p-4 pt-2 mt-auto">
+                <button 
+                  onClick={() => { localStorage.clear(); window.location.reload(); }}
+                  className="w-full bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-[0.2em] py-3 transition-colors"
+                >
+                  TERMINATE SESSION
                 </button>
               </div>
-            )}
-            <form 
-              onSubmit={handleSubmit} 
-              className="flex items-center gap-2 sm:gap-4 bg-[#0a0a0f] border border-zinc-800 focus-within:border-cyan-400/50 transition-colors p-2"
-            >
-              <div className="hidden sm:flex items-center gap-2 pl-2 text-emerald-500 text-xs whitespace-nowrap">
-                <Terminal className="w-4 h-4" />
-                <span>COMMAND_PROMPT root@axon:~$</span>
-              </div>
-              
-              <input 
-                type="text" 
-                value={input}
-                onChange={handleInputChange}
-                className="flex-1 bg-transparent border-none outline-none text-zinc-200 font-mono text-sm placeholder:text-zinc-700 min-w-0 px-2"
-                placeholder="Enter command or message..."
-                autoFocus
-                autoComplete="off"
-                spellCheck="false"
-              />
+            </aside>
 
-              {/* Attachment Preview */}
-              {selectedFile && (
-                <div className="absolute bottom-full left-0 mb-2 ml-4 flex items-center gap-3 bg-[#0a0a0f] border border-cyan-400/30 px-3 py-2">
-                  <Paperclip className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs text-zinc-300 truncate max-w-[200px]">{selectedFile.name}</span>
-                  {selectedFile.type.startsWith('image/') && (
-                    <label className="flex items-center gap-2 ml-4 border-l border-zinc-800 pl-4 cursor-pointer text-xs">
-                      <input 
-                        type="checkbox" 
-                        checked={useSteganography} 
-                        onChange={e => setUseSteganography(e.target.checked)}
-                        className="accent-cyan-400"
-                      />
-                      <span className="text-zinc-400 uppercase tracking-widest">Lsb Steg</span>
-                    </label>
-                  )}
-                  <button type="button" onClick={() => { setSelectedFile(null); setUseSteganography(false); }} className="text-zinc-500 hover:text-red-500 ml-2">
-                    <X className="w-3 h-3" />
+            {/* MAIN CHAT CONTENT */}
+            <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
+              {/* Top Header */}
+              <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 shrink-0">
+                <div className="flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden">
+                  <button onClick={() => setActiveView('settings')} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
+                    ALIAS: {alias}
                   </button>
                 </div>
-              )}
 
-              {/* No strict `accept` constraints here, letting mobile natively browse all files */}
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                onChange={(e) => {
-                  if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
+                <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
+                  {latency > 0 && (
+                    <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
+                      LATENCY: {latency}MS
+                    </div>
+                  )}
+                  <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
+                    NETWORK: {networkStatus}
+                  </div>
+                  {activeChat && (
+                    <button 
+                      onClick={() => setShowVideoTunnel(!showVideoTunnel)}
+                      className={`border px-3 py-1 items-center gap-2 hidden md:flex transition-colors ${showVideoTunnel ? 'bg-cyan-500 text-black border-cyan-500' : 'border-cyan-500/30 text-cyan-500 hover:bg-cyan-500 hover:text-black'}`}
+                    >
+                      <Video size={12} className="inline mr-1" /> COMM-LINK
+                    </button>
+                  )}
+                  <button 
+                    onClick={purgeTerminal}
+                    className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors"
+                  >
+                    PURGE TERMINAL
+                  </button>
+                </div>
+              </header>
+
+              {/* Sub Header */}
+              <div className="px-8 pt-8 pb-4 shrink-0">
+                <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
+                  TERMINAL // [{activeChat?.share_code || 'STANDBY'}]
+                  {activeChat?.share_code.startsWith('EPH-') && (
+                    <span className="text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 border border-red-500/30 font-bold tracking-[0.2em] animate-pulse">
+                      EPHEMERAL
+                    </span>
+                  )}
+                  {activeChat && (
+                    <button 
+                      onClick={() => {
+                        setTargetChatId(activeChat.id);
+                        setRenameInput(activeChat.name);
+                        setShowRenameModal(true);
+                      }}
+                      className="text-zinc-600 hover:text-cyan-400 transition-colors ml-2"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </h2>
+                <div className="text-emerald-500 text-xs mt-1">
+                  {activeChat ? 'Uplink Established' : 'Awaiting Connection...'}
+                  {activeChat && Object.keys(onlineUsers).length > 0 && (
+                    <span className="ml-4 text-cyan-400">
+                      ACTIVE NODES: {Object.values(onlineUsers).join(', ')}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Chat Feed */}
+              <div 
+                ref={feedRef} 
+                className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6 relative"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
+                  backgroundRepeat: 'repeat'
                 }}
-              />
-              <button 
-                type="button" 
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-zinc-500 hover:text-emerald-400 transition-colors shrink-0"
               >
-                <Paperclip className="w-4 h-4" />
-              </button>
-              
-              <VoiceRecorder 
-                onRecordingComplete={(base64Audio) => {
-                  if (activeChat && base64Audio) {
-                    sendMessage(activeChat.id, '', base64Audio, replyToId || undefined);
-                    setReplyToId(null);
-                  }
-                }} 
-              />
-              
-              <button 
-                type="submit"
-                disabled={(!input.trim() && !selectedFile)}
-                className="bg-cyan-400 hover:bg-cyan-300 text-black px-4 sm:px-6 py-2 text-xs font-bold tracking-widest flex items-center gap-2 transition-colors uppercase shrink-0"
-              >
-                <span className="hidden sm:inline">EXECUTE</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
-          </footer>
+                {showVideoTunnel && activeChat && (
+                  <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
+                )}
+
+                {!activeChat ? (
+                  <div className="text-zinc-600 text-sm mt-4">
+                    [SYSTEM: NO CHANNEL SELECTED. CREATE OR JOIN TO INITIATE.]
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="text-zinc-600 text-sm mt-4">
+                    [SYSTEM: CHANNEL SECURE. AWAITING TRANSMISSIONS...]
+                  </div>
+                ) : (
+                  messages
+                    .filter(msg => !searchQuery || (msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase())))
+                    .map(msg => {
+                    const isSelf = msg.sender_id === deviceId;
+                    const isSystem = msg.sender_id === 'SYSTEM';
+
+                    if (isSystem) {
+                      return (
+                        <div key={msg.id} className="text-zinc-500 text-xs text-center border-y border-zinc-900 py-2 my-2">
+                          {msg.text}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div 
+                        key={msg.id} 
+                        id={`msg-${msg.id}`}
+                        className={`flex flex-col w-full max-w-3xl border p-4 relative group ${
+                          isSelf 
+                            ? 'ml-auto border-cyan-400/50 bg-cyan-950/10' 
+                            : 'border-zinc-800 border-l-2 border-l-emerald-500/50 bg-[#080808]'
+                        }`}
+                      >
+                        <button 
+                          onClick={() => setReplyToId(msg.id)}
+                          className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-cyan-400 transition-opacity bg-black/50 p-1 rounded"
+                          title="Reply to message"
+                        >
+                          <Reply size={14} />
+                        </button>
+                        <div className="flex justify-between items-center mb-3 pr-8">
+                          <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelf ? 'text-cyan-400' : 'text-emerald-500'}`}>
+                            {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
+                          </span>
+                          <span className="text-[10px] text-zinc-600 flex items-center gap-1">
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour12: false, timeZone: 'UTC' })} UTC
+                            {isSelf && (
+                              <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-500' : 'text-zinc-600'}>
+                                {msg.read_by && msg.read_by.length > 0 ? '✓✓' : '✓'}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+
+                        {msg.reply_to_id && (
+                          <div 
+                            className="mb-2 p-2 bg-black/20 border-l-2 border-zinc-700 text-xs text-zinc-500 truncate cursor-pointer hover:bg-black/40 transition-colors"
+                            onClick={() => {
+                              const el = document.getElementById(`msg-${msg.reply_to_id}`);
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }}
+                          >
+                            {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
+                          </div>
+                        )}
+
+                        <div className="text-sm font-mono text-zinc-200 leading-relaxed">
+                          <ReactMarkdown 
+                            remarkPlugins={[remarkGfm]} 
+                            components={{
+                              code: CodeBlock,
+                              p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
+                              a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank" rel="noreferrer">{children}</a> },
+                              ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
+                              ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
+                              li({children}) { return <li className="mb-1">{children}</li> },
+                              blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
+                            }}
+                          >
+                            {msg.text}
+                          </ReactMarkdown>
+                        </div>
+
+                        {renderFile(msg.id, msg.file_url)}
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Footer Input Bar */}
+              {activeChat && (
+                <footer className="p-4 border-t border-zinc-900 bg-[#080808] shrink-0">
+                  <form onSubmit={handleSubmit} className="flex items-center gap-3">
+                    <input 
+                      type="text" 
+                      value={input}
+                      onChange={handleInputChange}
+                      placeholder="ENTER COMMAND OR TRANSMISSION..."
+                      className="flex-1 bg-[#050505] border border-zinc-800 focus:border-cyan-400 px-4 py-2 text-xs text-white outline-none font-mono placeholder:text-zinc-700 uppercase"
+                    />
+
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
+                      }}
+                    />
+                    <button 
+                      type="button" 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 text-zinc-500 hover:text-emerald-400 transition-colors shrink-0"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    
+                    <VoiceRecorder 
+                      onRecordingComplete={(base64Audio) => {
+                        if (activeChat && base64Audio) {
+                          sendMessage(base64Audio, null, replyToId);
+                          setReplyToId(null);
+                        }
+                      }} 
+                    />
+                    
+                    <button 
+                      type="submit"
+                      disabled={(!input.trim() && !selectedFile)}
+                      className="bg-cyan-400 hover:bg-cyan-300 text-black px-4 sm:px-6 py-2 text-xs font-bold tracking-widest flex items-center gap-2 transition-colors uppercase shrink-0"
+                    >
+                      <span className="hidden sm:inline">EXECUTE</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
+                </footer>
+              )}
+            </main>
+          </div>
         )}
 
-      </main>
+        {activeView === 'axon-ai' && (
+          <AxonAIShell />
+        )}
 
-      {/* MODALS */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-[#0a0a0f] border border-zinc-800 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-[#050505]">
-              <div className="font-bold tracking-widest text-zinc-300 flex items-center gap-2">
-                <Settings className="w-5 h-5" /> SYSTEM CONFIGURATION
-              </div>
-              <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
-            </div>
-            <div className="p-6 overflow-y-auto space-y-6">
-              
-              {/* Appearance */}
-              <div className="border-l-4 border-l-pink-500 bg-[#050505] p-4 border border-zinc-800/50">
-                <h3 className="text-pink-500 font-bold mb-4 tracking-widest text-sm uppercase">Appearance & Identity</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">STATION ALIAS</label>
-                    <input 
-                      type="text" 
-                      value={aliasInput}
-                      onChange={e => setAliasInput(e.target.value)}
-                      className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-pink-500 p-2 text-white font-mono text-sm outline-none uppercase"
-                    />
-                  </div>
-                  <button onClick={handleSaveSettings} className="bg-pink-500 hover:bg-pink-400 text-black py-1.5 px-4 text-xs font-bold tracking-widest uppercase transition-colors">
-                    UPDATE ALIAS
-                  </button>
-                </div>
-              </div>
+        {activeView === 'settings' && (
+          <SettingsPanel />
+        )}
 
-              {/* Privacy */}
-              <div className="border-l-4 border-l-blue-500 bg-[#050505] p-4 border border-zinc-800/50">
-                <h3 className="text-blue-500 font-bold mb-4 tracking-widest text-sm uppercase">Privacy & Threat Mitigation</h3>
-                <div className="space-y-4">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" checked={stealthMode} onChange={e => setStealthMode(e.target.checked)} className="hidden" />
-                    {stealthMode ? <ToggleRight className="text-blue-400 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
-                    <span className="text-sm">Stealth Mode (Blur feed on idle/hover)</span>
-                  </label>
-                  <div>
-                    <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DECOY VAULT PASSPHRASE</label>
-                    <input 
-                      type="text" 
-                      value={decoyPassphrase}
-                      onChange={e => {
-                        setDecoyPassphrase(e.target.value); 
-                        localStorage.setItem('axon_decoy_pass', e.target.value);
-                      }}
-                      className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-blue-500 p-2 text-white font-mono text-sm outline-none uppercase"
-                    />
-                    <p className="text-[10px] text-zinc-500 mt-1">Entering this passphrase during unlock will trigger plausible deniability mode.</p>
-                  </div>
-                </div>
-              </div>
+        {activeView === 'logs' && (
+          <LogsView />
+        )}
+      </div>
 
-              {/* System Control */}
-              <div className="border-l-4 border-l-purple-500 bg-[#050505] p-4 border border-zinc-800/50">
-                <h3 className="text-purple-500 font-bold mb-4 tracking-widest text-sm uppercase">System Control</h3>
-                <div className="space-y-2">
-                  <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">DEVICE IDENTIFIER (WATERMARK ID)</label>
-                  <div className="w-full bg-[#0a0a0f] border border-zinc-800 p-2 text-zinc-600 font-mono text-xs select-all">
-                    {deviceId}
-                  </div>
-                </div>
-              </div>
-
-              {/* Danger Zone */}
-              <div className="border-l-4 border-l-red-500 bg-[#050505] p-4 border border-zinc-800/50">
-                <h3 className="text-red-500 font-bold mb-4 tracking-widest text-sm uppercase">Danger Zone</h3>
-                <div className="space-y-4">
-                  <p className="text-xs text-zinc-500">Executing a Nuclear Purge will destroy the entire terminal globally. Do not run this lightly.</p>
-                  <button 
-                    onClick={() => {
-                      if (activeChat && confirm("WARNING: NUCLEAR PROTOCOL INITIATED. THIS WILL PERMANENTLY DESTROY THIS TERMINAL AND ALL DATA GLOBALLY. PROCEED?")) {
-                        deleteChat(activeChat.id);
-                        setShowSettings(false);
-                      }
-                    }}
-                    disabled={!activeChat}
-                    className="w-full bg-red-500/10 border border-red-500/50 hover:bg-red-500 hover:text-black text-red-500 py-1.5 px-4 text-xs font-bold tracking-widest uppercase transition-colors disabled:opacity-50"
-                  >
-                    NUCLEAR PURGE ACTIVE TERMINAL
-                  </button>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showLogs && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-2xl h-[60vh] flex flex-col relative">
-            <button onClick={() => setShowLogs(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
-              <X className="w-5 h-5" />
-            </button>
-            <div className="p-4 border-b border-zinc-900 shrink-0">
-              <h3 className="text-emerald-500 font-bold tracking-widest uppercase flex items-center gap-2">
-                <FileText className="w-5 h-5" /> EVENT LOGS
-              </h3>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {systemLogs.length === 0 ? (
-                <div className="text-zinc-600 text-xs">[NO LOGS AVAILABLE]</div>
-              ) : (
-                systemLogs.map(log => (
-                  <div key={log.id} className="text-xs font-mono text-zinc-400 border-l-2 border-zinc-800 pl-3 py-1">
-                    <span className="text-emerald-500 mr-2">[{new Date(log.time).toLocaleTimeString()}]</span>
-                    {log.msg}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* MODALS & OVERLAYS */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-md p-6 relative">
@@ -1019,48 +865,41 @@ const TerminalUI: React.FC = () => {
               <X className="w-5 h-5" />
             </button>
             <h3 className="text-emerald-500 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
-              <Server className="w-5 h-5" /> INITIALIZE NEW TUNNEL
+              <Plus className="w-5 h-5" /> CREATE TUNNEL
             </h3>
             
             <form onSubmit={handleCreateChat} className="space-y-4">
               <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">TUNNEL NAME (OPTIONAL)</label>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">TUNNEL ALIAS</label>
                 <input 
                   type="text" 
                   value={newChatName}
                   onChange={e => setNewChatName(e.target.value)}
-                  placeholder="e.g. PROJECT_OMEGA"
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none"
+                  placeholder="e.g. ALPHA-OPERATIONS"
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  autoFocus
                 />
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">CUSTOM PASSPHRASE (REQUIRED)</label>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">ENCRYPTION PASSPHRASE</label>
                 <input 
-                  type="text" 
+                  type="password" 
                   value={newChatPassphrase}
-                  onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
-                  placeholder="ENTER SECURE PASSPHRASE"
+                  onChange={e => setNewChatPassphrase(e.target.value)}
+                  placeholder="SHARED SECRET"
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                 />
               </div>
-              <div>
-                <label className="flex items-center gap-3 cursor-pointer p-3 bg-red-500/5 border border-red-500/20 rounded-sm">
-                  <input 
-                    type="checkbox" 
-                    checked={isEphemeralChat} 
-                    onChange={e => setIsEphemeralChat(e.target.checked)} 
-                    className="hidden" 
-                  />
-                  {isEphemeralChat ? <ToggleRight className="text-red-500 w-5 h-5" /> : <ToggleLeft className="text-zinc-600 w-5 h-5" />}
-                  <div>
-                    <div className="text-red-400 text-xs font-bold tracking-widest uppercase">EPHEMERAL MODE (BURN ON CLOSE)</div>
-                    <div className="text-[10px] text-zinc-500 mt-1">Messages exist only in memory and vanish instantly when the browser is closed.</div>
-                  </div>
+              <div className="pt-2">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" checked={isEphemeralChat} onChange={e => setIsEphemeralChat(e.target.checked)} className="hidden" />
+                  {isEphemeralChat ? <ToggleRight className="text-red-500 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
+                  <span className="text-xs text-zinc-400">Ephemeral Channel (Destroy payload on disconnection)</span>
                 </label>
               </div>
               <div className="pt-4">
                 <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
-                  CREATE TUNNEL
+                  INITIALIZE TUNNEL
                 </button>
               </div>
             </form>
@@ -1070,28 +909,28 @@ const TerminalUI: React.FC = () => {
 
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-cyan-400/50 w-full max-w-md p-6 relative">
+          <div className="bg-[#050505] border border-cyan-500/50 w-full max-w-md p-6 relative">
             <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h3 className="text-cyan-400 font-bold tracking-widest uppercase mb-6 flex items-center gap-2">
-              <Edit2 className="w-5 h-5" /> RENAME TUNNEL
+              <Edit2 className="w-5 h-5" /> RENAME TERMINAL
             </h3>
             
-            <form onSubmit={handleRenameChat} className="space-y-4">
+            <form onSubmit={handleRenameSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW TUNNEL NAME</label>
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW TERMINAL ALIAS</label>
                 <input 
                   type="text" 
                   value={renameInput}
                   onChange={e => setRenameInput(e.target.value)}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-400 p-2 text-white font-mono text-sm outline-none"
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase"
                   autoFocus
                 />
               </div>
               <div className="pt-4">
                 <button type="submit" className="w-full bg-cyan-400 hover:bg-cyan-300 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
-                  SAVE NAME
+                  UPDATE ALIAS
                 </button>
               </div>
             </form>
