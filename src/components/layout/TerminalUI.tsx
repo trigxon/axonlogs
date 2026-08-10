@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Mic, Square, Lock, Search, Video } from 'lucide-react';
+import { Settings, FileText, ToggleRight, ToggleLeft, Terminal, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Server, Key, Reply, Square, Lock, Search, Video } from 'lucide-react';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import * as webllm from '@mlc-ai/web-llm';
 import ReactMarkdown from 'react-markdown';
 import { VideoTunnel } from './VideoTunnel';
+import { VoiceRecorder } from '../chat/VoiceRecorder';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -85,9 +86,6 @@ const TerminalUI: React.FC = () => {
   const [newChatPassphrase, setNewChatPassphrase] = useState('');
 
   const [replyToId, setReplyToId] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState('');
@@ -243,45 +241,7 @@ const TerminalUI: React.FC = () => {
     }
   };
 
-  const toggleRecording = async () => {
-    if (isRecording) {
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-      }
-      setIsRecording(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) audioChunksRef.current.push(event.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-          
-          if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = null;
-            broadcastTyping(false);
-          }
-          await sendMessage('', audioFile, replyToId);
-          setReplyToId(null);
-          stream.getTracks().forEach(track => track.stop());
-        };
-
-        mediaRecorder.start();
-        setIsRecording(true);
-      } catch (err) {
-        console.error('Microphone access denied or error', err);
-        alert('Microphone access denied. Please check permissions.');
-      }
-    }
-  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
@@ -902,17 +862,19 @@ const TerminalUI: React.FC = () => {
               >
                 <Paperclip className="w-4 h-4" />
               </button>
-              <button 
-                type="button"
-                onClick={toggleRecording}
-                className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-zinc-500 hover:text-cyan-400'}`}
-              >
-                {isRecording ? <Square size={18} /> : <Mic size={18} />}
-              </button>
+              
+              <VoiceRecorder 
+                onRecordingComplete={(base64Audio) => {
+                  if (activeChat && base64Audio) {
+                    sendMessage(activeChat.id, '', base64Audio, replyToId || undefined);
+                    setReplyToId(null);
+                  }
+                }} 
+              />
               
               <button 
                 type="submit"
-                disabled={(!input.trim() && !selectedFile && !isRecording)}
+                disabled={(!input.trim() && !selectedFile)}
                 className="bg-cyan-400 hover:bg-cyan-300 text-black px-4 sm:px-6 py-2 text-xs font-bold tracking-widest flex items-center gap-2 transition-colors uppercase shrink-0"
               >
                 <span className="hidden sm:inline">EXECUTE</span>
