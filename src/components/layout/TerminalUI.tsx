@@ -711,7 +711,14 @@ const TerminalUI: React.FC = () => {
         </div>
 
         {/* Chat Feed */}
-        <div ref={feedRef} className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6">
+        <div 
+          ref={feedRef} 
+          className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6 relative"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
+            backgroundRepeat: 'repeat'
+          }}
+        >
           
           {showVideoTunnel && activeChat && (
             <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
