@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, EyeOff, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, Search, Video } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Cloud, CloudOff, Menu } from 'lucide-react';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import * as webllm from '@mlc-ai/web-llm';
 import ReactMarkdown from 'react-markdown';
@@ -13,6 +13,44 @@ import SettingsPanel from '../settings/SettingsPanel';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+// Lightweight WebAudio ping used for incoming transmission alerts
+let audioCtx: AudioContext | null = null;
+const playPing = () => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.18);
+  } catch {
+    /* audio unavailable */
+  }
+};
+
+// Generates a strong readable passphrase for new terminals (XXXX-XXXX-XXXX)
+const generateStrongPassphrase = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const pick = (n: number) =>
+    Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return `${pick(4)}-${pick(4)}-${pick(4)}`;
+};
+
+const readDeviceKey = (chatId: string): string | undefined => {
+  try {
+    const map = JSON.parse(localStorage.getItem('axon_device_keys') || '{}') as Record<string, string>;
+    return map[chatId];
+  } catch {
+    return undefined;
+  }
+};
 
 const CodeBlock = ({ inline, className, children, ...props }: any) => {
   const match = /language-(\w+)/.exec(className || '');
@@ -69,17 +107,17 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const activeView = propsActiveView !== undefined ? propsActiveView : internalActiveView;
   const setActiveView = propsSetActiveView || setInternalActiveView;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat } = useCrypto();
+  const chatLocked = !!activeChat && unlockedChatId !== activeChat.id;
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
-  const [stealthMode, setStealthMode] = useState(false);
   const [isDecoyMode, setIsDecoyMode] = useState(false);
   const [decoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
-  const [joinCode, setJoinCode] = useState('');
-  const [isJoining, setIsJoining] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [copiedCode, setCopiedCode] = useState(false);
+
   const [showVideoTunnel, setShowVideoTunnel] = useState(false);
 
   const [isIdleLocked, setIsIdleLocked] = useState(false);
@@ -105,7 +143,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState('');
 
-  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, chatId: string } | null>(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [targetChatId, setTargetChatId] = useState<string | null>(null);
@@ -114,16 +151,44 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [unlockTargetId, setUnlockTargetId] = useState<string | null>(null);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  const [clock, setClock] = useState(Date.now());
+  const [showDeviceKey, setShowDeviceKey] = useState(false);
 
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
+  const lastMsgCountRef = useRef(0);
 
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Incoming transmission alerts (sound + desktop notification)
+  useEffect(() => {
+    const lastCount = lastMsgCountRef.current;
+    const newCount = messages.length;
+    if (lastCount > 0 && newCount > lastCount) {
+      const latest = messages[messages.length - 1];
+      if (latest && latest.sender_id !== deviceId && latest.sender_id !== 'SYSTEM') {
+        if (localStorage.getItem('axon_sound_enabled') !== 'false') playPing();
+        if (localStorage.getItem('axon_notifications_enabled') === 'true' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification('[AXON LOGS] INCOMING TRANSMISSION', {
+              body: `NODE_${latest.sender_id.substring(0, 4)}: ${latest.text?.slice(0, 120) || '[ATTACHMENT / VOICE MEMO]'}`,
+              tag: 'axon-incoming',
+            });
+          } catch {
+            /* notifications unavailable */
+          }
+        }
+      }
+    }
+    lastMsgCountRef.current = newCount;
+  }, [messages, deviceId]);
 
   // Idle Timer
   useEffect(() => {
@@ -161,12 +226,29 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     setIsAiLoading(false);
   };
 
-  // Click away for context menu
+  // Tick the clock while a lockout cooldown is active, then stop when it expires
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, []);
+    if (lockoutUntil <= Date.now()) return;
+    const t = setInterval(() => {
+      setClock(Date.now());
+      if (Date.now() >= lockoutUntil) clearInterval(t);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [lockoutUntil]);
+
+  // Auto-lock gate: whenever the active terminal is locked, demand the passphrase.
+  // Runs on refresh, on chat switch, and after idle re-auth -> the core security ask.
+  useEffect(() => {
+    if (activeChat && chatLocked) {
+      setUnlockTargetId(activeChat.id);
+      setUnlockPassword('');
+      setUnlockError(false);
+      setShowDeviceKey(false);
+      setShowUnlockModal(true);
+    } else {
+      setShowUnlockModal(false);
+    }
+  }, [activeChat?.id, chatLocked]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,6 +263,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     }
 
     const cmd = input.trim();
+    const lowerCmd = cmd.toLowerCase();
     const file = selectedFile;
     
     setInput('');
@@ -194,24 +277,41 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     }
 
     // Slash command interpreter (only if text command)
-    if (cmd === '/clear' && !file) {
+    if (lowerCmd === '/clear' && !file) {
       purgeTerminal();
       return;
     }
-    if (cmd === '/ping' && !file) {
-      addSystemMessage(`PING: WebSocket Latency ${latency}ms`);
+    if (lowerCmd === '/ping' && !file) {
+      addSystemMessage(`PING: ${networkStatus === 'ONLINE' ? `WebSocket Latency ${latency}ms` : `${networkStatus} MODE - ROUND TRIP 0ms (LOCAL)`}`);
       return;
     }
-    if (cmd === '/panic' && !file) {
+    if (lowerCmd === '/help' && !file) {
+      addSystemMessage('[COMMANDS]: /clear /ping /help /status /panic /lock (re-lock terminal) /settings /logs /sim on|off (local sandbox node) | /nuke (wipe terminal) | @AxonNode <prompt> (local AI)');
+      return;
+    }
+    if (lowerCmd.startsWith('/sim') && !file) {
+      const arg = cmd.split(' ')[1]?.toLowerCase();
+      toggleSimBot(arg === 'on' ? true : arg === 'off' ? false : undefined);
+      return;
+    }
+    if (lowerCmd === '/status' && !file) {
+      addSystemMessage(`[STATUS] MODE: ${networkStatus} | ALIAS: ${alias} | NODE: ${deviceId.substring(0, 8)} | TERMINALS: ${chats.length} | MESSAGES: ${messages.length} | LATENCY: ${latency}ms`);
+      return;
+    }
+    if (lowerCmd === '/panic' && !file) {
       setPanicMode(true);
       return;
     }
-    if (cmd === '/settings' && !file) {
+    if (lowerCmd === '/settings' && !file) {
       setActiveView('settings');
       return;
     }
-    if (cmd === '/logs' && !file) {
+    if (lowerCmd === '/logs' && !file) {
       setActiveView('logs');
+      return;
+    }
+    if (lowerCmd === '/lock' && !file) {
+      if (activeChat) lockChat(activeChat.id);
       return;
     }
 
@@ -233,7 +333,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     setUseSteganography(false);
 
     // AI Trigger
-    if (cmd.includes('@AxonNode')) {
+    if (lowerCmd.includes('@axonnode')) {
       if (!aiEngine && !isAiLoading) {
         initAI().then(async () => {
           // Send prompt after init
@@ -273,18 +373,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       broadcastTyping(false);
       typingTimeoutRef.current = null;
     }, 2000);
-  };
-
-  const handleJoinSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!joinCode.trim()) return;
-    const success = await joinChat(joinCode.trim().toUpperCase());
-    if (success) {
-      setJoinCode('');
-      setIsJoining(false);
-    } else {
-      alert("Invalid code or chat not found.");
-    }
   };
 
   const decodeImage = async (id: string, url: string) => {
@@ -358,10 +446,37 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     );
   }
 
+  const openCreateModal = () => {
+    setNewChatName('');
+    setNewChatPassphrase(generateStrongPassphrase());
+    setIsEphemeralChat(false);
+    setShowCreateModal(true);
+  };
+
+  const handleRenameRequest = (chatId: string) => {
+    const chat = chats.find(c => c.id === chatId);
+    if (chat) {
+      setTargetChatId(chatId);
+      setRenameInput(chat.name);
+      setShowRenameModal(true);
+    }
+  };
+
+  const handlePasswordRequest = (chatId: string) => {
+    setTargetChatId(chatId);
+    setPasswordInput('');
+    setShowPasswordModal(true);
+  };
+
   const handleCreateChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newChatPassphrase.trim().length < 4) {
       alert("Passphrase must be at least 4 characters.");
+      return;
+    }
+    const dup = chats.find(c => c.share_code === newChatPassphrase.trim().toUpperCase());
+    if (dup) {
+      alert(`PASSPHRASE ALREADY IN USE BY TERMINAL \"${dup.name}\". SET A DIFFERENT PASSWORD FOR THIS CHAT.`);
       return;
     }
     const success = await createChat(newChatName, newChatPassphrase, isEphemeralChat);
@@ -392,10 +507,14 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (targetChatId && passwordInput.trim()) {
-      await changeChatPassword(targetChatId, passwordInput.trim().toUpperCase());
-      setShowPasswordModal(false);
+    if (!targetChatId || !passwordInput.trim()) return;
+    const dup = chats.find(c => c.id !== targetChatId && c.share_code === passwordInput.trim().toUpperCase());
+    if (dup) {
+      alert(`PASSPHRASE ALREADY IN USE BY TERMINAL \"${dup.name}\". SET A DIFFERENT PASSWORD FOR THIS CHAT.`);
+      return;
     }
+    await changeChatPassword(targetChatId, passwordInput.trim().toUpperCase());
+    setShowPasswordModal(false);
   };
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
@@ -427,12 +546,23 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       setShowUnlockModal(false);
       return;
     }
+    if (lockoutUntil > Date.now()) return;
+
     const chat = chats.find(c => c.id === unlockTargetId);
-    if (chat && unlockPassword.trim().toUpperCase() === chat.share_code) {
-      setActiveChat(chat);
+    if (chat && unlockChat(chat.id, unlockPassword.trim())) {
+      if (activeChat?.id !== chat.id) setActiveChat(chat);
       setShowUnlockModal(false);
+      setFailedAttempts(0);
     } else {
+      const fails = failedAttempts + 1;
+      setFailedAttempts(fails);
       setUnlockError(true);
+      if (fails >= 5) {
+        // Brute-force protection: lock out for 30s after 5 bad passphrases
+        setLockoutUntil(Date.now() + 30000);
+        setFailedAttempts(0);
+        setUnlockError(false);
+      }
     }
   };
 
@@ -480,7 +610,10 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           <h1 className="text-2xl font-bold tracking-widest text-cyan-400 mb-4 uppercase">BIOMETRIC LOCK ENGAGED</h1>
           <p className="text-zinc-500 text-sm mb-8 text-center max-w-md">Idle limit exceeded. Terminal locked to prevent unauthorized physical access.</p>
           <button 
-            onClick={() => setIsIdleLocked(false)}
+            onClick={() => {
+              if (activeChat) lockChat(activeChat.id);
+              setIsIdleLocked(false);
+            }}
             className="px-8 py-3 bg-cyan-400/10 border border-cyan-400 text-cyan-400 hover:bg-cyan-400 hover:text-black transition-all uppercase tracking-widest font-bold"
           >
             Re-Authenticate
@@ -491,7 +624,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   }
 
   return (
-    <div className={`flex h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden relative ${isIdleLocked ? 'blur-xl' : ''}`}>
+    <div className={`flex h-[100dvh] w-full bg-gradient-to-br from-[#06060a] via-[#050506] to-[#040408] text-[#a3a3a3] font-mono overflow-hidden relative scanlines ${isIdleLocked ? 'blur-xl' : ''}`}>
       
       {/* WATERMARK */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.02] flex flex-wrap gap-4 z-50 select-none items-center justify-center">
@@ -502,129 +635,40 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         ))}
       </div>
 
-      {/* COLLAPSIBLE NAVIGATION SIDEBAR */}
+      {/* MOBILE SIDEBAR OVERLAY */}
+      {mobileSidebarOpen && (
+        <div className="fixed inset-0 bg-black/70 z-40 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
+      )}
+
+      {/* COLLAPSIBLE NAVIGATION SIDEBAR (drawer on mobile, rail on desktop) */}
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        onCreateTunnel={openCreateModal}
+        onRenameChat={handleRenameRequest}
+        onChangePassword={handlePasswordRequest}
+        mobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
       {/* MAIN VIEW CONTAINER */}
       <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
         {activeView === 'dashboard' && (
-          <div className="flex-1 flex min-w-0 h-full overflow-hidden">
-            {/* Terminals list sidebar */}
-            <aside className="w-[260px] flex-shrink-0 border-r border-zinc-900 flex flex-col bg-[#080808]">
-              {/* Branding */}
-              <div className="p-6 pb-4">
-                <h1 className="text-cyan-400 font-bold text-lg tracking-wider mb-2">AXON_ROOT</h1>
-                <div className="flex items-center gap-2 text-xs mb-3">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>NODE: {deviceId.substring(0,6).toUpperCase()}</span>
-                </div>
-              </div>
-
-              {/* Dynamic Chats List */}
-              <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-                <div className="text-xs font-bold tracking-widest text-zinc-500 mb-3 px-2 flex justify-between items-center">
-                  TERMINALS
-                </div>
-                <div className="px-2 mb-4">
-                  <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 px-2 py-1 focus-within:border-cyan-400/50">
-                    <Search className="w-3 h-3 text-zinc-500" />
-                    <input 
-                      type="text" 
-                      placeholder="LOCAL SEARCH..." 
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      className="bg-transparent border-none outline-none text-[10px] text-zinc-300 w-full placeholder:text-zinc-700 uppercase"
-                    />
-                  </div>
-                </div>
-                {chats.map(chat => (
-                  <button 
-                    key={chat.id}
-                    onClick={() => {
-                      if (activeChat?.id === chat.id) return;
-                      setUnlockTargetId(chat.id);
-                      setUnlockPassword('');
-                      setUnlockError(false);
-                      setShowUnlockModal(true);
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setContextMenu({ x: e.pageX, y: e.pageY, chatId: chat.id });
-                    }}
-                    className={`w-full flex flex-col items-start px-3 py-2 text-sm transition-colors border-l-2 ${
-                      activeChat?.id === chat.id 
-                        ? 'text-cyan-400 bg-cyan-400/5 border-cyan-400' 
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border-transparent'
-                    }`}
-                  >
-                    <div className="truncate w-full text-left">{chat.name}</div>
-                    <div className="text-[10px] opacity-60 font-mono tracking-widest mt-0.5">
-                      {activeChat?.id === chat.id ? '*** UNLOCKED ***' : '*** LOCKED ***'}
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {/* Chat Actions */}
-              <div className="px-4 py-4 border-t border-zinc-900 space-y-3">
-                {isJoining ? (
-                  <form onSubmit={handleJoinSubmit} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={joinCode}
-                      onChange={e => setJoinCode(e.target.value)}
-                      placeholder="LINK CODE"
-                      className="w-full bg-[#050505] border border-zinc-700 text-xs px-2 py-1.5 focus:border-cyan-400 outline-none text-white uppercase placeholder:text-zinc-700"
-                      autoFocus
-                    />
-                    <button type="button" onClick={() => setIsJoining(false)} className="text-xs text-zinc-500 hover:text-white px-1">X</button>
-                  </form>
-                ) : (
-                  <>
-                    <button onClick={() => setIsJoining(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-cyan-400/30 p-2">
-                      <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
-                    </button>
-                    <button onClick={() => setShowCreateModal(true)} className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-400 transition-colors uppercase tracking-widest border border-zinc-800 hover:border-emerald-500/30 p-2">
-                      <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Controls */}
-              <div className="px-4 py-4 border-t border-zinc-900 space-y-4">
-                <div className="flex items-center justify-between text-xs text-zinc-400 uppercase tracking-widest">
-                  <span className="flex items-center gap-2">
-                    <EyeOff className="w-3 h-3" />
-                    Stealth Mode
-                  </span>
-                  <button onClick={() => setStealthMode(!stealthMode)} className="text-zinc-500 hover:text-cyan-400 transition-colors">
-                    {stealthMode ? <ToggleRight className="w-5 h-5 text-cyan-400" /> : <ToggleLeft className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Terminate Session Button */}
-              <div className="p-4 pt-2 mt-auto">
-                <button 
-                  onClick={() => { localStorage.clear(); window.location.reload(); }}
-                  className="w-full bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-[0.2em] py-3 transition-colors"
-                >
-                  TERMINATE SESSION
-                </button>
-              </div>
-            </aside>
-
-            {/* MAIN CHAT CONTENT */}
-            <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
+          <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
               {/* Top Header */}
-              <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 shrink-0">
-                <div className="flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden">
+              <header className="h-14 border-b border-white/[0.06] bg-[#07070c]/70 backdrop-blur-md flex items-center justify-between px-4 md:px-6 gap-3 shrink-0 hairline-gradient">
+                <div className="flex items-center gap-3 md:gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden min-w-0">
+                  <button
+                    onClick={() => setMobileSidebarOpen(true)}
+                    title="Open Sidebar"
+                    className="md:hidden p-1.5 -ml-1.5 text-zinc-400 hover:text-cyan-400 transition-colors shrink-0"
+                  >
+                    <Menu className="w-5 h-5" />
+                  </button>
                   <button onClick={() => setActiveView('settings')} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
                     ALIAS: {alias}
                   </button>
@@ -636,9 +680,27 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       LATENCY: {latency}MS
                     </div>
                   )}
-                  <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
+                  <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
                     NETWORK: {networkStatus}
                   </div>
+                  {networkStatus === 'ONLINE' && (
+                    <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden lg:flex">
+                      <Cloud className="w-3 h-3" /> GLOBAL SYNC
+                    </div>
+                  )}
+                  {networkStatus === 'LOCAL' && (
+                    <div className="border border-amber-500/30 text-amber-500 px-3 py-1 items-center gap-2 hidden lg:flex">
+                      <CloudOff className="w-3 h-3" /> DEVICE-ONLY
+                    </div>
+                  )}
+                  {activeChat && networkStatus === 'LOCAL' && (
+                    <button 
+                      onClick={() => toggleSimBot()}
+                      className={`border px-3 py-1 items-center gap-2 hidden md:flex transition-colors ${simBotActive ? 'bg-amber-500 text-black border-amber-500' : 'border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-black'}`}
+                    >
+                      <Bot size={12} className="inline mr-1" /> SIM NODE {simBotActive ? 'ON' : 'OFF'}
+                    </button>
+                  )}
                   {activeChat && (
                     <button 
                       onClick={() => setShowVideoTunnel(!showVideoTunnel)}
@@ -649,40 +711,74 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   )}
                   <button 
                     onClick={purgeTerminal}
-                    className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors"
+                    className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors shrink-0"
                   >
-                    PURGE TERMINAL
+                    <span className="hidden sm:inline">PURGE TERMINAL</span>
+                    <span className="sm:hidden">PURGE</span>
                   </button>
                 </div>
               </header>
 
               {/* Sub Header */}
-              <div className="px-8 pt-8 pb-4 shrink-0">
-                <h2 className="text-white font-bold text-lg tracking-widest uppercase mb-1 flex items-center gap-3">
-                  TERMINAL // [{activeChat?.share_code || 'STANDBY'}]
-                  {activeChat?.share_code.startsWith('EPH-') && (
-                    <span className="text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 border border-red-500/30 font-bold tracking-[0.2em] animate-pulse">
+              <div className="px-4 md:px-8 pt-4 md:pt-8 pb-4 shrink-0">
+                <h2 className="text-white font-bold text-base md:text-lg tracking-widest uppercase mb-1 flex items-center gap-2 md:gap-3 min-w-0">
+                  <span className="truncate">
+                    <span className="text-gradient">TERMINAL //</span>{' '}
+                    <span className={chatLocked ? 'text-amber-400' : 'text-cyan-300'}>
+                      [{activeChat ? (chatLocked ? 'LOCKED' : activeChat.share_code) : 'STANDBY'}]
+                    </span>
+                  </span>
+                  {activeChat && !chatLocked && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(activeChat.share_code);
+                        setCopiedCode(true);
+                        setTimeout(() => setCopiedCode(false), 1500);
+                      }}
+                      title="Copy join code"
+                      className="text-zinc-600 hover:text-cyan-400 transition-colors ml-1 shrink-0"
+                    >
+                      {copiedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Clipboard className="w-4 h-4" />}
+                    </button>
+                  )}
+                  {activeChat?.share_code.startsWith('EPH-') && !chatLocked && (
+                    <span className="text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 border border-red-500/30 font-bold tracking-[0.2em] animate-pulse shrink-0">
                       EPHEMERAL
                     </span>
                   )}
-                  {activeChat && (
+                  {activeChat && !chatLocked && (
                     <button 
                       onClick={() => {
                         setTargetChatId(activeChat.id);
                         setRenameInput(activeChat.name);
                         setShowRenameModal(true);
                       }}
-                      className="text-zinc-600 hover:text-cyan-400 transition-colors ml-2"
+                      className="text-zinc-600 hover:text-cyan-400 transition-colors ml-2 shrink-0"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                   )}
+                  {activeChat && (
+                    <button
+                      onClick={() => (chatLocked ? setShowUnlockModal(true) : lockChat(activeChat.id))}
+                      title={chatLocked ? 'Terminal locked - click to unlock' : 'Lock terminal now'}
+                      className={`transition-colors ml-2 shrink-0 ${chatLocked ? 'text-amber-500/80 hover:text-amber-400' : 'text-zinc-600 hover:text-amber-400'}`}
+                    >
+                      {chatLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
+                    </button>
+                  )}
                 </h2>
-                <div className="text-emerald-500 text-xs mt-1">
+                <div className="text-emerald-500 text-xs mt-1 flex items-center gap-1.5">
+                  <span className="dot-live text-emerald-400 w-1.5 h-1.5" />
                   {activeChat ? 'Uplink Established' : 'Awaiting Connection...'}
                   {activeChat && Object.keys(onlineUsers).length > 0 && (
                     <span className="ml-4 text-cyan-400">
                       ACTIVE NODES: {Object.values(onlineUsers).join(', ')}
+                    </span>
+                  )}
+                  {Object.keys(typingUsers).length > 0 && (
+                    <span className="ml-4 text-amber-400 animate-pulse">
+                      ◉ {Object.values(typingUsers).join(', ')} IS TYPING...
                     </span>
                   )}
                 </div>
@@ -691,7 +787,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               {/* Chat Feed */}
               <div 
                 ref={feedRef} 
-                className="flex-1 overflow-y-auto px-8 py-4 flex flex-col gap-6 relative"
+                className="flex-1 overflow-y-auto px-3 md:px-8 py-4 flex flex-col gap-6 relative"
                 style={{
                   backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
                   backgroundRepeat: 'repeat'
@@ -704,6 +800,11 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 {!activeChat ? (
                   <div className="text-zinc-600 text-sm mt-4">
                     [SYSTEM: NO CHANNEL SELECTED. CREATE OR JOIN TO INITIATE.]
+                  </div>
+                ) : chatLocked ? (
+                  <div className="text-zinc-600 text-sm mt-4 flex items-center gap-3">
+                    <Lock className="w-4 h-4 text-amber-500/70" />
+                    [SYSTEM: TERMINAL LOCKED. ENTER PASSPHRASE TO DECRYPT TRANSMISSIONS.]
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="text-zinc-600 text-sm mt-4">
@@ -718,7 +819,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
                     if (isSystem) {
                       return (
-                        <div key={msg.id} className="text-zinc-500 text-xs text-center border-y border-zinc-900 py-2 my-2">
+                        <div key={msg.id} className="hairline-gradient text-zinc-500 text-xs text-center border-y border-white/[0.05] py-2 my-2">
                           {msg.text}
                         </div>
                       );
@@ -728,10 +829,10 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <div 
                         key={msg.id} 
                         id={`msg-${msg.id}`}
-                        className={`flex flex-col w-full max-w-3xl border p-4 relative group ${
+                        className={`flex flex-col w-full max-w-3xl border p-4 relative group rounded-lg transition-shadow duration-200 ${
                           isSelf 
-                            ? 'ml-auto border-cyan-400/50 bg-cyan-950/10' 
-                            : 'border-zinc-800 border-l-2 border-l-emerald-500/50 bg-[#080808]'
+                            ? 'ml-auto border-cyan-400/40 bg-gradient-to-br from-cyan-500/[0.09] via-cyan-500/[0.02] to-transparent shadow-[0_0_28px_-14px_rgba(34,211,238,0.5)] hover:shadow-[0_0_32px_-12px_rgba(34,211,238,0.65)]' 
+                            : 'border-white/[0.07] border-l-2 border-l-emerald-500/60 bg-gradient-to-br from-emerald-500/[0.05] via-transparent to-transparent shadow-[0_0_28px_-16px_rgba(52,211,153,0.35)] hover:shadow-[0_0_32px_-14px_rgba(52,211,153,0.55)]'
                         }`}
                       >
                         <button 
@@ -741,6 +842,17 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                         >
                           <Reply size={14} />
                         </button>
+                        {isSelf && (
+                          <button 
+                            onClick={() => {
+                              if (confirm('INCINERATE THIS PAYLOAD? THIS CANNOT BE UNDONE.')) deleteMessageLocally(msg.id);
+                            }}
+                            className="absolute top-4 right-11 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-opacity bg-black/50 p-1 rounded"
+                            title="Incinerate payload"
+                          >
+                            <Flame size={14} />
+                          </button>
+                        )}
                         <div className="flex justify-between items-center mb-3 pr-8">
                           <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelf ? 'text-cyan-400' : 'text-emerald-500'}`}>
                             {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
@@ -768,20 +880,24 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                         )}
 
                         <div className="text-sm font-mono text-zinc-200 leading-relaxed">
-                          <ReactMarkdown 
-                            remarkPlugins={[remarkGfm]} 
-                            components={{
-                              code: CodeBlock,
-                              p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
-                              a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank" rel="noreferrer">{children}</a> },
-                              ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
-                              ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
-                              li({children}) { return <li className="mb-1">{children}</li> },
-                              blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
-                            }}
-                          >
-                            {msg.text}
-                          </ReactMarkdown>
+                          {msg.text.startsWith('data:audio/') ? (
+                            <audio controls src={msg.text} className="w-full max-w-sm h-9" />
+                          ) : (
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]} 
+                              components={{
+                                code: CodeBlock,
+                                p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
+                                a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank" rel="noreferrer">{children}</a> },
+                                ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
+                                ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
+                                li({children}) { return <li className="mb-1">{children}</li> },
+                                blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
+                          )}
                         </div>
 
                         {renderFile(msg.id, msg.file_url)}
@@ -793,15 +909,15 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               </div>
 
               {/* Footer Input Bar */}
-              {activeChat && (
-                <footer className="p-4 border-t border-zinc-900 bg-[#080808] shrink-0">
+              {activeChat && !chatLocked && (
+                <footer className="p-4 border-t border-white/[0.06] bg-[#07070c]/75 backdrop-blur-md shrink-0">
                   <form onSubmit={handleSubmit} className="flex items-center gap-3">
                     <input 
                       type="text" 
                       value={input}
                       onChange={handleInputChange}
                       placeholder="ENTER COMMAND OR TRANSMISSION..."
-                      className="flex-1 bg-[#050505] border border-zinc-800 focus:border-cyan-400 px-4 py-2 text-xs text-white outline-none font-mono placeholder:text-zinc-700 uppercase"
+                      className="flex-1 bg-black/40 border border-white/[0.08] focus:border-cyan-400/60 focus:shadow-[0_0_18px_-5px_rgba(34,211,238,0.45)] px-4 py-2 rounded-md text-xs text-white outline-none font-mono placeholder:text-zinc-700 uppercase transition-all"
                     />
 
                     <input 
@@ -832,7 +948,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                     <button 
                       type="submit"
                       disabled={(!input.trim() && !selectedFile)}
-                      className="bg-cyan-400 hover:bg-cyan-300 text-black px-4 sm:px-6 py-2 text-xs font-bold tracking-widest flex items-center gap-2 transition-colors uppercase shrink-0"
+                      className="btn-premium px-4 sm:px-6 py-2 rounded-md text-xs flex items-center gap-2 shrink-0"
                     >
                       <span className="hidden sm:inline">EXECUTE</span>
                       <ArrowRight className="w-4 h-4" />
@@ -840,8 +956,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   </form>
                 </footer>
               )}
-            </main>
-          </div>
+          </main>
         )}
 
         {activeView === 'axon-ai' && (
@@ -859,8 +974,9 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {/* MODALS & OVERLAYS */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-md p-6 relative">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="glass-deep border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -874,7 +990,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 <input 
                   type="text" 
                   value={newChatName}
-                  onChange={e => setNewChatName(e.target.value)}
+                  onChange={e => setNewChatName(e.target.value.toUpperCase())}
                   placeholder="e.g. ALPHA-OPERATIONS"
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                   autoFocus
@@ -885,10 +1001,25 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 <input 
                   type="password" 
                   value={newChatPassphrase}
-                  onChange={e => setNewChatPassphrase(e.target.value)}
+                  onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
                   placeholder="SHARED SECRET"
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
                 />
+                <div className="flex items-center justify-between mt-1">
+                  <span className={`text-[10px] tracking-widest uppercase ${
+                    newChatPassphrase.length >= 12 ? 'text-emerald-500' :
+                    newChatPassphrase.length >= 8 ? 'text-amber-500' :
+                    newChatPassphrase.length >= 6 ? 'text-red-500' : 'text-zinc-600'
+                  }`}>
+                    KEY STRENGTH: {newChatPassphrase.length >= 12 ? 'STRONG' : newChatPassphrase.length >= 8 ? 'MODERATE' : newChatPassphrase.length >= 6 ? 'WEAK' : 'TOO WEAK'}
+                  </span>
+                  <button type="button" onClick={() => setNewChatPassphrase(generateStrongPassphrase())} className="text-[10px] text-emerald-500 hover:text-emerald-400 tracking-widest uppercase">
+                    [ REGENERATE ]
+                  </button>
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-1">
+                  This key encrypts all messages AND is required to re-enter this terminal after refresh.
+                </p>
               </div>
               <div className="pt-2">
                 <label className="flex items-center gap-3 cursor-pointer">
@@ -908,8 +1039,9 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showRenameModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-cyan-500/50 w-full max-w-md p-6 relative">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="glass-deep border-cyan-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-cyan-500" />
             <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -923,7 +1055,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 <input 
                   type="text" 
                   value={renameInput}
-                  onChange={e => setRenameInput(e.target.value)}
+                  onChange={e => setRenameInput(e.target.value.toUpperCase())}
                   className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase"
                   autoFocus
                 />
@@ -939,8 +1071,9 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showPasswordModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-red-500/50 w-full max-w-md p-6 relative">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="glass-deep border-red-500/45 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
             <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -973,8 +1106,9 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showUnlockModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#050505] border border-emerald-500/50 w-full max-w-md p-6 relative">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="glass-deep border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -983,9 +1117,22 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
             </h3>
             
             <form onSubmit={handleUnlockSubmit} className="space-y-4">
+              {lockoutUntil > clock && (
+                <div className="p-2 bg-red-500/10 border border-red-500/30 text-red-500 text-xs mb-2">
+                  [LOCKOUT ENGAGED] TOO MANY FAILED ATTEMPTS. RETRY IN {Math.ceil((lockoutUntil - clock) / 1000)}S.
+                </div>
+              )}
               {unlockError && (
                 <div className="p-2 bg-red-500/10 border border-red-500/30 text-red-500 text-xs mb-2">
-                  ERROR: INVALID PASSPHRASE PROVIDED.
+                  ERROR: INVALID PASSPHRASE PROVIDED. ({5 - failedAttempts} ATTEMPTS REMAINING)
+                </div>
+              )}
+              {unlockTargetId && readDeviceKey(unlockTargetId) && (
+                <div className="p-2 bg-amber-500/5 border border-amber-500/30 text-amber-500/90 text-xs mb-2 flex items-center justify-between">
+                  <span>DEVICE KEY RECOVERED FOR THIS TERMINAL</span>
+                  <button type="button" onClick={() => setShowDeviceKey(!showDeviceKey)} className="underline hover:text-amber-400 ml-2 shrink-0">
+                    {showDeviceKey ? readDeviceKey(unlockTargetId) : '[ REVEAL ]'}
+                  </button>
                 </div>
               )}
               <div>
@@ -993,74 +1140,20 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 <input 
                   type="password" 
                   value={unlockPassword}
-                  onChange={e => setUnlockPassword(e.target.value)}
+                  onChange={e => setUnlockPassword(e.target.value.toUpperCase())}
                   onKeyDown={handlePasswordKeyDown}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  disabled={lockoutUntil > clock}
+                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase disabled:opacity-50"
                   autoFocus
                 />
               </div>
               <div className="pt-4">
-                <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors">
+                <button type="submit" disabled={lockoutUntil > clock} className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-2 text-xs font-bold tracking-widest uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                   DECRYPT & ENTER
                 </button>
               </div>
             </form>
           </div>
-        </div>
-      )}
-
-      {contextMenu && (
-        <div 
-          className="fixed z-[100] bg-[#080808] border border-zinc-700 shadow-xl shadow-black py-1 w-48 text-xs text-zinc-300 font-mono"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button 
-            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
-            onClick={() => {
-              const chat = chats.find(c => c.id === contextMenu.chatId);
-              if (chat) {
-                setTargetChatId(chat.id);
-                setRenameInput(chat.name);
-                setShowRenameModal(true);
-              }
-              setContextMenu(null);
-            }}
-          >
-            Rename Terminal
-          </button>
-          <button 
-            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
-            onClick={() => {
-              setTargetChatId(contextMenu.chatId);
-              setPasswordInput('');
-              setShowPasswordModal(true);
-              setContextMenu(null);
-            }}
-          >
-            Rotate Password Key
-          </button>
-          <button 
-            className="w-full text-left px-4 py-2 hover:bg-zinc-800 hover:text-white"
-            onClick={() => {
-              archiveChat(contextMenu.chatId);
-              setContextMenu(null);
-            }}
-          >
-            Archive Locally
-          </button>
-          <div className="h-px bg-zinc-800 my-1"></div>
-          <button 
-            className="w-full text-left px-4 py-2 hover:bg-red-900/30 text-red-500 hover:text-red-400"
-            onClick={() => {
-              if (confirm("WARNING: This will permanently wipe this terminal and all its messages globally. Proceed?")) {
-                deleteChat(contextMenu.chatId);
-              }
-              setContextMenu(null);
-            }}
-          >
-            Wipe Terminal (Global)
-          </button>
         </div>
       )}
 

@@ -1,6 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Play, Pause, Trash2 } from 'lucide-react';
-import MicRecorder from 'mic-recorder-to-mp3';
+
+// Pick the best supported audio container for the current browser.
+// WebM/Opus covers Chrome/Firefox/Edge; Safari falls back to mp4/AAC.
+const pickMimeType = (): string => {
+  if (typeof MediaRecorder === 'undefined') return '';
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4',
+  ];
+  return candidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
+};
 
 export const VoiceRecorder: React.FC<{
   onRecordingComplete: (base64Audio: string) => void;
@@ -11,33 +23,65 @@ export const VoiceRecorder: React.FC<{
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  const recorderRef = useRef<MicRecorder | null>(null);
+
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    recorderRef.current = new MicRecorder({ bitRate: 128 });
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (audioUrl) URL.revokeObjectURL(audioUrl);
-      if (recorderRef.current && isRecording) {
-        recorderRef.current.stop();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        try {
+          recorderRef.current.stop();
+        } catch {
+          /* already stopped */
+        }
       }
+      recorderRef.current = null;
     };
-  }, [audioUrl, isRecording]);
+  }, [audioUrl]);
 
   const startRecording = async () => {
     try {
-      if (recorderRef.current) {
-        await recorderRef.current.start();
-        setIsRecording(true);
-        setError(null);
-        
-        timerRef.current = setInterval(() => {
-          setRecordingTime(prev => prev + 1);
-        }, 1000);
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+
+      const mimeType = pickMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = e => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const type = (recorder.mimeType || 'audio/webm').split(';')[0];
+        const blob = new Blob(chunksRef.current, { type });
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        setIsRecording(false);
+        setRecordingTime(0);
+        clearInterval(timerRef.current);
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setError(null);
+
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
     } catch (err: any) {
       console.error('Failed to start recording:', err);
       setError('Mic access denied');
@@ -45,17 +89,8 @@ export const VoiceRecorder: React.FC<{
   };
 
   const stopRecording = () => {
-    if (recorderRef.current && isRecording) {
-      recorderRef.current.stop().getMp3().then(([buffer]) => {
-        const mp3Blob = new Blob(buffer, { type: 'audio/mp3' });
-        setAudioBlob(mp3Blob);
-        const url = URL.createObjectURL(mp3Blob);
-        setAudioUrl(url);
-        setIsRecording(false);
-        clearInterval(timerRef.current);
-      }).catch((e: any) => {
-        console.error('Error compiling MP3:', e);
-      });
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop();
     }
   };
 
@@ -82,8 +117,7 @@ export const VoiceRecorder: React.FC<{
     if (audioBlob) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64Audio = reader.result as string;
-        onRecordingComplete(base64Audio);
+        onRecordingComplete(reader.result as string);
         deleteRecording();
       };
       reader.readAsDataURL(audioBlob);
@@ -99,7 +133,7 @@ export const VoiceRecorder: React.FC<{
   return (
     <div className="flex items-center gap-2">
       {error && <span className="text-red-500 text-xs px-2">{error}</span>}
-      
+
       {!audioUrl && !isRecording && (
         <button
           onClick={startRecording}
@@ -128,25 +162,25 @@ export const VoiceRecorder: React.FC<{
           <button onClick={togglePlayback} className="p-1.5 text-cyan-400 hover:bg-cyan-500/20 rounded">
             {isPlaying ? <Pause size={14} /> : <Play size={14} />}
           </button>
-          
+
           <div className="h-1 w-16 bg-zinc-800 rounded-full overflow-hidden relative">
             <div className={`absolute top-0 bottom-0 left-0 bg-cyan-500 ${isPlaying ? 'w-full duration-[10s] ease-linear transition-all' : 'w-0'}`} />
           </div>
-          
+
           <span className="text-cyan-400 text-[10px] font-mono mx-2">{formatTime(recordingTime)}</span>
-          
-          <audio 
-            ref={audioRef} 
-            src={audioUrl} 
+
+          <audio
+            ref={audioRef}
+            src={audioUrl}
             onEnded={() => setIsPlaying(false)}
-            className="hidden" 
+            className="hidden"
           />
 
           <button onClick={deleteRecording} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded ml-1 transition-colors">
             <Trash2 size={14} />
           </button>
-          
-          <button 
+
+          <button
             onClick={handleSend}
             className="ml-2 px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold tracking-wider transition-colors"
           >

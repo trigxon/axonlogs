@@ -1,43 +1,50 @@
 import React, { useState, useRef } from 'react';
-import { 
-  Settings, 
-  Download, 
-  Upload, 
-  AlertTriangle, 
-  ShieldAlert, 
-  ToggleRight, 
+import {
+  Settings,
+  Download,
+  Upload,
+  AlertTriangle,
+  ShieldAlert,
+  ToggleRight,
   ToggleLeft,
   UserCheck,
   Check,
   X,
   ChevronRight,
-  Monitor
+  Monitor,
+  BellRing,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { 
-  exportAppData, 
-  exportPdfData, 
-  importAppData, 
-  resetAllLocalData 
+import {
+  exportAppData,
+  exportPdfData,
+  importAppData,
+  resetAllLocalData,
 } from '../../utils/dataManager';
 
 export const SettingsPanel: React.FC = () => {
   const { textSize, cardPadding, borderRadius, setTextSize, setCardPadding, setBorderRadius } = useTheme();
-  const { alias, deviceId, updateAlias, addLog } = useCrypto();
+  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud } = useCrypto();
 
   const [aliasInput, setAliasInput] = useState(alias);
   const [stealthMode, setStealthMode] = useState(false);
   const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
-  
+  const [syncing, setSyncing] = useState(false);
+
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('axon_sound_enabled') !== 'false');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('axon_notifications_enabled') === 'true');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const showStatus = (type: 'success' | 'error', text: string) => {
     setStatusMessage({ type, text });
-    setTimeout(() => setStatusMessage(null), 4000);
+    setTimeout(() => setStatusMessage(null), 5000);
   };
 
   const handleAliasSave = (e: React.FormEvent) => {
@@ -93,6 +100,48 @@ export const SettingsPanel: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleSoundToggle = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    localStorage.setItem('axon_sound_enabled', next ? 'true' : 'false');
+    addLog(next ? 'Incoming transmission sound enabled' : 'Incoming transmission sound disabled');
+  };
+
+  const handleNotificationsToggle = () => {
+    const next = !notificationsEnabled;
+    if (next && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(perm => {
+        if (perm === 'granted') {
+          setNotificationsEnabled(true);
+          localStorage.setItem('axon_notifications_enabled', 'true');
+          addLog('Desktop alerts enabled');
+        } else {
+          addLog('Desktop alert permission denied');
+        }
+      });
+      return;
+    }
+    setNotificationsEnabled(next);
+    localStorage.setItem('axon_notifications_enabled', next ? 'true' : 'false');
+    addLog(next ? 'Desktop alerts enabled' : 'Desktop alerts disabled');
+  };
+
+  const handlePushToCloud = async () => {
+    if (backendMode !== 'online') {
+      showStatus('error', 'CLOUD BACKEND UNAVAILABLE - RUN supabase/schema.sql FIRST');
+      return;
+    }
+    setSyncing(true);
+    const pushed = await pushLocalToCloud();
+    setSyncing(false);
+    if (pushed > 0) {
+      addLog(`Pushed ${pushed} local terminal(s) to global cloud storage`);
+      showStatus('success', `PUSHED ${pushed} LOCAL TERMINAL(S) TO GLOBAL CLOUD`);
+    } else {
+      showStatus('success', 'ALL DATA ALREADY SYNCHRONIZED TO THE CLOUD');
+    }
+  };
+
   const handleConfirmReset = () => {
     try {
       resetAllLocalData();
@@ -106,15 +155,14 @@ export const SettingsPanel: React.FC = () => {
     }
   };
 
-  // Reusable Layout Components
-  const SectionHeader = ({ icon: Icon, title, color = "text-zinc-500" }: { icon: any, title: string, color?: string }) => (
-    <div className={`flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] uppercase mb-2 px-1 ${color}`}>
-      <Icon className="w-3.5 h-3.5" /> {title}
-    </div>
-  );
-
-  const SectionCard = ({ children }: { children: React.ReactNode }) => (
-    <div className="bg-[#0a0a0f] border border-zinc-800/80 rounded-xl overflow-hidden mb-6 shadow-sm">
+  // Card with a left accent bar + in-card header (icon + uppercase title + divider),
+  // matching the reference dashboard styling.
+  const SectionCard = ({ icon: Icon, title, accent = 'bg-cyan-500', children }: { icon: any, title: string, accent?: string, children: React.ReactNode }) => (
+    <div className="relative bg-gradient-to-b from-[#0b0b13] to-[#08080d] border border-white/[0.07] rounded-xl overflow-hidden mb-6 shadow-sm">
+      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accent} shadow-[0_0_12px_-2px_currentColor]`} />
+      <div className="flex items-center gap-2 px-5 pt-4 pb-3 text-[10px] font-bold tracking-[0.2em] uppercase text-zinc-400 border-b border-white/[0.06]">
+        <Icon className="w-3.5 h-3.5 shrink-0" /> {title}
+      </div>
       {children}
     </div>
   );
@@ -122,12 +170,12 @@ export const SettingsPanel: React.FC = () => {
   const SettingRow = ({ title, desc, children, isButton = false, onClick }: { title: string, desc: string, children?: React.ReactNode, isButton?: boolean, onClick?: () => void }) => {
     const Comp = isButton ? 'button' : 'div';
     return (
-      <Comp 
+      <Comp
         onClick={onClick}
-        className={`w-full flex items-center justify-between p-4 border-b border-zinc-800/50 last:border-0 ${isButton ? 'hover:bg-zinc-800/30 transition-colors text-left cursor-pointer' : ''}`}
+        className={`w-full flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 md:px-5 py-4 border-b border-zinc-800/50 last:border-0 ${isButton ? 'hover:bg-white/[0.02] transition-colors text-left cursor-pointer' : ''}`}
       >
-        <div className="pr-4 max-w-[60%]">
-          <div className="text-sm font-semibold text-zinc-200 tracking-wide">{title}</div>
+        <div className="pr-4 min-w-0 flex-1">
+          <div className="text-sm font-semibold text-zinc-100 tracking-wide truncate">{title}</div>
           <div className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed uppercase tracking-wider">{desc}</div>
         </div>
         <div className="shrink-0 flex items-center justify-end">
@@ -144,8 +192,8 @@ export const SettingsPanel: React.FC = () => {
           key={opt}
           onClick={() => onChange(opt)}
           className={`px-4 py-1.5 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors ${
-            current === opt 
-              ? 'bg-cyan-500/20 text-cyan-400' 
+            current === opt
+              ? 'bg-cyan-500/20 text-cyan-400'
               : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
@@ -155,135 +203,166 @@ export const SettingsPanel: React.FC = () => {
     </div>
   );
 
+  const syncOnline = backendMode === 'online';
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-y-auto">
-      
+
       {/* Header Sticky Bar */}
-      <div className="sticky top-0 z-10 bg-[#050505]/95 backdrop-blur border-b border-zinc-800 p-6 flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold tracking-[0.2em] text-zinc-100 uppercase flex items-center gap-3">
-            <Settings className="w-5 h-5 text-cyan-400" /> SYSTEM PREFERENCES
+      <div className="sticky top-0 z-10 bg-[#050507]/80 backdrop-blur-md border-b border-white/[0.06] px-4 py-4 md:px-6 md:p-6 flex justify-between items-center gap-4 hairline-gradient">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-[0.2em] uppercase flex items-center gap-3">
+            <Settings className="w-5 h-5 text-cyan-400 shrink-0" /> <span className="text-gradient">SYSTEM PREFERENCES</span>
           </h1>
         </div>
         {statusMessage && (
-          <div className={`px-4 py-1.5 text-[10px] font-bold tracking-widest uppercase rounded border flex items-center gap-2 animate-fade-in ${
+          <div className={`px-4 py-1.5 text-[10px] font-bold tracking-widest uppercase rounded border flex items-center gap-2 shrink-0 ${
             statusMessage.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
               : 'bg-red-500/10 border-red-500/40 text-red-400'
           }`}>
             {statusMessage.type === 'success' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-            {statusMessage.text}
+            <span className="truncate">{statusMessage.text}</span>
           </div>
         )}
       </div>
 
-      <div className="p-6 max-w-4xl space-y-2">
-        
+      <div className="p-4 md:p-6 max-w-4xl space-y-2">
+
+        {/* GLOBAL CLOUD SYNC */}
+        <SectionCard icon={Cloud} title="Global Cloud Sync" accent={syncOnline ? 'bg-emerald-500' : 'bg-amber-500'}>
+          <SettingRow
+            title={syncOnline ? 'Cloud Sync Active' : 'Local Sandbox Mode'}
+            desc={syncOnline
+              ? `All terminals sync globally via Supabase (${networkStatus}) - accessible from anywhere`
+              : 'Data stored on this device only - cloud backend unavailable'}
+          >
+            {syncOnline ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 text-[10px] font-bold tracking-widest uppercase">
+                <Cloud className="w-3 h-3" /> GLOBAL
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/40 text-amber-400 text-[10px] font-bold tracking-widest uppercase">
+                <CloudOff className="w-3 h-3" /> LOCAL
+              </span>
+            )}
+          </SettingRow>
+          <SettingRow title="Push Local Data to Cloud" desc="Upload any locally-stored terminals to global storage" isButton onClick={handlePushToCloud}>
+            {syncing
+              ? <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />
+              : <ChevronRight className="w-4 h-4 text-emerald-500/60" />}
+          </SettingRow>
+          {!syncOnline && (
+            <div className="px-5 py-3 bg-amber-500/5 border-t border-amber-500/20 text-[10px] text-amber-500/90 tracking-wider uppercase leading-relaxed">
+              [HINT] Run <span className="font-bold text-amber-400">supabase/schema.sql</span> in the Supabase SQL editor to
+              enable global sync. The app re-checks on reload and switches to CLOUD mode automatically.
+            </div>
+          )}
+        </SectionCard>
+
         {/* IDENTITY */}
-        <div>
-          <SectionHeader icon={UserCheck} title="Identity & Profile" color="text-cyan-500" />
-          <SectionCard>
-            <SettingRow title="Station Alias" desc="Operator handle for identity masking">
-              <form onSubmit={handleAliasSave} className="flex items-center gap-2">
-                <input 
-                  type="text" 
-                  value={aliasInput}
-                  onChange={e => setAliasInput(e.target.value)}
-                  placeholder="OPERATOR_ALPHA"
-                  className="bg-[#050505] border border-zinc-800 focus:border-cyan-500 px-3 py-1.5 text-cyan-400 font-mono text-xs outline-none uppercase rounded-md text-right w-40 transition-colors"
-                />
-                <button type="submit" className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-1.5 rounded-md transition-colors">
-                  <Check className="w-4 h-4" />
-                </button>
-              </form>
-            </SettingRow>
-            <SettingRow title="Device Identifier" desc="Unique watermark ID for current node">
-              <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
-                {deviceId || 'DEV_UNKNOWN'}
-              </div>
-            </SettingRow>
-          </SectionCard>
-        </div>
+        <SectionCard icon={UserCheck} title="Identity & Profile" accent="bg-cyan-500">
+          <SettingRow title="Station Alias" desc="Operator handle for identity masking">
+            <form onSubmit={handleAliasSave} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={aliasInput}
+                onChange={e => setAliasInput(e.target.value)}
+                placeholder="OPERATOR_ALPHA"
+                className="bg-[#050505] border border-zinc-800 focus:border-cyan-500 px-3 py-1.5 text-cyan-400 font-mono text-xs outline-none uppercase rounded-md text-right w-40 transition-colors"
+              />
+              <button type="submit" className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-1.5 rounded-md transition-colors">
+                <Check className="w-4 h-4" />
+              </button>
+            </form>
+          </SettingRow>
+          <SettingRow title="Device Identifier" desc="Unique watermark ID for current node">
+            <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
+              {deviceId || 'DEV_UNKNOWN'}
+            </div>
+          </SettingRow>
+        </SectionCard>
 
         {/* SECURITY & PRIVACY */}
-        <div>
-          <SectionHeader icon={ShieldAlert} title="Privacy & Mitigation" color="text-blue-500" />
-          <SectionCard>
-            <SettingRow title="Stealth Mode" desc="Blur terminal feed on idle/hover state">
-              <button onClick={() => setStealthMode(!stealthMode)}>
-                {stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
-              </button>
-            </SettingRow>
-            <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
-              <input 
-                type="text" 
-                value={decoyPassphrase}
-                onChange={e => {
-                  setDecoyPassphrase(e.target.value); 
-                  localStorage.setItem('axon_decoy_pass', e.target.value);
-                }}
-                className="bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-1.5 text-blue-400 font-mono text-xs outline-none uppercase rounded-md text-right w-48 transition-colors"
-              />
-            </SettingRow>
-          </SectionCard>
-        </div>
+        <SectionCard icon={ShieldAlert} title="Privacy & Mitigation" accent="bg-blue-500">
+          <SettingRow title="Stealth Mode" desc="Blur terminal feed on idle/hover state">
+            <button onClick={() => setStealthMode(!stealthMode)}>
+              {stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
+            <input
+              type="text"
+              value={decoyPassphrase}
+              onChange={e => {
+                const v = e.target.value.toUpperCase();
+                setDecoyPassphrase(v);
+                localStorage.setItem('axon_decoy_pass', v);
+              }}
+              className="bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-1.5 text-blue-400 font-mono text-xs outline-none uppercase rounded-md text-right w-48 transition-colors"
+            />
+          </SettingRow>
+        </SectionCard>
+
+        {/* ALERTS & NOTIFICATIONS */}
+        <SectionCard icon={BellRing} title="Alerts & Notifications" accent="bg-amber-500">
+          <SettingRow title="Incoming Transmission Sound" desc="Play a ping when a new payload arrives">
+            <button onClick={handleSoundToggle}>
+              {soundEnabled ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Desktop Alerts" desc="System notification when a transmission arrives while tab is hidden">
+            <button onClick={handleNotificationsToggle}>
+              {notificationsEnabled ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+        </SectionCard>
 
         {/* UI CUSTOMIZATION */}
-        <div>
-          <SectionHeader icon={Monitor} title="Interface Styling" />
-          <SectionCard>
-            <SettingRow title="UI Text Size" desc="Scale interface font elements">
-              <SegmentedControl options={['small', 'medium', 'large']} current={textSize} onChange={setTextSize} />
-            </SettingRow>
-            <SettingRow title="Card Padding" desc="Adjust spacing inside containers">
-              <SegmentedControl options={['compact', 'normal', 'relaxed']} current={cardPadding} onChange={setCardPadding} />
-            </SettingRow>
-            <SettingRow title="Border Radius" desc="Shape of buttons and modules">
-              <SegmentedControl options={['sharp', 'rounded', 'pill']} current={borderRadius} onChange={setBorderRadius} />
-            </SettingRow>
-          </SectionCard>
-        </div>
+        <SectionCard icon={Monitor} title="Interface Styling" accent="bg-purple-500">
+          <SettingRow title="UI Text Size" desc="Scale interface font elements">
+            <SegmentedControl options={['small', 'medium', 'large']} current={textSize} onChange={setTextSize} />
+          </SettingRow>
+          <SettingRow title="Card Padding" desc="Adjust spacing inside containers">
+            <SegmentedControl options={['compact', 'normal', 'relaxed']} current={cardPadding} onChange={setCardPadding} />
+          </SettingRow>
+          <SettingRow title="Border Radius" desc="Shape of buttons and modules">
+            <SegmentedControl options={['sharp', 'rounded', 'pill']} current={borderRadius} onChange={setBorderRadius} />
+          </SettingRow>
+        </SectionCard>
 
         {/* DATA EXPORT */}
-        <div>
-          <SectionHeader icon={Download} title="Data Export" color="text-emerald-500" />
-          <SectionCard>
-            <SettingRow title="Export PDF Report" desc="Download complete performance logs as PDF" isButton onClick={handleExportPdf}>
-              <ChevronRight className="w-4 h-4 text-zinc-600" />
-            </SettingRow>
-            <SettingRow title="Export JSON Backup" desc="Download local storage dump as JSON archive" isButton onClick={handleExportJson}>
-              <ChevronRight className="w-4 h-4 text-zinc-600" />
-            </SettingRow>
-          </SectionCard>
-        </div>
+        <SectionCard icon={Download} title="Export" accent="bg-emerald-500">
+          <SettingRow title="Export PDF Report" desc="Download complete performance logs as PDF" isButton onClick={handleExportPdf}>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </SettingRow>
+          <SettingRow title="Export JSON Backup" desc="Download local storage dump as JSON archive" isButton onClick={handleExportJson}>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </SettingRow>
+        </SectionCard>
 
         {/* DATA IMPORT */}
-        <div>
-          <SectionHeader icon={Upload} title="Data Import" color="text-purple-500" />
-          <SectionCard>
-            <SettingRow title="Import JSON Backup" desc="Restore data from a JSON archive" isButton onClick={() => fileInputRef.current?.click()}>
-              <ChevronRight className="w-4 h-4 text-zinc-600" />
-            </SettingRow>
-            <input type="file" accept=".json,application/json" ref={fileInputRef} onChange={handleImportJson} className="hidden" />
-          </SectionCard>
-        </div>
+        <SectionCard icon={Upload} title="Import" accent="bg-fuchsia-500">
+          <SettingRow title="Import JSON Backup" desc="Restore data from a JSON archive" isButton onClick={() => fileInputRef.current?.click()}>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </SettingRow>
+          <input type="file" accept=".json,application/json" ref={fileInputRef} onChange={handleImportJson} className="hidden" />
+        </SectionCard>
 
         {/* DANGER ZONE */}
-        <div>
-          <SectionHeader icon={AlertTriangle} title="Danger Zone" color="text-red-500" />
-          <SectionCard>
-            <SettingRow title="Reset All Data" desc="Permanently wipe all logs and custom settings" isButton onClick={() => setShowResetModal(true)}>
-              <ChevronRight className="w-4 h-4 text-red-500/50 group-hover:text-red-500" />
-            </SettingRow>
-          </SectionCard>
-        </div>
+        <SectionCard icon={AlertTriangle} title="Danger Zone" accent="bg-red-500">
+          <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
+          <SettingRow title="Reset All Data" desc="Permanently wipe all logs and custom settings" isButton onClick={() => setShowResetModal(true)}>
+            <ChevronRight className="w-4 h-4 text-red-500/50" />
+          </SettingRow>
+        </SectionCard>
 
       </div>
 
       {/* DANGER ZONE MODAL */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#08080c] border border-red-500/60 w-full max-w-md p-6 rounded-xl shadow-2xl relative space-y-4">
+          <div className="glass-deep border-red-500/50 w-full max-w-md p-6 rounded-xl shadow-2xl relative space-y-4">
             <button onClick={() => setShowResetModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors">
               <X className="w-5 h-5" />
             </button>

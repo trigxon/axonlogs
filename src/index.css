@@ -14,9 +14,9 @@
 
 @layer base {
   :root {
-    /* Hacker Terminal Aesthetic */
-    --bg: #050505;
-    --panel: #0a0a0f;
+    /* Premium Hacker Terminal Aesthetic */
+    --bg: #050506;
+    --panel: #0a0a10;
     --text-primary: #a3a3a3; /* Neutral Gray for base text */
     --text-secondary: #52525b;
     --border: #27272a;
@@ -47,6 +47,9 @@
   ::-webkit-scrollbar-thumb {
     @apply bg-zinc-800 rounded-sm;
   }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-700;
+  }
   
   /* Input autofill override */
   input:-webkit-autofill,
@@ -76,4 +79,114 @@
   .ui-text {
     font-size: var(--ui-text-size);
   }
+
+  /* ---- Premium utilities ---- */
+
+  /* Gradient headline text (cyan -> white -> emerald) */
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, #67e8f9 0%, #e2e8f0 45%, #6ee7b7 100%);
+  }
+
+  /* Subtle green-tinted terminal gradient */
+  .text-gradient-terminal {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, #34d399 0%, #e2e8f0 55%, #22d3ee 100%);
+  }
+
+  /* Glass panel: translucent surface with an inner top highlight */
+  .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .glass-deep {
+    background: linear-gradient(180deg, rgba(13, 13, 20, 0.92) 0%, rgba(8, 8, 12, 0.96) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  /* Soft glow shadows */
+  .glow-cyan {
+    box-shadow: 0 0 24px -8px rgba(34, 211, 238, 0.35), 0 8px 32px -16px rgba(0, 0, 0, 0.9);
+  }
+  .glow-emerald {
+    box-shadow: 0 0 24px -8px rgba(52, 211, 153, 0.35), 0 8px 32px -16px rgba(0, 0, 0, 0.9);
+  }
+  .glow-amber {
+    box-shadow: 0 0 24px -8px rgba(251, 191, 36, 0.3), 0 8px 32px -16px rgba(0, 0, 0, 0.9);
+  }
+
+  /* Gradient hairline (top edge accent) */
+  .hairline-gradient {
+    position: relative;
+  }
+  .hairline-gradient::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(34, 211, 238, 0.55) 30%, rgba(52, 211, 153, 0.55) 70%, transparent 100%);
+    pointer-events: none;
+  }
+
+  /* Soft CRT scanline drift (very subtle, keeps terminal feel) */
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.015) 0px,
+      rgba(255, 255, 255, 0.015) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    z-index: 60;
+  }
+
+  /* Gradient CTA button */
+  .btn-premium {
+    @apply text-black font-bold uppercase tracking-[0.2em] transition-all duration-200;
+    background-image: linear-gradient(100deg, #22d3ee 0%, #34d399 100%);
+    box-shadow: 0 0 22px -6px rgba(34, 211, 238, 0.55);
+  }
+  .btn-premium:hover {
+    box-shadow: 0 0 30px -4px rgba(34, 211, 238, 0.7);
+    filter: brightness(1.08);
+  }
+
+  /* Gradient-border wrapper trick */
+  .ring-gradient {
+    position: relative;
+    background: linear-gradient(180deg, #0b0b12, #070709);
+  }
+  .ring-gradient::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(160deg, rgba(34, 211, 238, 0.5), rgba(255, 255, 255, 0.06) 40%, rgba(52, 211, 153, 0.35));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Pulsing status dot */
+  .dot-live {
+    @apply inline-block rounded-full;
+    box-shadow: 0 0 10px currentColor;
+    animation: axon-pulse 2s ease-in-out infinite;
+  }
+}
+
+@keyframes axon-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
