@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Bot,
@@ -22,8 +22,9 @@ import {
   Power,
   ToggleRight,
   ToggleLeft,
+  MoreVertical,
 } from 'lucide-react';
-import { useCrypto } from '../../contexts/CryptoContext';
+import { useCrypto, type Chat } from '../../contexts/CryptoContext';
 
 export type ActiveView = 'dashboard' | 'axon-ai' | 'settings' | 'logs';
 
@@ -54,11 +55,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
-  const { alias, chats, activeChat, setActiveChat, joinChat, archiveChat, deleteChat, unlockedChatId } = useCrypto();
+  const { alias, chats, archivedChats, activeChat, setActiveChat, joinChat, archiveChat, restoreChat, deleteChat, unlockedChatId, networkStatus } = useCrypto();
 
   const [isJoining, setIsJoining] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [stealthMode, setStealthMode] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; chatId: string } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyCode = (chatId: string, code: string) => {
+    navigator.clipboard?.writeText(code).catch(() => { /* clipboard unavailable */ });
+    setCopiedId(chatId);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  // The mobile drawer always renders the FULL expanded sidebar;
+  // the icon rail only applies on desktop (md+).
+  const railCollapsed = isCollapsed && !mobileOpen;
 
   const coreNav = [
     { id: 'dashboard' as ActiveView, label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4 shrink-0" /> },
@@ -86,9 +99,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
     c => !searchQuery || c.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // ---- Right-click context menu on chat rows ----
+  const openContextMenu = (e: React.MouseEvent, chatId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuWidth = 208;
+    const menuHeight = 232;
+    const x = Math.max(8, Math.min(e.clientX, window.innerWidth - menuWidth - 8));
+    const y = Math.max(8, Math.min(e.clientY, window.innerHeight - menuHeight - 8));
+    setContextMenu({ x, y, chatId });
+  };
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [contextMenu]);
+
+  const menuChat: Chat | null = contextMenu
+    ? chats.find(c => c.id === contextMenu.chatId) || archivedChats.find(c => c.id === contextMenu.chatId) || null
+    : null;
+  const menuChatIsArchived = !!contextMenu && archivedChats.some(c => c.id === contextMenu.chatId);
+
   const renderNavGroup = (title: string, items: typeof coreNav) => (
     <div className="mb-4">
-      {!isCollapsed && (
+      {!railCollapsed && (
         <div className="px-3 mb-2 flex items-center gap-1.5 text-[10px] font-bold text-zinc-600 tracking-[0.2em] uppercase">
           <span className="w-1 h-1 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 inline-block" />
           {title}
@@ -101,18 +146,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               onClick={() => setActiveView(item.id)}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
+              title={railCollapsed ? item.label : undefined}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm neo-press ${
                 isActive
-                  ? 'text-cyan-300 font-semibold bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent border border-cyan-400/25 shadow-[0_0_20px_-6px_rgba(34,211,238,0.4)]'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04] border border-transparent'
-              } ${isCollapsed ? 'justify-center px-0' : ''}`}
+                  ? 'text-cyan-300 font-semibold neo-inset neo-glow-cyan border-l-2 border-cyan-400/70'
+                  : 'text-zinc-400 hover:text-zinc-100 neo-raised-sm'
+              } ${railCollapsed ? 'justify-center px-0' : ''}`}
             >
               {item.icon}
-              {!isCollapsed && (
+              {!railCollapsed && (
                 <span className="truncate flex-1 text-left">{item.label}</span>
               )}
-              {!isCollapsed && item.badge && (
+              {!railCollapsed && item.badge && (
                 <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-gradient-to-r from-cyan-400/25 to-emerald-400/25 text-cyan-300 border border-cyan-400/30">
                   {item.badge}
                 </span>
@@ -124,17 +169,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
+  const renderSectionHeader = (label: string, count?: number) => (
+    <div className={`text-[10px] font-bold tracking-[0.2em] text-zinc-600 mb-2 flex items-center uppercase ${count !== undefined ? 'justify-between' : ''}`}>
+      <span className="flex items-center gap-1.5">
+        <span className="w-1 h-1 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 inline-block" />
+        {label}
+      </span>
+      {count !== undefined && <span className="text-cyan-400/80 tabular-nums">{count}</span>}
+    </div>
+  );
+
   return (
     <aside
-      className={`bg-gradient-to-b from-[#07070c] via-[#050507] to-[#040406] flex flex-col select-none overflow-y-auto md:overflow-visible
-        fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 shadow-2xl
-        md:static md:z-30 md:shadow-none md:translate-x-0 md:border-r md:border-white/[0.06] ${
+      className={`neo-surface flex flex-col select-none overflow-y-auto md:overflow-visible
+        fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 shadow-[12px_0_32px_-20px_rgba(0,0,0,0.95)]
+        md:static md:z-30 md:translate-x-0 md:border-r md:border-white/[0.05] ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         } ${isCollapsed ? 'md:w-[72px]' : 'md:w-[260px]'}`}
     >
       {/* Header / Brand */}
       <div className="h-16 flex items-center justify-between px-4 mt-2 shrink-0">
-        {!isCollapsed ? (
+        {!railCollapsed ? (
           <div className="flex items-center gap-2.5 overflow-hidden">
             <div className="ring-gradient rounded-lg p-2 shrink-0">
               <ShieldAlert className="w-4 h-4 text-cyan-300" />
@@ -159,7 +214,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <X className="w-4 h-4" />
         </button>
-        {!isCollapsed && (
+        {!railCollapsed && (
           <button
             onClick={() => setIsCollapsed(prev => !prev)}
             title="Collapse Sidebar"
@@ -171,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Collapse Toggle for collapsed state */}
-      {isCollapsed && (
+      {railCollapsed && (
         <div className="p-2 flex justify-center mb-2 shrink-0">
           <button
             onClick={() => setIsCollapsed(prev => !prev)}
@@ -191,14 +246,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Terminals Panel */}
       <div className="border-t border-white/[0.06] flex flex-col min-h-0 flex-1">
-        <div className="px-4 pt-3 pb-1 shrink-0">
-          <div className="text-[10px] font-bold tracking-widest text-zinc-500 mb-2 flex justify-between items-center uppercase">
-            <span>Terminals</span>
-            <span className="text-cyan-400/80 tabular-nums">{chats.length}</span>
-          </div>
+        <div className="px-3 pt-3 pb-1 shrink-0">
+          {railCollapsed ? (
+            <div className="flex justify-center mb-2">
+              <span className="text-cyan-400/80 tabular-nums text-[10px] font-bold">{chats.length}</span>
+            </div>
+          ) : (
+            renderSectionHeader('Terminals', chats.length)
+          )}
 
-          {!isCollapsed && (
-            <div className="flex items-center gap-2 bg-black/40 border border-white/[0.07] px-2 py-1.5 rounded-lg focus-within:border-cyan-400/50 focus-within:shadow-[0_0_14px_-4px_rgba(34,211,238,0.35)] mb-2 transition-all">
+          {!railCollapsed && (
+            <div className="flex items-center gap-2 neo-inset px-2 py-1.5 rounded-lg focus-within:ring-1 focus-within:ring-cyan-400/60 mb-2 transition-all">
               <Search className="w-3 h-3 text-zinc-500" />
               <input
                 type="text"
@@ -210,9 +268,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
 
-          {/* Chat list */}
+          {/* Active chat list */}
           <div className="overflow-y-auto max-h-[28vh] space-y-1 pr-0.5">
-            {isCollapsed ? (
+            {railCollapsed ? (
               <div className="flex flex-col items-center gap-2 py-1">
                 {chats.slice(0, 12).map(chat => {
                   const isActive = activeChat?.id === chat.id;
@@ -237,20 +295,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={chat.id}
                     onClick={() => setActiveChat(chat)}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-all duration-150 rounded-md border-l-2 ${
+                    onContextMenu={(e) => openContextMenu(e, chat.id)}
+                    title={`${chat.name} — passphrase: ${chat.share_code} (click code to copy) — right-click for options`}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-all duration-150 rounded-lg border-l-2 group ${
                       isActive
-                        ? 'text-cyan-300 bg-gradient-to-r from-cyan-500/10 to-transparent border-cyan-400'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border-transparent'
+                        ? 'text-cyan-300 neo-inset border-cyan-400/70'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] border-transparent'
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLocked ? 'bg-amber-500/80' : 'bg-emerald-400 dot-live text-emerald-400'}`} />
-                    <span className="truncate flex-1 text-left">{chat.name}</span>
+                    <div className="flex flex-col min-w-0 flex-1 text-left">
+                      <span className="truncate leading-tight">{chat.name}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); copyCode(chat.id, chat.share_code); }}
+                        title="Copy passphrase"
+                        className={`text-[9px] tracking-wider truncate text-left transition-colors ${copiedId === chat.id ? 'text-emerald-400' : 'text-zinc-600 hover:text-cyan-400'}`}
+                      >
+                        {copiedId === chat.id ? 'COPIED ✓' : chat.share_code}
+                      </button>
+                    </div>
                     {isLocked ? <Lock className="w-3 h-3 text-amber-500/70 shrink-0" /> : <LockOpen className="w-3 h-3 text-emerald-500/70 shrink-0" />}
+                    <MoreVertical className="w-3 h-3 text-zinc-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
                 );
               })
             )}
-            {!isCollapsed && filteredChats.length === 0 && (
+            {!railCollapsed && filteredChats.length === 0 && (
               <div className="text-[10px] text-zinc-700 tracking-widest uppercase px-3 py-2">
                 [NO TERMINALS]
               </div>
@@ -258,78 +329,92 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Active terminal operations - explicit buttons for every feature */}
-        {!isCollapsed && activeChat && (
-          <div className="px-4 py-3 border-t border-white/[0.06] shrink-0">
-            <div className="text-[10px] font-bold tracking-widest text-zinc-500 mb-2 uppercase">
-              TERMINAL OPS [{activeChat.name.slice(0, 12)}]
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={() => onRenameChat(activeChat.id)}
-                title="Rename this terminal"
-                className="flex items-center justify-center gap-1.5 text-[10px] text-zinc-400 hover:text-cyan-300 border border-white/[0.08] hover:border-cyan-400/40 hover:shadow-[0_0_14px_-5px_rgba(34,211,238,0.5)] py-1.5 rounded-md transition-all uppercase tracking-widest bg-white/[0.02]"
-              >
-                <Edit2 className="w-3 h-3" /> RENAME
-              </button>
-              <button
-                onClick={() => onChangePassword(activeChat.id)}
-                title="Rotate the encryption passphrase"
-                className="flex items-center justify-center gap-1.5 text-[10px] text-zinc-400 hover:text-red-400 border border-white/[0.08] hover:border-red-400/40 hover:shadow-[0_0_14px_-5px_rgba(248,113,113,0.5)] py-1.5 rounded-md transition-all uppercase tracking-widest bg-white/[0.02]"
-              >
-                <Key className="w-3 h-3" /> KEY ROTATION
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`Archive terminal "${activeChat.name}" from this device?`)) archiveChat(activeChat.id);
-                }}
-                title="Archive from this device"
-                className="flex items-center justify-center gap-1.5 text-[10px] text-zinc-400 hover:text-amber-400 border border-white/[0.08] hover:border-amber-400/40 py-1.5 rounded-md transition-all uppercase tracking-widest bg-white/[0.02]"
-              >
-                <Archive className="w-3 h-3" /> ARCHIVE
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`WARNING: This will permanently wipe terminal "${activeChat.name}" and all its messages globally. Proceed?`)) deleteChat(activeChat.id);
-                }}
-                title="Wipe globally (deletes from everywhere)"
-                className="flex items-center justify-center gap-1.5 text-[10px] text-red-500/80 hover:text-red-400 border border-red-900/40 hover:border-red-400/50 hover:shadow-[0_0_14px_-5px_rgba(248,113,113,0.6)] py-1.5 rounded-md transition-all uppercase tracking-widest bg-red-500/[0.03]"
-              >
-                <Trash2 className="w-3 h-3" /> WIPE
-              </button>
+        {/* Archived chats */}
+        {!railCollapsed && archivedChats.length > 0 && (
+          <div className="px-3 pt-3 pb-1 shrink-0 border-t border-white/[0.05]">
+            {renderSectionHeader('Archived', archivedChats.length)}
+            <div className="space-y-1 max-h-[20vh] overflow-y-auto pr-0.5">
+              {archivedChats.map(chat => (
+                <button
+                  key={chat.id}
+                  onClick={() => restoreChat(chat.id)}
+                  onContextMenu={(e) => openContextMenu(e, chat.id)}
+                  title={`Restore ${chat.name} — passphrase: ${chat.share_code} — right-click for options`}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.03] rounded-lg border-l-2 border-transparent transition-all duration-150 group"
+                >
+                  <Archive className="w-3 h-3 shrink-0 text-zinc-600" />
+                  <div className="flex flex-col min-w-0 flex-1 text-left">
+                    <span className="truncate leading-tight">{chat.name}</span>
+                    <span className="text-[9px] text-zinc-700 tracking-wider truncate">{chat.share_code}</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-700 uppercase tracking-widest group-hover:text-emerald-500/80 transition-colors shrink-0">
+                    Restore
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         )}
 
         {/* Channel actions */}
-        <div className="px-4 py-3 border-t border-white/[0.06] space-y-2 shrink-0">
-          {isJoining ? (
+        <div className="px-3 py-3 border-t border-white/[0.06] shrink-0">
+          {railCollapsed ? (
+            <div className="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsJoining(true)}
+                title="Join Link"
+                className="neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-cyan-300"
+              >
+                <KeyRound className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onCreateTunnel}
+                title="Create Tunnel"
+                className="neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-emerald-300"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setStealthMode(!stealthMode)}
+                title={stealthMode ? 'Stealth Mode: ON' : 'Stealth Mode: OFF'}
+                className={`neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg ${stealthMode ? 'text-cyan-400' : 'text-zinc-500 hover:text-cyan-300'}`}
+              >
+                {stealthMode ? <ToggleRight className="w-5 h-5" /> : <EyeOff className="w-4 h-4" />}
+              </button>
+            </div>
+          ) : isJoining ? (
             <form onSubmit={handleJoinSubmit} className="flex gap-2">
               <input
                 type="text"
                 value={joinCode}
                 onChange={e => setJoinCode(e.target.value)}
                 placeholder="LINK CODE"
-                className="w-full bg-black/40 border border-white/[0.08] text-xs px-2 py-1.5 rounded-md focus:border-cyan-400/60 focus:shadow-[0_0_14px_-4px_rgba(34,211,238,0.4)] outline-none text-white uppercase placeholder:text-zinc-700 transition-all"
+                className="w-full neo-inset border border-white/[0.05] text-xs px-2 py-1.5 rounded-md focus:ring-1 focus:ring-cyan-400/60 outline-none text-white uppercase placeholder:text-zinc-700 transition-all"
                 autoFocus
               />
               <button type="button" onClick={() => setIsJoining(false)} className="text-xs text-zinc-500 hover:text-white px-1">X</button>
             </form>
           ) : (
-            <>
+            <div className="space-y-2">
               <button
+                type="button"
                 onClick={() => setIsJoining(true)}
-                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-300 transition-all uppercase tracking-widest border border-white/[0.08] hover:border-cyan-400/40 hover:shadow-[0_0_14px_-5px_rgba(34,211,238,0.5)] p-2 rounded-md bg-white/[0.02]"
+                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-300 neo-press neo-raised-sm border border-white/[0.05] hover:border-cyan-400/40 hover:shadow-[0_0_14px_-5px_rgba(34,211,238,0.5)] p-2 rounded-md uppercase tracking-widest"
               >
                 <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
               </button>
               <button
+                type="button"
                 onClick={onCreateTunnel}
-                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-300 transition-all uppercase tracking-widest border border-white/[0.08] hover:border-emerald-500/40 hover:shadow-[0_0_14px_-5px_rgba(52,211,153,0.5)] p-2 rounded-md bg-white/[0.02]"
+                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-300 neo-press neo-raised-sm border border-white/[0.05] hover:border-emerald-500/40 hover:shadow-[0_0_14px_-5px_rgba(52,211,153,0.5)] p-2 rounded-md uppercase tracking-widest"
               >
                 <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
               </button>
               <button
+                type="button"
                 onClick={() => setStealthMode(!stealthMode)}
                 className="w-full flex items-center justify-between text-xs text-zinc-400 uppercase tracking-widest"
               >
@@ -340,15 +425,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {stealthMode ? <ToggleRight className="w-5 h-5 text-cyan-400" /> : <ToggleLeft className="w-5 h-5" />}
                 </span>
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
 
       {/* Console / user box */}
-      {!isCollapsed ? (
-        <div className="p-4 mt-auto shrink-0">
-          <div className="ring-gradient rounded-xl p-3 flex flex-col gap-3">
+      {!railCollapsed ? (
+        <div className="p-3 mt-auto shrink-0">
+          <div className="neo-raised rounded-xl p-3 flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500/25 to-emerald-500/15 border border-cyan-400/30 flex items-center justify-center shrink-0 glow-cyan">
                 <UserCheck className="w-4 h-4 text-cyan-300" />
@@ -358,14 +443,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="text-xs font-bold text-gradient truncate uppercase tracking-widest">{alias || 'ANONYMOUS'}</span>
               </div>
             </div>
-
-            <div className="flex items-center gap-2 mt-1">
-              <button onClick={() => setActiveView('settings')} className="p-1.5 text-zinc-500 hover:text-cyan-300 hover:bg-white/5 rounded-lg transition-colors bg-white/[0.03] border border-white/[0.06]" title="Settings">
-                <Settings className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => setActiveView('logs')} className="p-1.5 text-zinc-500 hover:text-cyan-300 hover:bg-white/5 rounded-lg transition-colors bg-white/[0.03] border border-white/[0.06]" title="Logs">
-                <FileText className="w-3.5 h-3.5" />
-              </button>
+            <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-zinc-500 pt-2 border-t border-white/[0.06]">
+              <span className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${networkStatus === 'ONLINE' ? 'bg-emerald-400 dot-live text-emerald-400' : 'bg-amber-400/80'}`} />
+                {networkStatus === 'ONLINE' ? 'Global Link' : 'Local Sandbox'}
+              </span>
             </div>
           </div>
         </div>
@@ -378,15 +460,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Terminate Session */}
-      <div className="px-4 pb-4 shrink-0">
+      <div className="px-3 pb-3 shrink-0">
         <button
           onClick={() => { localStorage.clear(); window.location.reload(); }}
-          className={`w-full btn-premium py-3 rounded-lg ${isCollapsed ? 'px-0 flex items-center justify-center' : ''}`}
+          className={`w-full btn-premium py-3 rounded-lg ${railCollapsed ? 'px-0 flex items-center justify-center' : ''}`}
           title="Terminate session (wipes local data)"
         >
-          {isCollapsed ? <Power className="w-4 h-4" /> : 'TERMINATE SESSION'}
+          {railCollapsed ? <Power className="w-4 h-4" /> : 'TERMINATE SESSION'}
         </button>
       </div>
+
+      {/* Right-click context menu for chat operations */}
+      {contextMenu && menuChat && !railCollapsed && (
+        <div
+          className="fixed z-[80] neo-raised border border-white/[0.08] rounded-lg py-1.5 w-52 shadow-2xl"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[9px] font-bold tracking-widest text-zinc-500 uppercase border-b border-white/[0.06] mb-1 truncate">
+            {menuChat.name}
+          </div>
+          <button
+            onClick={() => { setContextMenu(null); onRenameChat(menuChat.id); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-cyan-300 hover:bg-cyan-400/[0.06] text-left transition-colors"
+          >
+            <Edit2 className="w-3.5 h-3.5" /> RENAME
+          </button>
+          <button
+            onClick={() => { setContextMenu(null); onChangePassword(menuChat.id); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-red-400 hover:bg-red-400/[0.06] text-left transition-colors"
+          >
+            <Key className="w-3.5 h-3.5" /> KEY ROTATION
+          </button>
+          {menuChatIsArchived ? (
+            <button
+              onClick={() => { setContextMenu(null); restoreChat(menuChat.id); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-emerald-300 hover:bg-emerald-400/[0.06] text-left transition-colors"
+            >
+              <Archive className="w-3.5 h-3.5" /> RESTORE
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setContextMenu(null);
+                if (confirm(`Archive terminal "${menuChat.name}"? It stays restorable under ARCHIVED.`)) archiveChat(menuChat.id);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:text-amber-300 hover:bg-amber-400/[0.06] text-left transition-colors"
+            >
+              <Archive className="w-3.5 h-3.5" /> ARCHIVE
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setContextMenu(null);
+              if (confirm(`WARNING: Permanently wipe terminal "${menuChat.name}" and ALL its messages globally?`)) deleteChat(menuChat.id);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400/90 hover:text-red-300 hover:bg-red-500/[0.08] text-left transition-colors border-t border-white/[0.06] mt-1 pt-2"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> WIPE GLOBALLY
+          </button>
+        </div>
+      )}
     </aside>
   );
 };

@@ -36,6 +36,12 @@
     font-size: var(--ui-text-size);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
+
+  /* Full-viewport height with a vh fallback for browsers without dvh support */
+  .h-app {
+    height: 100vh;
+    height: 100dvh;
+  }
   
   ::-webkit-scrollbar {
     width: 6px;
@@ -183,6 +189,47 @@
     @apply inline-block rounded-full;
     box-shadow: 0 0 10px currentColor;
     animation: axon-pulse 2s ease-in-out infinite;
+  }
+
+  /* ---- Dark Neumorphic (soft-UI) system ----
+     Surfaces share the page background tone; depth comes from
+     dual light/dark shadows instead of hard borders. */
+  .neo-surface {
+    background: #0b0b12;
+  }
+
+  .neo-raised {
+    background: linear-gradient(145deg, #12121b 0%, #0a0a11 100%);
+    box-shadow: 6px 6px 14px rgba(0, 0, 0, 0.55), -6px -6px 14px rgba(255, 255, 255, 0.04);
+  }
+
+  .neo-raised-sm {
+    background: linear-gradient(145deg, #101018 0%, #09090f 100%);
+    box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.5), -4px -4px 10px rgba(255, 255, 255, 0.035);
+  }
+
+  /* Interactive raised element: lifts on hover, presses in on click */
+  .neo-press {
+    transition: box-shadow 0.15s ease, transform 0.15s ease, color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .neo-press:hover {
+    box-shadow: 8px 8px 18px rgba(0, 0, 0, 0.6), -8px -8px 18px rgba(255, 255, 255, 0.05);
+  }
+  .neo-press:active {
+    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.6), inset -4px -4px 10px rgba(255, 255, 255, 0.04);
+    transform: translateY(1px);
+  }
+
+  /* Inset (sunken) surface: inputs, active nav states */
+  .neo-inset {
+    background: linear-gradient(145deg, #07070c 0%, #0e0e16 100%);
+    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.6), inset -4px -4px 10px rgba(255, 255, 255, 0.035);
+  }
+
+  /* Neumorphic accent glow for active/live elements */
+  .neo-glow-cyan {
+    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.55), inset -4px -4px 10px rgba(255, 255, 255, 0.03),
+      0 0 22px -8px rgba(34, 211, 238, 0.45);
   }
 }
 

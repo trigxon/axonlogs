@@ -136,6 +136,7 @@ export const VoiceRecorder: React.FC<{
 
       {!audioUrl && !isRecording && (
         <button
+          type="button"
           onClick={startRecording}
           title="Record Encrypted Voice Memo"
           className="p-2 text-zinc-500 hover:text-cyan-400 transition-colors rounded-sm hover:bg-white/5"
@@ -149,6 +150,7 @@ export const VoiceRecorder: React.FC<{
           <div className="w-2 h-2 rounded-full bg-red-500" />
           <span className="text-red-400 text-xs font-mono w-12">{formatTime(recordingTime)}</span>
           <button
+            type="button"
             onClick={stopRecording}
             className="p-1 hover:bg-red-500/20 text-red-400 rounded transition-colors"
           >
@@ -159,7 +161,7 @@ export const VoiceRecorder: React.FC<{
 
       {audioUrl && (
         <div className="flex items-center gap-2 bg-[#1a1a1a] border border-cyan-500/30 p-1 pl-2 rounded-sm pr-2">
-          <button onClick={togglePlayback} className="p-1.5 text-cyan-400 hover:bg-cyan-500/20 rounded">
+          <button type="button" onClick={togglePlayback} className="p-1.5 text-cyan-400 hover:bg-cyan-500/20 rounded">
             {isPlaying ? <Pause size={14} /> : <Play size={14} />}
           </button>
 
@@ -176,11 +178,12 @@ export const VoiceRecorder: React.FC<{
             className="hidden"
           />
 
-          <button onClick={deleteRecording} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded ml-1 transition-colors">
+          <button type="button" onClick={deleteRecording} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded ml-1 transition-colors">
             <Trash2 size={14} />
           </button>
 
           <button
+            type="button"
             onClick={handleSend}
             className="ml-2 px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold tracking-wider transition-colors"
           >

@@ -387,8 +387,17 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const renderFile = (msgId: string, fileUrl: string | null) => {
     if (!fileUrl) return null;
     
-    const isImage = fileUrl.match(/\.(jpeg|jpg|gif|png|webp)(\?.*)?$/i);
-    const isAudio = fileUrl.match(/\.(webm|mp3|ogg|wav)(\?.*)?$/i);
+    const isImage = fileUrl.match(/\.(jpeg|jpg|gif|png|webp|avif)(\?.*)?$/i) || fileUrl.startsWith('data:image/');
+    const isAudio = fileUrl.match(/\.(webm|mp3|ogg|wav|m4a)(\?.*)?$/i) || fileUrl.startsWith('data:audio/');
+    const isVideo = fileUrl.match(/\.(mp4|webm|mov)(\?.*)?$/i) || fileUrl.startsWith('data:video/');
+
+    if (isVideo) {
+      return (
+        <div className="mt-4 p-2 bg-black/40 border border-zinc-800 rounded">
+          <video controls src={fileUrl} className="w-full max-h-72 rounded" />
+        </div>
+      );
+    }
 
     if (isAudio) {
       return (
@@ -440,7 +449,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   if (panicMode) {
     return (
-      <div className="min-h-screen w-full bg-white flex items-center justify-center cursor-default selection:bg-transparent">
+      <div className="h-app w-full bg-white flex items-center justify-center cursor-default selection:bg-transparent">
         <h1 className="text-4xl font-sans font-bold text-black">404 - Server Not Found</h1>
       </div>
     );
@@ -568,7 +577,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   if (panicMode) {
     return (
-      <div className="h-[100dvh] w-full bg-white text-black flex flex-col items-center justify-center font-sans">
+      <div className="h-app w-full bg-white text-black flex flex-col items-center justify-center font-sans">
         <h1 className="text-4xl font-bold mb-2">404 Not Found</h1>
         <p className="text-gray-600">The requested URL was not found on this server.</p>
         <button className="mt-8 text-sm text-blue-600 underline" onClick={() => setPanicMode(false)}>Return Home</button>
@@ -578,7 +587,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   if (isDecoyMode) {
     return (
-      <div className="flex flex-col h-[100dvh] w-full bg-white text-black font-sans p-8 overflow-y-auto">
+      <div className="flex flex-col h-app w-full bg-white text-black font-sans p-8 overflow-y-auto">
         <div className="max-w-2xl mx-auto w-full">
           <div className="flex justify-between items-center mb-6 border-b pb-4">
             <h1 className="text-3xl font-bold">Biology 101 Notes</h1>
@@ -603,7 +612,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   if (isIdleLocked) {
     return (
-      <div className="h-[100dvh] w-full bg-[#050505] text-[#a3a3a3] flex flex-col items-center justify-center font-mono relative overflow-hidden backdrop-blur-3xl">
+      <div className="h-app w-full bg-[#050505] text-[#a3a3a3] flex flex-col items-center justify-center font-mono relative overflow-hidden backdrop-blur-3xl">
         <div className="absolute inset-0 bg-black/60 z-10"></div>
         <div className="z-20 flex flex-col items-center">
           <Lock className="w-16 h-16 text-cyan-500 mb-6" />
@@ -624,7 +633,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   }
 
   return (
-    <div className={`flex h-[100dvh] w-full bg-gradient-to-br from-[#06060a] via-[#050506] to-[#040408] text-[#a3a3a3] font-mono overflow-hidden relative scanlines ${isIdleLocked ? 'blur-xl' : ''}`}>
+    <div className={`flex h-app w-full bg-gradient-to-br from-[#06060a] via-[#050506] to-[#040408] text-[#a3a3a3] font-mono overflow-hidden relative scanlines ${isIdleLocked ? 'blur-xl' : ''}`}>
       
       {/* WATERMARK */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.02] flex flex-wrap gap-4 z-50 select-none items-center justify-center">
@@ -660,7 +669,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         {activeView === 'dashboard' && (
           <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
               {/* Top Header */}
-              <header className="h-14 border-b border-white/[0.06] bg-[#07070c]/70 backdrop-blur-md flex items-center justify-between px-4 md:px-6 gap-3 shrink-0 hairline-gradient">
+              <header className="h-14 border-b border-white/[0.06] bg-[#07070c]/70 backdrop-blur-md flex items-center justify-between px-4 md:px-8 gap-3 shrink-0 hairline-gradient">
                 <div className="flex items-center gap-3 md:gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden min-w-0">
                   <button
                     onClick={() => setMobileSidebarOpen(true)}
@@ -787,7 +796,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               {/* Chat Feed */}
               <div 
                 ref={feedRef} 
-                className="flex-1 overflow-y-auto px-3 md:px-8 py-4 flex flex-col gap-6 relative"
+                className="flex-1 overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative"
                 style={{
                   backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
                   backgroundRepeat: 'repeat'
@@ -910,14 +919,14 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
               {/* Footer Input Bar */}
               {activeChat && !chatLocked && (
-                <footer className="p-4 border-t border-white/[0.06] bg-[#07070c]/75 backdrop-blur-md shrink-0">
+                <footer className="px-4 md:px-8 py-4 border-t border-white/[0.06] bg-[#07070c]/75 backdrop-blur-md shrink-0">
                   <form onSubmit={handleSubmit} className="flex items-center gap-3">
                     <input 
                       type="text" 
                       value={input}
                       onChange={handleInputChange}
-                      placeholder="ENTER COMMAND OR TRANSMISSION..."
-                      className="flex-1 bg-black/40 border border-white/[0.08] focus:border-cyan-400/60 focus:shadow-[0_0_18px_-5px_rgba(34,211,238,0.45)] px-4 py-2 rounded-md text-xs text-white outline-none font-mono placeholder:text-zinc-700 uppercase transition-all"
+                      placeholder="Type a transmission... (or /help for commands)"
+                      className="flex-1 min-w-0 neo-inset border border-white/[0.05] focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/40 px-4 py-2.5 rounded-lg text-sm text-white outline-none font-mono placeholder:text-zinc-500 placeholder:normal-case transition-all"
                     />
 
                     <input 
@@ -974,8 +983,8 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {/* MODALS & OVERLAYS */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glass-deep border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -992,7 +1001,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   value={newChatName}
                   onChange={e => setNewChatName(e.target.value.toUpperCase())}
                   placeholder="e.g. ALPHA-OPERATIONS"
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1003,7 +1012,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   value={newChatPassphrase}
                   onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
                   placeholder="SHARED SECRET"
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                 />
                 <div className="flex items-center justify-between mt-1">
                   <span className={`text-[10px] tracking-widest uppercase ${
@@ -1039,8 +1048,8 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showRenameModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glass-deep border-cyan-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="neo-raised border-cyan-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-cyan-500" />
             <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1056,7 +1065,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   type="text" 
                   value={renameInput}
                   onChange={e => setRenameInput(e.target.value.toUpperCase())}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase"
+                  className="w-full neo-inset border border-white/[0.05] focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1071,8 +1080,8 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showPasswordModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glass-deep border-red-500/45 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="neo-raised border-red-500/45 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
             <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1086,12 +1095,12 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 WARNING: Changing the terminal password will rotate the encryption key. Existing messages will become unreadable!
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW PASSPHRASE</label>
-                <input 
+                <label className="block text-xs text-zinc-500 tracking-widest uppercase mb-1">NEW PASSPHRASE</label>                <input 
                   type="text" 
                   value={passwordInput}
                   onChange={e => setPasswordInput(e.target.value.toUpperCase())}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-red-500 p-2 text-white font-mono text-sm outline-none uppercase"
+
+                  className="w-full neo-inset border border-white/[0.05] focus:border-red-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1106,8 +1115,8 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {showUnlockModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glass-deep border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1143,7 +1152,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   onChange={e => setUnlockPassword(e.target.value.toUpperCase())}
                   onKeyDown={handlePasswordKeyDown}
                   disabled={lockoutUntil > clock}
-                  className="w-full bg-[#0a0a0f] border border-zinc-800 focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase disabled:opacity-50"
+                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase disabled:opacity-50 transition-all"
                   autoFocus
                 />
               </div>

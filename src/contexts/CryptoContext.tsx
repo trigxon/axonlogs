@@ -44,6 +44,8 @@ interface CryptoContextType {
   deleteMessageLocally: (id: string) => void;
   renameChat: (id: string, newName: string) => Promise<void>;
   archiveChat: (id: string) => void;
+  restoreChat: (id: string) => void;
+  archivedChats: Chat[];
   deleteChat: (id: string) => Promise<void>;
   changeChatPassword: (id: string, newCode: string) => Promise<boolean>;
   updateAlias: (newAlias: string) => void;
@@ -161,7 +163,7 @@ const saveDeviceKey = (chatId: string, code: string) => {
   writeJSON('axon_device_keys', map);
 };
 
-const fileToDataUrl = (file: File): Promise<string | null> =>
+const readFileAsDataUrl = (file: File): Promise<string | null> =>
   new Promise(resolve => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -169,10 +171,48 @@ const fileToDataUrl = (file: File): Promise<string | null> =>
     reader.readAsDataURL(file);
   });
 
+/* Converts a file to a data URL, downscaling large photos so the encrypted
+ * payload stays light (works for both cloud fallback and local storage). */
+const fileToDataUrl = (file: File): Promise<string | null> =>
+  new Promise(resolve => {
+    if (!file.type.startsWith('image/')) {
+      readFileAsDataUrl(file).then(resolve);
+      return;
+    }
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX_DIM = 1600;
+      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+      if (scale >= 1) {
+        URL.revokeObjectURL(objectUrl);
+        readFileAsDataUrl(file).then(resolve);
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      URL.revokeObjectURL(objectUrl);
+      if (!ctx) {
+        readFileAsDataUrl(file).then(resolve);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      readFileAsDataUrl(file).then(resolve);
+    };
+    img.src = objectUrl;
+  });
+
 export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const [deviceId, setDeviceId] = useState<string>('');
   const [alias, setAlias] = useState<string>('');
   const [chats, setChats] = useState<Chat[]>([]);
+  const [archivedChats, setArchivedChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [latency, setLatency] = useState(0);
@@ -275,7 +315,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (activeChat) localStorage.setItem('axon_active_chat_id', activeChat.id);
   }, [activeChat?.id]);
 
-  // Fetch chats on init
+  // Fetch chats on init + keep the global terminal list live-synced across devices
   useEffect(() => {
     if (!deviceId) return;
 
@@ -286,33 +326,60 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      const fetchChats = async () => {
-        const storedChats = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
-
-        try {
-          if (storedChats.length === 0) {
-            await createChat();
-            void migrateLocalToCloud();
-            return;
+      // GLOBAL SYNC: any terminal created/renamed/wiped on ANY device
+      // appears/disappears here in real time.
+      const chatsChannel = supabase!.channel('global-chats')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chats' }, (payload) => {
+          const nc = payload.new as Chat;
+          const isArchived = getArchivedIds().includes(nc.id);
+          if (isArchived) {
+            setArchivedChats(prev => (prev.some(c => c.id === nc.id) ? prev : [nc, ...prev]));
+          } else {
+            setChats(prev => (prev.some(c => c.id === nc.id) ? prev : [nc, ...prev]));
           }
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chats' }, (payload) => {
+          const uc = payload.new as Chat;
+          setChats(prev => prev.map(c => (c.id === uc.id ? uc : c)));
+          setArchivedChats(prev => prev.map(c => (c.id === uc.id ? uc : c)));
+          setActiveChat(prev => (prev?.id === uc.id ? uc : prev));
+        })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chats' }, (payload) => {
+          const oldId = (payload.old as any)?.id;
+          setChats(prev => prev.filter(c => c.id !== oldId));
+          setArchivedChats(prev => prev.filter(c => c.id !== oldId));
+        })
+        .subscribe();
 
+      const fetchChats = async () => {
+        try {
+          // GLOBAL: pull EVERY terminal from the cloud - not just the ones this
+          // device already knows about - so chats show up on all devices.
           const { data, error } = await supabase!
             .from('chats')
             .select('*')
-            .in('id', storedChats)
             .order('created_at', { ascending: false });
 
           if (error) throw error;
 
           if (data && data.length > 0) {
-            setChats(data);
+            // Partition into active vs archived (per-device archive preference)
+            const archivedIds = getArchivedIds();
+            const active = data.filter((c: any) => !archivedIds.includes(c.id));
+            const archived = data.filter((c: any) => archivedIds.includes(c.id));
+            setChats(active);
+            setArchivedChats(archived);
+            const roomParam = new URLSearchParams(window.location.search).get('room');
             const storedActive = localStorage.getItem('axon_active_chat_id');
-            setActiveChat(data.find((c: any) => c.id === storedActive) || data[0]);
-            void migrateLocalToCloud();
+            const target = roomParam
+              ? active.find((c: any) => c.share_code === roomParam.trim().toUpperCase())
+              : active.find((c: any) => c.id === storedActive);
+            setActiveChat(target || active[0]);
           } else {
+            // No terminals exist anywhere yet - bootstrap the first one
             await createChat();
-            void migrateLocalToCloud();
           }
+          void migrateLocalToCloud();
         } catch (e: any) {
           // Backend missing/unreachable -> degrade to the local sandbox instead of alerting
           console.error("Supabase unavailable, degrading to local sandbox:", e?.message || e);
@@ -324,9 +391,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       };
 
       fetchChats();
+
+      return () => {
+        supabase!.removeChannel(chatsChannel);
+      };
     } else {
       // LOCAL / DEGRADED MODE: channels are persisted locally and work fully offline
       const localChats = readJSON<Chat[]>('axon_chats', []);
+      setArchivedChats(readJSON<Chat[]>('axon_archived_chats_data', []));
       if (localChats.length === 0) {
         seedLocalSandbox();
       } else {
@@ -397,6 +469,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const after = readJSON<Chat[]>('axon_chats', []).length;
     return before - after;
   }, [backendMode, migrateLocalToCloud]);
+
+  const getArchivedIds = () => readJSON<string[]>('axon_archived_chats', []);
 
   const saveKnownChat = (chatId: string) => {
     const stored = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
@@ -518,12 +592,36 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const archiveChat = (id: string) => {
-    const stored = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
-    const updated = stored.filter((chatId: string) => chatId !== id);
-    localStorage.setItem('axon_known_chats', JSON.stringify(updated));
+    const chat = chats.find(c => c.id === id) || archivedChats.find(c => c.id === id);
+    if (!chat) return;
+    const ids = getArchivedIds();
+    if (!ids.includes(id)) {
+      localStorage.setItem('axon_archived_chats', JSON.stringify([...ids, id]));
+    }
     setChats(prev => prev.filter(c => c.id !== id));
-    if (activeChat?.id === id) setActiveChat(null);
-    addLog(`Archived terminal locally`);
+    setArchivedChats(prev => (prev.some(c => c.id === id) ? prev : [chat, ...prev]));
+    if (backendMode !== 'online') {
+      writeJSON('axon_chats', readJSON<Chat[]>('axon_chats', []).filter(c => c.id !== id));
+      writeJSON('axon_archived_chats_data', [chat, ...readJSON<Chat[]>('axon_archived_chats_data', []).filter(c => c.id !== id)]);
+    }
+    if (activeChat?.id === id) {
+      setActiveChat(chats.find(c => c.id !== id) || null);
+    }
+    addLog(`Archived terminal ${chat.name} (restorable)`);
+  };
+
+  const restoreChat = (id: string) => {
+    const chat = archivedChats.find(c => c.id === id);
+    if (!chat) return;
+    const ids = getArchivedIds().filter(x => x !== id);
+    localStorage.setItem('axon_archived_chats', JSON.stringify(ids));
+    setArchivedChats(prev => prev.filter(c => c.id !== id));
+    setChats(prev => (prev.some(c => c.id === id) ? prev : [chat, ...prev]));
+    if (backendMode !== 'online') {
+      writeJSON('axon_archived_chats_data', readJSON<Chat[]>('axon_archived_chats_data', []).filter(c => c.id !== id));
+      writeJSON('axon_chats', [chat, ...readJSON<Chat[]>('axon_chats', []).filter(c => c.id !== id)]);
+    }
+    addLog(`Restored terminal ${chat.name}`);
   };
 
   const deleteChat = async (id: string) => {
@@ -535,13 +633,17 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
     } else {
-      // LOCAL MODE: wipe channel + its messages
-      const remaining = chats.filter(c => c.id !== id);
-      writeJSON('axon_chats', remaining);
+      // LOCAL MODE: wipe channel + its messages everywhere
+      writeJSON('axon_chats', readJSON<Chat[]>('axon_chats', []).filter(c => c.id !== id));
+      writeJSON('axon_archived_chats_data', readJSON<Chat[]>('axon_archived_chats_data', []).filter(c => c.id !== id));
       writeJSON('axon_messages', readJSON<Message[]>('axon_messages', []).filter(m => m.chat_id !== id));
     }
-    archiveChat(id);
-    if (backendMode !== 'online' && activeChat?.id === id) {
+    // Remove from every device-local list (active, archived, known, keyring)
+    const ids = getArchivedIds().filter(x => x !== id);
+    localStorage.setItem('axon_archived_chats', JSON.stringify(ids));
+    setChats(prev => prev.filter(c => c.id !== id));
+    setArchivedChats(prev => prev.filter(c => c.id !== id));
+    if (activeChat?.id === id) {
       setActiveChat(chats.find(c => c.id !== id) || null);
     }
     addLog(`Deleted terminal globally`);
@@ -674,7 +776,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             return;
           }
 
-          setMessages(prev => [...prev, completeMsg]);
+          // Dedupe: the sender already rendered this message optimistically
+          setMessages(prev => (prev.some(m => m.id === completeMsg.id) ? prev : [...prev, completeMsg]));
 
           if (newMsg.sender_id !== deviceId && !hasTextError && !hasFileError && (!newMsg.read_by || !newMsg.read_by.includes(deviceId))) {
             const newReadBy = [...(newMsg.read_by || []), deviceId];
@@ -846,10 +949,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
       if (file) {
         // Universal file upload (no accept constraints on input handled elsewhere)
-        const fileExt = file.name.split('.').pop();
+        const fileExt = (file.name.split('.').pop() || 'bin').toLowerCase();
         const fileName = `${crypto.randomUUID()}.${fileExt}`;
 
-        const { data: uploadData } = await supabase.storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
           .from('chat_files')
           .upload(fileName, file);
 
@@ -859,6 +962,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             .getPublicUrl(uploadData.path);
 
           fileUrl = encryptText(publicUrl, activeChat.share_code);
+        } else {
+          // Cloud storage unavailable (e.g. bucket not created yet): embed the
+          // attachment as an encrypted payload so files ALWAYS transmit.
+          const dataUrl = await fileToDataUrl(file);
+          if (dataUrl) {
+            fileUrl = encryptText(dataUrl, activeChat.share_code);
+            addLog(`[UPLOAD: Cloud storage unavailable (${uploadError?.message || 'unknown error'}). Attachment embedded as encrypted payload.]`);
+          } else {
+            addLog('[UPLOAD: Failed to read attachment. No payload attached.]');
+          }
         }
       }
 
@@ -893,7 +1006,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           console.error("No presence channel available to broadcast ephemeral message.");
         }
       } else {
-        await supabase.from('messages').insert({
+        const msgId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const { error } = await supabase.from('messages').insert({
+          id: msgId,
           chat_id: activeChat.id,
           sender_id: deviceId,
           text: encryptedText,
@@ -901,6 +1017,44 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           burn_on_read: true,
           reply_to_id: replyToId,
           read_by: [],
+          created_at: now,
+        });
+
+        if (error) {
+          // Cloud delivery failed (missing table / RLS / offline) - keep the payload
+          // locally so the message STILL sends instead of silently vanishing.
+          console.error('Send message error:', error);
+          const raw: Message = {
+            id: msgId,
+            chat_id: activeChat.id,
+            sender_id: deviceId,
+            text: encryptedText,
+            file_url: fileUrl,
+            burn_on_read: true,
+            reply_to_id: replyToId,
+            read_by: [],
+            created_at: now,
+          };
+          setMessages(prev => [...prev, toDisplayMessage(raw, activeChat.share_code)]);
+          writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), raw]);
+          addLog(`[MSG: Cloud delivery failed (${error.message}). Payload saved locally.]`);
+          return;
+        }
+
+        // Optimistic render - the realtime echo is deduped by id
+        setMessages(prev => {
+          if (prev.some(m => m.id === msgId)) return prev;
+          return [...prev, {
+            id: msgId,
+            chat_id: activeChat.id,
+            sender_id: deviceId,
+            text,
+            file_url: fileUrl ? decryptText(fileUrl, activeChat.share_code) : null,
+            burn_on_read: true,
+            reply_to_id: replyToId,
+            read_by: [],
+            created_at: now,
+          }];
         });
       }
 
@@ -963,10 +1117,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   return (
     <CryptoContext.Provider
       value={{
-        deviceId, alias, chats, activeChat, messages, latency,
+        deviceId, alias, chats, archivedChats, activeChat, messages, latency,
         setActiveChat, createChat, joinChat, sendMessage, purgeTerminal,
         addSystemMessage, deleteMessageLocally, updateAlias, systemLogs,
-        addLog, clearLogs, networkStatus, renameChat, archiveChat, deleteChat, changeChatPassword,
+        addLog, clearLogs, networkStatus, renameChat, archiveChat, restoreChat, deleteChat, changeChatPassword,
         onlineUsers, typingUsers, broadcastTyping, simBotActive, toggleSimBot,
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
       }}
