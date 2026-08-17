@@ -61,13 +61,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [stealthMode, setStealthMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; chatId: string } | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const copyCode = (chatId: string, code: string) => {
-    navigator.clipboard?.writeText(code).catch(() => { /* clipboard unavailable */ });
-    setCopiedId(chatId);
-    setTimeout(() => setCopiedId(null), 1500);
-  };
 
   // The mobile drawer always renders the FULL expanded sidebar;
   // the icon rail only applies on desktop (md+).
@@ -181,7 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className={`bg-[#0a0a10]/70 backdrop-blur-2xl flex flex-col select-none overflow-y-auto md:overflow-visible
+      className={`bg-[#0a0a12] flex flex-col select-none overflow-y-auto md:overflow-visible
         fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 shadow-[12px_0_32px_-20px_rgba(0,0,0,0.95)]
         md:static md:z-30 md:translate-x-0 md:border-r md:border-white/[0.05] ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
@@ -296,7 +289,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     key={chat.id}
                     onClick={() => setActiveChat(chat)}
                     onContextMenu={(e) => openContextMenu(e, chat.id)}
-                    title={`${chat.name} — passphrase: ${chat.share_code} (click code to copy) — right-click for options`}
+                    data-code={chat.share_code}
+                    title={`${chat.name}${isLocked ? ' [LOCKED]' : ''} — right-click for options`}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-all duration-150 rounded-lg border-l-2 group ${
                       isActive
                         ? 'text-cyan-300 neo-inset border-cyan-400/70'
@@ -306,14 +300,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLocked ? 'bg-amber-500/80' : 'bg-emerald-400 dot-live text-emerald-400'}`} />
                     <div className="flex flex-col min-w-0 flex-1 text-left">
                       <span className="truncate leading-tight">{chat.name}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); copyCode(chat.id, chat.share_code); }}
-                        title="Copy passphrase"
-                        className={`text-[9px] tracking-wider truncate text-left transition-colors ${copiedId === chat.id ? 'text-emerald-400' : 'text-zinc-600 hover:text-cyan-400'}`}
-                      >
-                        {copiedId === chat.id ? 'COPIED ✓' : chat.share_code}
-                      </button>
                     </div>
                     {isLocked ? <Lock className="w-3 h-3 text-amber-500/70 shrink-0" /> : <LockOpen className="w-3 h-3 text-emerald-500/70 shrink-0" />}
                     <MoreVertical className="w-3 h-3 text-zinc-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -339,13 +325,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={chat.id}
                   onClick={() => restoreChat(chat.id)}
                   onContextMenu={(e) => openContextMenu(e, chat.id)}
-                  title={`Restore ${chat.name} — passphrase: ${chat.share_code} — right-click for options`}
+                  data-code={chat.share_code}
+                  title={`Restore ${chat.name} — right-click for options`}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.03] rounded-lg border-l-2 border-transparent transition-all duration-150 group"
                 >
                   <Archive className="w-3 h-3 shrink-0 text-zinc-600" />
                   <div className="flex flex-col min-w-0 flex-1 text-left">
                     <span className="truncate leading-tight">{chat.name}</span>
-                    <span className="text-[9px] text-zinc-700 tracking-wider truncate">{chat.share_code}</span>
                   </div>
                   <span className="text-[9px] text-zinc-700 uppercase tracking-widest group-hover:text-emerald-500/80 transition-colors shrink-0">
                     Restore

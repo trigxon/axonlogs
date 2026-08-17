@@ -213,7 +213,7 @@ export const SettingsPanel: React.FC = () => {
     <div className="flex-1 flex flex-col h-full glass-panel theme-text text-[#a3a3a3] font-mono overflow-y-auto">
 
       {/* Header Sticky Bar */}
-      <div className="sticky top-0 z-10 bg-[#050507]/80 backdrop-blur-md border-b border-white/[0.06] px-4 py-4 md:px-6 md:p-6 flex justify-between items-center gap-4 hairline-gradient">
+      <div className="sticky top-0 z-10 bg-[#08080f] border-b border-white/[0.06] px-4 py-4 md:px-6 md:p-6 flex justify-between items-center gap-4 hairline-gradient">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-[0.2em] uppercase flex items-center gap-3">
             <Settings className="w-5 h-5 text-cyan-400 shrink-0" /> <span className="text-gradient">SYSTEM PREFERENCES</span>

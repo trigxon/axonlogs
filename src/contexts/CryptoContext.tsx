@@ -150,7 +150,11 @@ const toDisplayMessage = (msg: Message, key: string): Message => {
   };
 };
 
-const generateCode = () => `AXON-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+// Easy, human-rememberable channel passcode (AXON-XXXX, digits only). The
+// passcode is never rendered in the UI — it lives in the device keyring
+// (localStorage 'axon_device_keys', findable via DevTools > Application >
+// Local Storage) and on each row's data-code attribute in the DOM.
+const generateCode = () => `AXON-${Math.floor(1000 + Math.random() * 9000)}`;
 
 /* Simulated remote node (local sandbox mode only). Gives the offline preview a
  * second node so incoming transmissions, typing indicators, alerts and
@@ -334,16 +338,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   // Seeds (or preserves) the local sandbox terminal used in local/degraded mode
   const seedLocalSandbox = useCallback(() => {
+    // NOTE: no chat is auto-selected on entry — the user clicks a terminal and
+    // only then is the passcode demanded (lazy load, no data touched up front).
     const existing = readJSON<Chat[]>('axon_chats', []);
     if (existing.length > 0) {
       setChats(existing);
-      setActiveChat(existing[0]);
       return;
     }
     const seed = makeLocalChat('AXON_SANDBOX', undefined, false, 1);
     writeJSON('axon_chats', [seed]);
     setChats([seed]);
-    setActiveChat(seed);
     const welcome: Message = {
       id: crypto.randomUUID(),
       chat_id: seed.id,
@@ -372,11 +376,6 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const chat = chats.find(c => c.id === chatId);
     addLog(`Terminal ${chat?.name || 'UNKNOWN'} locked`);
   }, [chats, addLog]);
-
-  // Remember which terminal was open so a refresh re-prompts for THAT chat
-  useEffect(() => {
-    if (activeChat) localStorage.setItem('axon_active_chat_id', activeChat.id);
-  }, [activeChat?.id]);
 
   // Fetch chats on init + keep the global terminal list live-synced across devices
   useEffect(() => {
@@ -432,12 +431,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             const archived = data.filter((c: any) => archivedIds.includes(c.id));
             setChats(active);
             setArchivedChats(archived);
+            // LAZY LOAD: stay on STANDBY until the user clicks a terminal.
+            // The only exception is an explicit ?room=CODE deep link.
             const roomParam = new URLSearchParams(window.location.search).get('room');
-            const storedActive = localStorage.getItem('axon_active_chat_id');
-            const target = roomParam
-              ? active.find((c: any) => c.share_code === roomParam.trim().toUpperCase())
-              : active.find((c: any) => c.id === storedActive);
-            setActiveChat(target || active[0]);
+            if (roomParam) {
+              const target = active.find((c: any) => c.share_code === roomParam.trim().toUpperCase());
+              setActiveChat(target || null);
+            } else {
+              setActiveChat(null);
+            }
           } else {
             // No terminals exist anywhere yet - bootstrap the first one
             await createChat();
@@ -466,12 +468,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         seedLocalSandbox();
       } else {
         setChats(localChats);
+        // LAZY LOAD: stay on STANDBY until the user clicks a terminal.
+        // Only an explicit ?room=CODE deep link selects a chat.
         const roomParam = new URLSearchParams(window.location.search).get('room');
-        const storedActive = localStorage.getItem('axon_active_chat_id');
-        const target = roomParam
-          ? localChats.find(c => c.share_code === roomParam.trim().toUpperCase())
-          : localChats.find(c => c.id === storedActive);
-        setActiveChat(target || localChats[0]);
+        if (roomParam) {
+          const target = localChats.find(c => c.share_code === roomParam.trim().toUpperCase());
+          setActiveChat(target || null);
+        } else {
+          setActiveChat(null);
+        }
       }
     }
   }, [deviceId, backendMode, seedLocalSandbox]);

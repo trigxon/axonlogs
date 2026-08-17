@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -23,7 +23,8 @@
     --accent: #22d3ee; /* Cyan */
     --accent-hover: #06b6d4;
     
-    --font-mono: 'Fira Code', monospace;
+    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: 'Space Grotesk', 'JetBrains Mono', ui-sans-serif, system-ui, sans-serif;
 
     /* Dynamic UI Theme Settings */
     --ui-text-size: 14px;
@@ -100,19 +101,16 @@
     background-image: linear-gradient(100deg, #34d399 0%, #e2e8f0 55%, #22d3ee 100%);
   }
 
-  /* Glass panel: translucent surface with an inner top highlight */
+  /* Glass panel: premium surface (solid tones — no backdrop-filter so it runs
+     smooth on devices without GPU acceleration) */
   .glass {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 100%);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
   }
 
   .glass-deep {
-    background: linear-gradient(180deg, rgba(13, 13, 20, 0.92) 0%, rgba(8, 8, 12, 0.96) 100%);
+    background: linear-gradient(180deg, rgba(13, 13, 20, 0.97) 0%, rgba(8, 8, 12, 0.99) 100%);
     border: 1px solid rgba(255, 255, 255, 0.09);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
   }
 
   /* Soft glow shadows */
@@ -244,14 +242,13 @@
       radial-gradient(ellipse 45% 35% at 0% 100%, rgba(251, 191, 36, 0.05), transparent 60%);
   }
 
-  /* Slow-drifting color orb (sits behind translucent panels) */
+  /* Static color bloom (no animation, no blur filter — zero GPU cost so it
+     stays smooth on integrated-graphics / legacy laptops) */
   .aurora-orb {
     position: absolute;
     border-radius: 9999px;
-    filter: blur(80px);
+    background: radial-gradient(circle at center, currentColor 0%, transparent 68%);
     pointer-events: none;
-    animation: aurora-drift 22s ease-in-out infinite alternate;
-    will-change: transform;
   }
 
   /* ---- Dynamic theme settings (Settings > Interface Styling) ----
@@ -283,11 +280,9 @@
     background: radial-gradient(ellipse 90% 85% at 50% 45%, transparent 50%, rgba(0, 0, 0, 0.55) 100%);
   }
 
-  /* Frosted translucent panel: lets the ambient background glow through */
+  /* Solid premium panel (no backdrop-filter — GPU-cheap, legacy-safe) */
   .glass-panel {
-    background: rgba(6, 6, 11, 0.58);
-    backdrop-filter: blur(24px) saturate(1.25);
-    -webkit-backdrop-filter: blur(24px) saturate(1.25);
+    background: rgba(7, 7, 13, 0.94);
   }
 
   /* Lux card: gradient top-light, hairline border, deep drop shadow */
@@ -326,6 +321,11 @@
     animation: axon-flicker 9s infinite;
   }
 
+  /* Premium display font for headlines / chrome */
+  .font-display {
+    font-family: var(--font-display);
+  }
+
   /* Terminal block caret for the composer (falls back to a line caret) */
   .axon-caret {
     caret-color: #22d3ee;
@@ -341,12 +341,6 @@
   }
 }
 
-@keyframes aurora-drift {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  50%  { transform: translate3d(4vw, 3vh, 0) scale(1.12); }
-  100% { transform: translate3d(-3vw, -2vh, 0) scale(0.94); }
-}
-
 @keyframes axon-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -359,4 +353,14 @@
   94% { opacity: 1; }
   97% { opacity: 0.985; }
   98% { opacity: 1; }
+}
+
+/* Legacy / no-GPU friendly: kill all animation on devices that ask for less
+   motion, and keep the UI responsive on low-spec hardware. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
 }
