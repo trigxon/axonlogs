@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Cloud, CloudOff, Menu } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu } from 'lucide-react';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import * as webllm from '@mlc-ai/web-llm';
 import ReactMarkdown from 'react-markdown';
@@ -109,7 +109,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat, settings } = useCrypto();
   const chatLocked = !!activeChat && unlockedChatId !== activeChat.id;
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
@@ -119,6 +119,15 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
 
   const [showVideoTunnel, setShowVideoTunnel] = useState(false);
+
+  // Stealth mode: obfuscate the feed while the tab is hidden
+  const [tabHidden, setTabHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
+  const stealthActive = settings.stealthMode && tabHidden;
+  useEffect(() => {
+    const onVisibility = () => setTabHidden(document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   const [isIdleLocked, setIsIdleLocked] = useState(false);
   const idleTimeoutRef = useRef<any>(null);
@@ -155,6 +164,13 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [lockoutUntil, setLockoutUntil] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const [showDeviceKey, setShowDeviceKey] = useState(false);
+
+  // Live UTC clock for the title bar / status bar
+  const [liveNow, setLiveNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setLiveNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -264,7 +280,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
     const cmd = input.trim();
     const lowerCmd = cmd.toLowerCase();
-    const file = selectedFile;
+    const file = settings.allowFiles ? selectedFile : null;
     
     setInput('');
     setSelectedFile(null);
@@ -612,8 +628,13 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
   if (isIdleLocked) {
     return (
-      <div className="h-app w-full bg-[#050505] text-[#a3a3a3] flex flex-col items-center justify-center font-mono relative overflow-hidden backdrop-blur-3xl">
-        <div className="absolute inset-0 bg-black/60 z-10"></div>
+      <div className="h-app w-full premium-bg text-[#a3a3a3] flex flex-col items-center justify-center font-mono relative overflow-hidden">
+        <div className="aurora-orb w-[50vw] h-[50vw] -top-[15vw] -left-[12vw] bg-cyan-500/22" />
+        <div className="aurora-orb w-[40vw] h-[40vw] -bottom-[12vw] -right-[8vw] bg-emerald-500/18" style={{ animationDelay: '-10s' }} />
+        <div className="aurora-orb w-[28vw] h-[28vw] top-[40%] left-[55%] bg-violet-500/14" style={{ animationDelay: '-16s' }} />
+        <div className="absolute inset-0 grid-overlay" />
+        <div className="absolute inset-0 vignette" />
+        <div className="absolute inset-0 bg-black/50 z-10"></div>
         <div className="z-20 flex flex-col items-center">
           <Lock className="w-16 h-16 text-cyan-500 mb-6" />
           <h1 className="text-2xl font-bold tracking-widest text-cyan-400 mb-4 uppercase">BIOMETRIC LOCK ENGAGED</h1>
@@ -633,15 +654,16 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   }
 
   return (
-    <div className={`flex h-app w-full bg-gradient-to-br from-[#06060a] via-[#050506] to-[#040408] text-[#a3a3a3] font-mono overflow-hidden relative scanlines ${isIdleLocked ? 'blur-xl' : ''}`}>
-      
-      {/* WATERMARK */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.02] flex flex-wrap gap-4 z-50 select-none items-center justify-center">
-        {Array.from({length: 150}).map((_, i) => (
-          <span key={i} className="text-white text-xs font-mono font-bold whitespace-nowrap">
-            {deviceId}::{alias}
-          </span>
-        ))}
+    <div className={`flex h-app w-full premium-bg text-[#a3a3a3] font-mono overflow-hidden relative scanlines ${isIdleLocked ? 'blur-xl' : ''}`}>
+
+      {/* PREMIUM AMBIENT BACKGROUND (orbs + grid + vignette) */}
+      <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden>
+        <div className="aurora-orb w-[52vw] h-[52vw] -top-[18vw] -left-[16vw] bg-cyan-500/25" />
+        <div className="aurora-orb w-[44vw] h-[44vw] -bottom-[16vw] -right-[12vw] bg-emerald-500/20" style={{ animationDelay: '-8s' }} />
+        <div className="aurora-orb w-[36vw] h-[36vw] top-[22%] left-[40%] bg-violet-500/16" style={{ animationDelay: '-14s' }} />
+        <div className="aurora-orb w-[26vw] h-[26vw] top-[55%] left-[8%] bg-amber-500/10" style={{ animationDelay: '-4s' }} />
+        <div className="absolute inset-0 grid-overlay" />
+        <div className="absolute inset-0 vignette" />
       </div>
 
       {/* MOBILE SIDEBAR OVERLAY */}
@@ -649,27 +671,94 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         <div className="fixed inset-0 bg-black/70 z-40 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
       )}
 
-      {/* COLLAPSIBLE NAVIGATION SIDEBAR (drawer on mobile, rail on desktop) */}
-      <Sidebar
-        activeView={activeView}
-        setActiveView={setActiveView}
-        isCollapsed={isSidebarCollapsed}
-        setIsCollapsed={setIsSidebarCollapsed}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        onCreateTunnel={openCreateModal}
-        onRenameChat={handleRenameRequest}
-        onChangePassword={handlePasswordRequest}
-        mobileOpen={mobileSidebarOpen}
-        onMobileClose={() => setMobileSidebarOpen(false)}
-      />
+      {/* ── FULL TERMINAL WINDOW ── */}
+      <div className="relative z-10 flex-1 flex flex-col min-h-0 p-0 md:p-3 lg:p-4">
+        <div className="term-window crt-flicker flex flex-col flex-1 min-h-0 md:rounded-2xl overflow-hidden">
 
-      {/* MAIN VIEW CONTAINER */}
-      <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
+          {/* TITLE BAR (traffic lights + session + live clock) */}
+          <div className="h-9 shrink-0 flex items-center gap-3 px-3 md:px-4 border-b border-white/[0.06] bg-[#08080d]/90 backdrop-blur-md select-none">
+            <div className="flex items-center gap-2 shrink-0" aria-hidden>
+              <span className="tl tl-red" />
+              <span className="tl tl-amber" />
+              <span className="tl tl-green" />
+            </div>
+            <div className="flex-1 min-w-0 text-center">
+              <span className="text-[10px] font-bold tracking-[0.3em] uppercase truncate block">
+                <span className="text-gradient">Axon Logs</span>
+                <span className="text-zinc-600 hidden sm:inline"> — secure terminal</span>
+                <span className="text-emerald-500/70 hidden lg:inline"> // axon@axonlogs:~/secure</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 text-[9px] md:text-[10px] font-bold tracking-widest uppercase text-zinc-500 tabular-nums">
+              <span className="hidden sm:inline text-cyan-500/90">NODE: {deviceId.substring(0, 8)}</span>
+              <span className="text-emerald-500/90">{liveNow.toISOString().slice(11, 19)} UTC</span>
+            </div>
+          </div>
+
+          {/* TERMINAL TAB STRIP (one tab per active terminal) */}
+          <div className="h-9 md:h-10 shrink-0 flex items-stretch bg-[#06060a]/80 border-b border-white/[0.06] overflow-x-auto no-scrollbar">
+            {chats.map(chat => {
+              const isTabActive = activeChat?.id === chat.id;
+              const isTabLocked = unlockedChatId !== chat.id;
+              return (
+                <button
+                  key={chat.id}
+                  onClick={() => setActiveChat(chat)}
+                  title={`${chat.name}${isTabLocked ? ' [LOCKED]' : ''} — passphrase: ${chat.share_code}`}
+                  className={`group relative flex items-center gap-2 px-3 md:px-4 min-w-0 shrink-0 border-r border-white/[0.04] transition-all ${
+                    isTabActive ? 'bg-[#0b0f16] text-cyan-300' : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.03]'
+                  }`}
+                >
+                  {isTabActive && (
+                    <span className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-400 via-emerald-400 to-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
+                  )}
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isTabLocked ? 'bg-amber-400/80' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]'}`} />
+                  <span className="text-[10px] font-bold tracking-wider uppercase truncate max-w-[7rem] md:max-w-[11rem]">{chat.name}</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={openCreateModal}
+              title="New terminal"
+              className="px-3 md:px-4 shrink-0 flex items-center text-zinc-500 hover:text-cyan-300 hover:bg-cyan-400/10 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <div className="flex-1" />
+            {activeView !== 'dashboard' && (
+              <button
+                onClick={() => setActiveView('dashboard')}
+                className="hidden sm:flex items-center px-4 text-[9px] font-bold tracking-widest uppercase text-zinc-500 hover:text-cyan-300 shrink-0 border-l border-white/[0.04] transition-colors"
+              >
+                ◂ Dashboard
+              </button>
+            )}
+          </div>
+
+          {/* BODY: sidebar + active view */}
+          <div className="flex flex-1 min-h-0">
+
+          {/* COLLAPSIBLE NAVIGATION SIDEBAR (drawer on mobile, rail on desktop) */}
+          <Sidebar
+            activeView={activeView}
+            setActiveView={setActiveView}
+            isCollapsed={isSidebarCollapsed}
+            setIsCollapsed={setIsSidebarCollapsed}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onCreateTunnel={openCreateModal}
+            onRenameChat={handleRenameRequest}
+            onChangePassword={handlePasswordRequest}
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
+          />
+
+          {/* MAIN VIEW CONTAINER */}
+          <div className="flex-1 flex min-w-0 h-full overflow-hidden relative">
         {activeView === 'dashboard' && (
-          <main className="flex-1 flex flex-col min-w-0 bg-[#050505]">
+          <main className="flex-1 flex flex-col min-w-0 glass-panel border-l border-white/[0.04]">
               {/* Top Header */}
-              <header className="h-14 border-b border-white/[0.06] bg-[#07070c]/70 backdrop-blur-md flex items-center justify-between px-4 md:px-8 gap-3 shrink-0 hairline-gradient">
+              <header className="h-12 border-b border-white/[0.05] bg-[#07070c]/60 backdrop-blur-md flex items-center justify-between px-4 md:px-8 gap-3 shrink-0">
                 <div className="flex items-center gap-3 md:gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden min-w-0">
                   <button
                     onClick={() => setMobileSidebarOpen(true)}
@@ -681,27 +770,12 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   <button onClick={() => setActiveView('settings')} className="text-zinc-300 hover:text-cyan-400 cursor-pointer transition-colors truncate">
                     ALIAS: {alias}
                   </button>
+                  {activeChat && !chatLocked && (
+                    <span className="hidden md:inline text-zinc-600 truncate">// {activeChat.name}</span>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
-                  {latency > 0 && (
-                    <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden sm:flex">
-                      LATENCY: {latency}MS
-                    </div>
-                  )}
-                  <div className={`border px-3 py-1 items-center gap-2 hidden md:flex ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'border-emerald-500/30 text-emerald-500' : 'border-red-500/30 text-red-500'}`}>
-                    NETWORK: {networkStatus}
-                  </div>
-                  {networkStatus === 'ONLINE' && (
-                    <div className="border border-emerald-500/30 text-emerald-500 px-3 py-1 items-center gap-2 hidden lg:flex">
-                      <Cloud className="w-3 h-3" /> GLOBAL SYNC
-                    </div>
-                  )}
-                  {networkStatus === 'LOCAL' && (
-                    <div className="border border-amber-500/30 text-amber-500 px-3 py-1 items-center gap-2 hidden lg:flex">
-                      <CloudOff className="w-3 h-3" /> DEVICE-ONLY
-                    </div>
-                  )}
+                <div className="flex items-center gap-2 md:gap-3 text-[10px] uppercase tracking-widest font-bold shrink-0">
                   {activeChat && networkStatus === 'LOCAL' && (
                     <button 
                       onClick={() => toggleSimBot()}
@@ -796,7 +870,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               {/* Chat Feed */}
               <div 
                 ref={feedRef} 
-                className="flex-1 overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative"
+                className={`flex-1 overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative transition-all duration-500 ${stealthActive ? 'blur-xl opacity-30 select-none pointer-events-none' : ''}`}
                 style={{
                   backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
                   backgroundRepeat: 'repeat'
@@ -804,6 +878,13 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               >
                 {showVideoTunnel && activeChat && (
                   <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
+                )}
+
+                {stealthActive && (
+                  <div className="sticky top-2 z-20 mx-auto w-max px-4 py-1.5 rounded-full border border-blue-500/40 bg-blue-950/70 backdrop-blur-md text-[10px] font-bold tracking-[0.25em] uppercase text-blue-400 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    Stealth Mode Active
+                  </div>
                 )}
 
                 {!activeChat ? (
@@ -838,7 +919,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <div 
                         key={msg.id} 
                         id={`msg-${msg.id}`}
-                        className={`flex flex-col w-full max-w-3xl border p-4 relative group rounded-lg transition-shadow duration-200 ${
+                        className={`flex flex-col w-full max-w-3xl border theme-pad relative group theme-radius transition-shadow duration-200 ${
                           isSelf 
                             ? 'ml-auto border-cyan-400/40 bg-gradient-to-br from-cyan-500/[0.09] via-cyan-500/[0.02] to-transparent shadow-[0_0_28px_-14px_rgba(34,211,238,0.5)] hover:shadow-[0_0_32px_-12px_rgba(34,211,238,0.65)]' 
                             : 'border-white/[0.07] border-l-2 border-l-emerald-500/60 bg-gradient-to-br from-emerald-500/[0.05] via-transparent to-transparent shadow-[0_0_28px_-16px_rgba(52,211,153,0.35)] hover:shadow-[0_0_32px_-14px_rgba(52,211,153,0.55)]'
@@ -888,7 +969,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                           </div>
                         )}
 
-                        <div className="text-sm font-mono text-zinc-200 leading-relaxed">
+                        <div className="theme-text font-mono text-zinc-200 leading-relaxed">
                           {msg.text.startsWith('data:audio/') ? (
                             <audio controls src={msg.text} className="w-full max-w-sm h-9" />
                           ) : (
@@ -919,14 +1000,23 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
               {/* Footer Input Bar */}
               {activeChat && !chatLocked && (
-                <footer className="px-4 md:px-8 py-4 border-t border-white/[0.06] bg-[#07070c]/75 backdrop-blur-md shrink-0">
-                  <form onSubmit={handleSubmit} className="flex items-center gap-3">
+                <footer className="px-4 md:px-8 py-2.5 md:py-3 border-t border-white/[0.06] bg-[#06060a]/85 backdrop-blur-md shrink-0">
+                  <form onSubmit={handleSubmit} className="flex items-center gap-2 md:gap-3">
+                    {/* Shell prompt */}
+                    <span className="text-[11px] md:text-xs font-bold shrink-0 select-none whitespace-nowrap" aria-hidden>
+                      <span className="text-emerald-400">axon</span>
+                      <span className="text-zinc-600">@</span>
+                      <span className="text-cyan-400">node</span>
+                      <span className="text-zinc-600">:</span>
+                      <span className="text-cyan-300">~</span>
+                      <span className="text-emerald-400">$</span>
+                    </span>
                     <input 
                       type="text" 
                       value={input}
                       onChange={handleInputChange}
-                      placeholder="Type a transmission... (or /help for commands)"
-                      className="flex-1 min-w-0 neo-inset border border-white/[0.05] focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/40 px-4 py-2.5 rounded-lg text-sm text-white outline-none font-mono placeholder:text-zinc-500 placeholder:normal-case transition-all"
+                      placeholder="type a transmission... (or /help for commands)"
+                      className="axon-caret flex-1 min-w-0 bg-transparent outline-none theme-text text-white font-mono placeholder:text-zinc-600 placeholder:normal-case py-2.5"
                     />
 
                     <input 
@@ -937,22 +1027,26 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                         if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
                       }}
                     />
-                    <button 
-                      type="button" 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-2 text-zinc-500 hover:text-emerald-400 transition-colors shrink-0"
-                    >
-                      <Paperclip className="w-4 h-4" />
-                    </button>
+                    {settings.allowFiles && (
+                      <button 
+                        type="button" 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-2 text-zinc-500 hover:text-emerald-400 transition-colors shrink-0"
+                      >
+                        <Paperclip className="w-4 h-4" />
+                      </button>
+                    )}
                     
-                    <VoiceRecorder 
-                      onRecordingComplete={(base64Audio) => {
-                        if (activeChat && base64Audio) {
-                          sendMessage(base64Audio, null, replyToId);
-                          setReplyToId(null);
-                        }
-                      }} 
-                    />
+                    {settings.allowVoice && (
+                      <VoiceRecorder 
+                        onRecordingComplete={(base64Audio) => {
+                          if (activeChat && base64Audio) {
+                            sendMessage(base64Audio, null, replyToId);
+                            setReplyToId(null);
+                          }
+                        }} 
+                      />
+                    )}
                     
                     <button 
                       type="submit"
@@ -979,12 +1073,34 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         {activeView === 'logs' && (
           <LogsView />
         )}
+          </div>
+          </div>
+
+          {/* ── STATUS BAR (tmux-style) ── */}
+          <div className="h-7 md:h-8 shrink-0 border-t border-white/[0.06] bg-[#06060a]/95 backdrop-blur-md flex items-center gap-2.5 md:gap-4 px-3 md:px-4 text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none">
+            <span className={`flex items-center gap-1.5 shrink-0 ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full dot-live ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`} />
+              {networkStatus === 'ONLINE' ? 'GLOBAL SYNC' : networkStatus === 'LOCAL' ? 'DEVICE-ONLY' : (networkStatus || 'OFFLINE')}
+            </span>
+            {activeChat && (
+              <span className="text-zinc-400 truncate min-w-0 hidden md:inline">TERM: {activeChat.name}</span>
+            )}
+            {Object.keys(typingUsers).length > 0 && (
+              <span className="text-amber-400 animate-pulse truncate hidden md:inline">◉ {Object.values(typingUsers).join(', ')} TYPING…</span>
+            )}
+            <div className="flex-1" />
+            {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">LAT: {latency}MS</span>}
+            <span className="text-zinc-500">TERMS: {chats.length}</span>
+            <span className="text-cyan-500/90 hidden sm:inline">NODE: {deviceId.substring(0, 8)}</span>
+            <span className="text-emerald-500/90 tabular-nums">{liveNow.toISOString().slice(11, 19)} UTC</span>
+          </div>
+        </div>
       </div>
 
       {/* MODALS & OVERLAYS */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
+          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1049,7 +1165,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-cyan-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
+          <div className="neo-raised border-cyan-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-cyan-500" />
             <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1081,7 +1197,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-red-500/45 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
+          <div className="neo-raised border-red-500/45 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
             <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1116,7 +1232,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showUnlockModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative rounded-xl overflow-hidden">
+          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />

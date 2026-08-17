@@ -266,7 +266,7 @@ All requested instructions have been executed locally within your sandbox. Addit
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
+    <div className="flex-1 flex flex-col h-full glass-panel theme-text text-[#a3a3a3] font-mono overflow-hidden">
       {/* HEADER BAR */}
       <header className="h-16 border-b border-zinc-800/80 bg-[#08080c] px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -306,7 +306,7 @@ All requested instructions have been executed locally within your sandbox. Addit
       </header>
 
       {/* MAIN CONTENT FEED AREA */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#050505]">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* SUGGESTION CARDS GRID (shown when message count is small or initial) */}
         {messages.length <= 2 && (
           <div className="mb-6">

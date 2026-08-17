@@ -231,9 +231,132 @@
     box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.55), inset -4px -4px 10px rgba(255, 255, 255, 0.03),
       0 0 22px -8px rgba(34, 211, 238, 0.45);
   }
+
+  /* ---- Premium ambient background system ---- */
+
+  /* Deep base with faint color washes (cyan / emerald / violet / amber) */
+  .premium-bg {
+    background-color: #040409;
+    background-image:
+      radial-gradient(ellipse 90% 60% at 15% -10%, rgba(34, 211, 238, 0.10), transparent 62%),
+      radial-gradient(ellipse 80% 55% at 105% 115%, rgba(52, 211, 153, 0.09), transparent 62%),
+      radial-gradient(ellipse 55% 45% at 85% 15%, rgba(139, 92, 246, 0.08), transparent 60%),
+      radial-gradient(ellipse 45% 35% at 0% 100%, rgba(251, 191, 36, 0.05), transparent 60%);
+  }
+
+  /* Slow-drifting color orb (sits behind translucent panels) */
+  .aurora-orb {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(80px);
+    pointer-events: none;
+    animation: aurora-drift 22s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  /* ---- Dynamic theme settings (Settings > Interface Styling) ----
+     These bind the --ui-* variables so the controls visibly change UI. */
+  .theme-text {
+    font-size: var(--ui-text-size);
+  }
+
+  .theme-pad {
+    padding: var(--ui-card-padding);
+  }
+
+  .theme-radius {
+    border-radius: var(--ui-border-radius);
+  }
+
+  /* Faint technical grid, faded toward the edges */
+  .grid-overlay {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, black 30%, transparent 78%);
+    mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, black 30%, transparent 78%);
+  }
+
+  /* Edge vignette for cinematic depth */
+  .vignette {
+    background: radial-gradient(ellipse 90% 85% at 50% 45%, transparent 50%, rgba(0, 0, 0, 0.55) 100%);
+  }
+
+  /* Frosted translucent panel: lets the ambient background glow through */
+  .glass-panel {
+    background: rgba(6, 6, 11, 0.58);
+    backdrop-filter: blur(24px) saturate(1.25);
+    -webkit-backdrop-filter: blur(24px) saturate(1.25);
+  }
+
+  /* Lux card: gradient top-light, hairline border, deep drop shadow */
+  .card-lux {
+    position: relative;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015) 40%, transparent);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  /* ---- Full terminal window chrome ---- */
+
+  /* The whole app lives inside a framed terminal window */
+  .term-window {
+    background: linear-gradient(180deg, rgba(9, 9, 15, 0.92) 0%, rgba(4, 4, 8, 0.97) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.55),
+      0 30px 90px -30px rgba(0, 0, 0, 0.95),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* macOS-style traffic lights */
+  .tl {
+    width: 11px;
+    height: 11px;
+    border-radius: 9999px;
+    display: inline-block;
+  }
+  .tl-red   { background: #ff5f57; box-shadow: 0 0 8px rgba(255, 95, 87, 0.55); }
+  .tl-amber { background: #febc2e; box-shadow: 0 0 8px rgba(254, 188, 46, 0.5); }
+  .tl-green { background: #28c840; box-shadow: 0 0 8px rgba(40, 200, 64, 0.5); }
+
+  /* Subtle CRT phosphor flicker for the whole window */
+  .crt-flicker {
+    animation: axon-flicker 9s infinite;
+  }
+
+  /* Terminal block caret for the composer (falls back to a line caret) */
+  .axon-caret {
+    caret-color: #22d3ee;
+    caret-shape: block;
+  }
+
+  /* Hide scrollbars on horizontal chrome strips (tab bar) */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(4vw, 3vh, 0) scale(1.12); }
+  100% { transform: translate3d(-3vw, -2vh, 0) scale(0.94); }
 }
 
 @keyframes axon-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+
+@keyframes axon-flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.97; }
+  94% { opacity: 1; }
+  97% { opacity: 0.985; }
+  98% { opacity: 1; }
 }

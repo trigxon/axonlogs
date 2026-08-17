@@ -18,7 +18,7 @@ export const LogsView: React.FC = () => {
   );
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-hidden">
+    <div className="flex-1 flex flex-col h-full glass-panel theme-text text-[#a3a3a3] font-mono overflow-hidden">
       {/* Header */}
       <header className="h-16 border-b border-white/[0.06] bg-[#07070c]/70 backdrop-blur-md px-4 md:px-6 flex items-center justify-between gap-3 shrink-0 hairline-gradient">
         <div className="flex items-center gap-3">
@@ -76,7 +76,7 @@ export const LogsView: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="relative border border-white/[0.07] bg-[#08080d] rounded-xl overflow-hidden divide-y divide-white/[0.05] shadow-sm">
+          <div className="relative card-lux rounded-xl overflow-hidden divide-y divide-white/[0.05]">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             {filtered.map((log, idx) => (
               <div key={log.id || idx} className="flex items-start gap-3 pl-6 pr-4 py-2.5 hover:bg-white/[0.02] transition-colors">

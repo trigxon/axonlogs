@@ -28,6 +28,35 @@ export interface SystemLog {
   msg: string;
 }
 
+export interface AppSettings {
+  /** Auto-delete (burn-on-read) master switch */
+  burnOnRead: boolean;
+  /** Seconds after which burn-on-read payloads auto-destruct */
+  burnDelaySeconds: number;
+  /** Allow file/photo attachments in transmissions */
+  allowFiles: boolean;
+  /** Allow voice memo recording in the composer */
+  allowVoice: boolean;
+  /** Obfuscate the terminal feed while the tab is hidden */
+  stealthMode: boolean;
+}
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  burnOnRead: true,
+  burnDelaySeconds: 10,
+  allowFiles: true,
+  allowVoice: true,
+  stealthMode: false,
+};
+
+export const BURN_DELAY_OPTIONS: { value: number; label: string }[] = [
+  { value: 10, label: '10S' },
+  { value: 30, label: '30S' },
+  { value: 60, label: '1M' },
+  { value: 300, label: '5M' },
+  { value: 3600, label: '1H' },
+];
+
 interface CryptoContextType {
   deviceId: string;
   alias: string;
@@ -63,6 +92,8 @@ interface CryptoContextType {
   unlockedChatId: string | null;
   unlockChat: (chatId: string, code: string) => boolean;
   lockChat: (chatId: string) => void;
+  settings: AppSettings;
+  updateSettings: (patch: Partial<AppSettings>) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -230,6 +261,22 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const destructTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // Persisted behavior settings (burn timer, attachments, voice, stealth).
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const stored = readJSON<Partial<AppSettings>>('axon_app_settings', {});
+    return { ...DEFAULT_APP_SETTINGS, ...stored };
+  });
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
+    setSettings(prev => {
+      const next = { ...prev, ...patch };
+      writeJSON('axon_app_settings', next);
+      return next;
+    });
+  }, []);
+
   const addLog = useCallback((msg: string) => {
     setSystemLogs(prev => [{ id: crypto.randomUUID(), time: new Date().toISOString(), msg }, ...prev]);
   }, []);
@@ -238,15 +285,31 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setSystemLogs([]);
   }, []);
 
-  // Arms the 10s burn-on-read auto-destruct for a payload (local mode only)
+  // Arms the burn-on-read auto-destruct for a payload (local mode only).
+  // The delay is user-configurable from Settings (default 10s).
   const scheduleDestruct = useCallback((m: Message) => {
-    if (!m.burn_on_read || m.sender_id === 'SYSTEM') return;
+    if (!settingsRef.current.burnOnRead || !m.burn_on_read || m.sender_id === 'SYSTEM') return;
+    const delay = Math.max(settingsRef.current.burnDelaySeconds, 1) * 1000;
     const timer = setTimeout(() => {
       setMessages(prev => prev.filter(x => x.id !== m.id));
       writeJSON('axon_messages', readJSON<Message[]>('axon_messages', []).filter(x => x.id !== m.id));
-      addLog(`[BURN: Payload destroyed after 10s timer (${m.id.slice(0, 6)}...)]`);
-    }, 10000);
+      addLog(`[BURN: Payload destroyed after ${settingsRef.current.burnDelaySeconds}s timer (${m.id.slice(0, 6)}...)]`);
+    }, delay);
     destructTimersRef.current.push(timer);
+  }, [addLog]);
+
+  // Arms a timed cloud-wide destruct for another node's burn-on-read payload
+  // (online mode). Not tracked in destructTimersRef so the burn survives
+  // navigation, matching the configured auto-delete window.
+  const scheduleCloudDestruct = useCallback((m: Message) => {
+    if (!supabase || !settingsRef.current.burnOnRead) return;
+    const delay = Math.max(settingsRef.current.burnDelaySeconds, 1) * 1000;
+    setTimeout(() => {
+      supabase!.from('messages').delete().eq('id', m.id).then(() => {
+        setMessages(prev => prev.filter(x => x.id !== m.id));
+      });
+      addLog(`[BURN: Payload destroyed after ${settingsRef.current.burnDelaySeconds}s timer (${m.id.slice(0, 6)}...)]`);
+    }, delay);
   }, [addLog]);
 
   // Initialize identity
@@ -723,10 +786,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             }
           });
 
-          // Delete burn-on-read messages that aren't ours
+          // Burn-on-read: schedule timed cloud-wide destruct for other nodes' payloads
           data.forEach(msg => {
             if (msg.burn_on_read && msg.sender_id !== deviceId) {
-              supabase!.from('messages').delete().eq('id', msg.id).then();
+              scheduleCloudDestruct(msg);
             }
           });
         }
@@ -785,7 +848,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           }
 
           if (newMsg.burn_on_read && newMsg.sender_id !== deviceId) {
-            supabase!.from('messages').delete().eq('id', newMsg.id).then();
+            scheduleCloudDestruct(newMsg);
           }
         })
         .on('presence', { event: 'sync' }, () => {
@@ -924,8 +987,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       }, 1400);
     };
 
-    const first = setTimeout(() => deliver(Math.random() < 0.5), 3000);
-    const interval = setInterval(() => deliver(Math.random() < 0.4), 15000);
+    const burnEnabled = settingsRef.current.burnOnRead;
+    const first = setTimeout(() => deliver(burnEnabled && Math.random() < 0.5), 3000);
+    const interval = setInterval(() => deliver(burnEnabled && Math.random() < 0.4), 15000);
 
     return () => {
       alive = false;
@@ -947,7 +1011,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const encryptedText = encryptText(text, activeChat.share_code);
       let fileUrl = null;
 
-      if (file) {
+      if (settingsRef.current.allowFiles && file) {
         // Universal file upload (no accept constraints on input handled elsewhere)
         const fileExt = (file.name.split('.').pop() || 'bin').toLowerCase();
         const fileName = `${crypto.randomUUID()}.${fileExt}`;
@@ -1014,7 +1078,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           sender_id: deviceId,
           text: encryptedText,
           file_url: fileUrl,
-          burn_on_read: true,
+          burn_on_read: settingsRef.current.burnOnRead,
           reply_to_id: replyToId,
           read_by: [],
           created_at: now,
@@ -1030,7 +1094,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             sender_id: deviceId,
             text: encryptedText,
             file_url: fileUrl,
-            burn_on_read: true,
+            burn_on_read: settingsRef.current.burnOnRead,
             reply_to_id: replyToId,
             read_by: [],
             created_at: now,
@@ -1066,7 +1130,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const encryptedText = encryptText(text, activeChat.share_code);
     let fileUrl: string | null = null;
 
-    if (file) {
+    if (settingsRef.current.allowFiles && file) {
       const dataUrl = await fileToDataUrl(file);
       if (dataUrl) fileUrl = encryptText(dataUrl, activeChat.share_code);
     }
@@ -1077,7 +1141,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       sender_id: deviceId,
       text: encryptedText,
       file_url: fileUrl,
-      burn_on_read: true,
+      burn_on_read: settingsRef.current.burnOnRead,
       reply_to_id: replyToId,
       read_by: [],
       created_at: new Date().toISOString(),
@@ -1123,6 +1187,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         addLog, clearLogs, networkStatus, renameChat, archiveChat, restoreChat, deleteChat, changeChatPassword,
         onlineUsers, typingUsers, broadcastTyping, simBotActive, toggleSimBot,
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
+        settings, updateSettings,
       }}
     >
       {children}

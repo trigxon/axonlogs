@@ -16,9 +16,11 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  Flame,
+  Timer,
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useCrypto } from '../../contexts/CryptoContext';
+import { useCrypto, BURN_DELAY_OPTIONS } from '../../contexts/CryptoContext';
 import {
   exportAppData,
   exportPdfData,
@@ -26,12 +28,14 @@ import {
   resetAllLocalData,
 } from '../../utils/dataManager';
 
+const burnLabel = (seconds: number) =>
+  seconds >= 3600 ? `${Math.round(seconds / 3600)}H` : seconds >= 60 ? `${Math.round(seconds / 60)}M` : `${seconds}S`;
+
 export const SettingsPanel: React.FC = () => {
   const { textSize, cardPadding, borderRadius, setTextSize, setCardPadding, setBorderRadius } = useTheme();
-  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud } = useCrypto();
+  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings } = useCrypto();
 
   const [aliasInput, setAliasInput] = useState(alias);
-  const [stealthMode, setStealthMode] = useState(false);
   const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
   const [syncing, setSyncing] = useState(false);
 
@@ -175,7 +179,7 @@ export const SettingsPanel: React.FC = () => {
         className={`w-full flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 md:px-5 py-4 border-b border-zinc-800/50 last:border-0 ${isButton ? 'hover:bg-white/[0.02] transition-colors text-left cursor-pointer' : ''}`}
       >
         <div className="pr-4 min-w-0 flex-1">
-          <div className="text-sm font-semibold text-zinc-100 tracking-wide truncate">{title}</div>
+          <div className="theme-text font-semibold text-zinc-100 tracking-wide truncate">{title}</div>
           <div className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed uppercase tracking-wider">{desc}</div>
         </div>
         <div className="shrink-0 flex items-center justify-end">
@@ -206,7 +210,7 @@ export const SettingsPanel: React.FC = () => {
   const syncOnline = backendMode === 'online';
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#050505] text-[#a3a3a3] font-mono overflow-y-auto">
+    <div className="flex-1 flex flex-col h-full glass-panel theme-text text-[#a3a3a3] font-mono overflow-y-auto">
 
       {/* Header Sticky Bar */}
       <div className="sticky top-0 z-10 bg-[#050507]/80 backdrop-blur-md border-b border-white/[0.06] px-4 py-4 md:px-6 md:p-6 flex justify-between items-center gap-4 hairline-gradient">
@@ -285,9 +289,14 @@ export const SettingsPanel: React.FC = () => {
 
         {/* SECURITY & PRIVACY */}
         <SectionCard icon={ShieldAlert} title="Privacy & Mitigation" accent="bg-blue-500">
-          <SettingRow title="Stealth Mode" desc="Blur terminal feed on idle/hover state">
-            <button onClick={() => setStealthMode(!stealthMode)}>
-              {stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+          <SettingRow title="Stealth Mode" desc="Blur the terminal feed while the tab is hidden">
+            <button
+              onClick={() => {
+                updateSettings({ stealthMode: !settings.stealthMode });
+                addLog(settings.stealthMode ? 'Stealth mode disabled' : 'Stealth mode enabled (feed obfuscated on tab hide)');
+              }}
+            >
+              {settings.stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
           <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
@@ -301,6 +310,73 @@ export const SettingsPanel: React.FC = () => {
               }}
               className="bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-1.5 text-blue-400 font-mono text-xs outline-none uppercase rounded-md text-right w-48 transition-colors"
             />
+          </SettingRow>
+        </SectionCard>
+
+        {/* TERMINAL BEHAVIOR */}
+        <SectionCard icon={Flame} title="Terminal Behavior" accent="bg-cyan-500">
+          <SettingRow
+            title="Auto Message Delete"
+            desc={settings.burnOnRead
+              ? `Payloads auto-destruct after ${burnLabel(settings.burnDelaySeconds)} of being received`
+              : 'Payloads persist until manually incinerated'}
+          >
+            <button
+              onClick={() => {
+                updateSettings({ burnOnRead: !settings.burnOnRead });
+                addLog(settings.burnOnRead ? 'Auto message delete disabled' : `Auto message delete enabled (${burnLabel(settings.burnDelaySeconds)})`);
+              }}
+            >
+              {settings.burnOnRead ? <ToggleRight className="text-cyan-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          {settings.burnOnRead && (
+            <div className="px-5 py-4 border-b border-zinc-800/50">
+              <div className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] uppercase text-zinc-500 mb-2.5">
+                <Timer className="w-3 h-3 text-cyan-500/70" /> Destruct Timer
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {BURN_DELAY_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      updateSettings({ burnDelaySeconds: opt.value });
+                      addLog(`Auto-delete timer set to ${burnLabel(opt.value)}`);
+                    }}
+                    className={`px-3.5 py-1.5 rounded-md text-[10px] font-bold tracking-widest uppercase border transition-colors ${
+                      settings.burnDelaySeconds === opt.value
+                        ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                        : 'bg-[#050505] border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 text-[9px] text-zinc-600 uppercase tracking-wider">
+                Applies to all terminals on this device
+              </div>
+            </div>
+          )}
+          <SettingRow title="File & Photo Attachments" desc="Allow sending files and photos inside transmissions">
+            <button
+              onClick={() => {
+                updateSettings({ allowFiles: !settings.allowFiles });
+                addLog(settings.allowFiles ? 'File attachments disabled' : 'File attachments enabled');
+              }}
+            >
+              {settings.allowFiles ? <ToggleRight className="text-cyan-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Voice Messages" desc="Show the voice memo recorder in the composer">
+            <button
+              onClick={() => {
+                updateSettings({ allowVoice: !settings.allowVoice });
+                addLog(settings.allowVoice ? 'Voice messages disabled' : 'Voice messages enabled');
+              }}
+            >
+              {settings.allowVoice ? <ToggleRight className="text-cyan-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
           </SettingRow>
         </SectionCard>
 
