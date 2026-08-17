@@ -336,30 +336,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setNetworkStatus(isOnline ? 'ONLINE' : 'LOCAL');
   }, [addLog]);
 
-  // Seeds (or preserves) the local sandbox terminal used in local/degraded mode
-  const seedLocalSandbox = useCallback(() => {
-    // NOTE: no chat is auto-selected on entry — the user clicks a terminal and
-    // only then is the passcode demanded (lazy load, no data touched up front).
-    const existing = readJSON<Chat[]>('axon_chats', []);
-    if (existing.length > 0) {
-      setChats(existing);
-      return;
-    }
-    const seed = makeLocalChat('AXON_SANDBOX', undefined, false, 1);
-    writeJSON('axon_chats', [seed]);
-    setChats([seed]);
-    const welcome: Message = {
-      id: crypto.randomUUID(),
-      chat_id: seed.id,
-      sender_id: 'SYSTEM',
-      text: '[SYSTEM: LOCAL SANDBOX TERMINAL INITIALIZED. NO SUPABASE CREDENTIALS DETECTED - RUNNING FULLY OFFLINE E2EE MODE. TYPE /HELP FOR COMMANDS.]',
-      file_url: null,
-      burn_on_read: false,
-      created_at: new Date().toISOString(),
-    };
-    writeJSON('axon_messages', [welcome]);
-    addLog('Initialized local sandbox terminal (offline mode)');
-  }, [addLog]);
+  // NOTE: no chat is auto-selected or auto-created on entry — the app always
+  // opens on STANDBY. The user must explicitly CREATE a terminal; clicking one
+  // is the only thing that loads its data and demands the passcode.
 
   const unlockChat = useCallback((chatId: string, code: string): boolean => {
     const chat = chats.find(c => c.id === chatId);
@@ -440,18 +419,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             } else {
               setActiveChat(null);
             }
-          } else {
-            // No terminals exist anywhere yet - bootstrap the first one
-            await createChat();
           }
+          // NOTE: if no terminals exist anywhere, we stay on STANDBY with an
+          // empty list — the user creates their first one explicitly.
           void migrateLocalToCloud();
         } catch (e: any) {
           // Backend missing/unreachable -> degrade to the local sandbox instead of alerting
-          console.error("Supabase unavailable, degrading to local sandbox:", e?.message || e);
+          console.error("Supabase unavailable, degrading to local mode:", e?.message || e);
           setBackendMode('local');
           setNetworkStatus('LOCAL');
-          addLog('Supabase backend unavailable - degraded to LOCAL SANDBOX MODE');
-          seedLocalSandbox();
+          addLog('Supabase backend unavailable - degraded to LOCAL MODE');
         }
       };
 
@@ -464,22 +441,18 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       // LOCAL / DEGRADED MODE: channels are persisted locally and work fully offline
       const localChats = readJSON<Chat[]>('axon_chats', []);
       setArchivedChats(readJSON<Chat[]>('axon_archived_chats_data', []));
-      if (localChats.length === 0) {
-        seedLocalSandbox();
+      // NOTE: never auto-create a terminal — stay on STANDBY until the user
+      // creates one or clicks an existing one (or uses ?room=CODE).
+      setChats(localChats);
+      const roomParam = new URLSearchParams(window.location.search).get('room');
+      if (roomParam) {
+        const target = localChats.find(c => c.share_code === roomParam.trim().toUpperCase());
+        setActiveChat(target || null);
       } else {
-        setChats(localChats);
-        // LAZY LOAD: stay on STANDBY until the user clicks a terminal.
-        // Only an explicit ?room=CODE deep link selects a chat.
-        const roomParam = new URLSearchParams(window.location.search).get('room');
-        if (roomParam) {
-          const target = localChats.find(c => c.share_code === roomParam.trim().toUpperCase());
-          setActiveChat(target || null);
-        } else {
-          setActiveChat(null);
-        }
+        setActiveChat(null);
       }
     }
-  }, [deviceId, backendMode, seedLocalSandbox]);
+  }, [deviceId, backendMode]);
 
   // Pushes local sandbox data up to the cloud so everything is saved globally.
   // Runs once per session on a healthy online boot; local copies are cleared afterwards.
@@ -564,20 +537,17 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const { data, error } = await supabase.from('chats').insert(newChat).select().single();
       if (error) {
         console.error("Create chat error:", error);
-        // Backend unavailable (missing tables / RLS / auth / network) -> degrade to the local sandbox
+        // Backend unavailable (missing tables / RLS / auth / network) -> degrade to local mode
         setBackendMode('local');
         setNetworkStatus('LOCAL');
-        addLog('Supabase backend unavailable - degraded to LOCAL SANDBOX MODE');
-        seedLocalSandbox();
-        // If the operator explicitly requested a named/custom tunnel, create it locally too
-        if (customName || customCode) {
-          const chat = makeLocalChat(customName, customCode, isEphemeral, chats.length + 1);
-          const next = [chat, ...chats];
-          writeJSON('axon_chats', next);
-          setChats(next);
-          setActiveChat(chat);
-          addLog(`Created channel ${chat.name} [${chat.share_code}] (LOCAL SANDBOX)`);
-        }
+        addLog('Supabase backend unavailable - degraded to LOCAL MODE');
+        // The operator explicitly asked for a tunnel - create it locally so the channel still works
+        const chat = makeLocalChat(customName, customCode, isEphemeral, chats.length + 1);
+        const next = [chat, ...chats];
+        writeJSON('axon_chats', next);
+        setChats(next);
+        setActiveChat(chat);
+        addLog(`Created channel ${chat.name} [${chat.share_code}] (LOCAL MODE)`);
         return true;
       }
       if (data) {
@@ -612,8 +582,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         if ((error as any).code !== 'PGRST116') {
           setBackendMode('local');
           setNetworkStatus('LOCAL');
-          addLog('Supabase backend unavailable - degraded to LOCAL SANDBOX MODE');
-          seedLocalSandbox();
+          addLog('Supabase backend unavailable - degraded to LOCAL MODE');
         }
       }
       if (data) {

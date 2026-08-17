@@ -660,7 +660,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         <div className="term-window crt-flicker flex flex-col flex-1 min-h-0 md:rounded-2xl overflow-hidden">
 
           {/* TITLE BAR (traffic lights + session + live clock) */}
-          <div className="h-9 shrink-0 flex items-center gap-3 px-3 md:px-4 border-b border-white/[0.06] bg-[#0a0a12] select-none">
+          <div className="term-titlebar h-9 shrink-0 flex items-center gap-3 px-3 md:px-4 border-b border-white/[0.07] select-none">
             <div className="flex items-center gap-2 shrink-0" aria-hidden>
               <span className="tl tl-red" />
               <span className="tl tl-amber" />
@@ -680,7 +680,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
 
           {/* TERMINAL TAB STRIP (one tab per active terminal) */}
-          <div className="h-9 md:h-10 shrink-0 flex items-stretch bg-[#08080e] border-b border-white/[0.06] overflow-x-auto no-scrollbar">
+          <div className="term-tabstrip h-9 md:h-10 shrink-0 flex items-stretch border-b border-white/[0.06] overflow-x-auto no-scrollbar">
             {chats.map(chat => {
               const isTabActive = activeChat?.id === chat.id;
               const isTabLocked = unlockedChatId !== chat.id;
@@ -986,7 +986,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
               {/* Footer Input Bar */}
               {activeChat && !chatLocked && (
-                <footer className="px-4 md:px-8 py-2.5 md:py-3 border-t border-white/[0.06] bg-[#08080f] shrink-0">
+                <footer className="term-footer px-4 md:px-8 py-2.5 md:py-3 border-t border-white/[0.06] shrink-0">
                   <form onSubmit={handleSubmit} className="flex items-center gap-2 md:gap-3">
                     {/* Shell prompt */}
                     <span className="text-[11px] md:text-xs font-bold shrink-0 select-none whitespace-nowrap" aria-hidden>
@@ -1057,7 +1057,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
 
           {/* ── STATUS BAR (tmux-style) ── */}
-          <div className="h-7 md:h-8 shrink-0 border-t border-white/[0.06] bg-[#07070d] flex items-center gap-2.5 md:gap-4 px-3 md:px-4 text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none">
+          <div className="term-statusbar h-7 md:h-8 shrink-0 border-t border-white/[0.07] flex items-center gap-2.5 md:gap-4 px-3 md:px-4 text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none">
             <span className={`flex items-center gap-1.5 shrink-0 ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full dot-live ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`} />
               {networkStatus === 'ONLINE' ? 'GLOBAL SYNC' : networkStatus === 'LOCAL' ? 'DEVICE-ONLY' : (networkStatus || 'OFFLINE')}
@@ -1080,7 +1080,10 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       {/* MODALS & OVERLAYS */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
+          <div
+            data-hint="Passcode is stored on this device only: DevTools > Application > Local Storage > axon_device_keys. Never displayed in the UI."
+            className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
+          >
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1119,7 +1122,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
-                  Encrypts all messages & is required to re-enter after refresh. Never shown again — stored on this device (DevTools → Application → Local Storage → axon_device_keys).
+                  Encrypts all messages & is required to re-enter after refresh. Never shown again.
                 </p>
               </div>
               <div className="pt-2">
@@ -1208,7 +1211,10 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showUnlockModal && (
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
+          <div
+            data-hint="Recovery: right-click a terminal row and inspect its data-code attribute, or DevTools > Application > Local Storage > axon_device_keys."
+            className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
+          >
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1240,7 +1246,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   autoFocus
                 />
                 <p className="text-[10px] text-zinc-600 mt-1.5 leading-relaxed">
-                  Hidden by design. Forgot it? Right-click the terminal in the sidebar → Inspect (data-code), or DevTools → Application → Local Storage → axon_device_keys.
+                  Hidden by design. Enter the terminal's passcode to decrypt.
                 </p>
               </div>
               <div className="pt-4">

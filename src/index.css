@@ -145,8 +145,8 @@
     pointer-events: none;
     background: repeating-linear-gradient(
       0deg,
-      rgba(255, 255, 255, 0.015) 0px,
-      rgba(255, 255, 255, 0.015) 1px,
+      rgba(255, 255, 255, 0.012) 0px,
+      rgba(255, 255, 255, 0.012) 1px,
       transparent 1px,
       transparent 3px
     );
@@ -230,16 +230,17 @@
       0 0 22px -8px rgba(34, 211, 238, 0.45);
   }
 
-  /* ---- Premium ambient background system ---- */
-
-  /* Deep base with faint color washes (cyan / emerald / violet / amber) */
+  /* ---- Premium ambient background system ----
+     Deep near-black terminal room with controlled color washes.
+     Cyan (data) top-left, emerald (secure) bottom-right, plus a faint
+     centered console glow. All static - zero GPU cost. */
   .premium-bg {
-    background-color: #040409;
+    background-color: #020207;
     background-image:
-      radial-gradient(ellipse 90% 60% at 15% -10%, rgba(34, 211, 238, 0.10), transparent 62%),
-      radial-gradient(ellipse 80% 55% at 105% 115%, rgba(52, 211, 153, 0.09), transparent 62%),
-      radial-gradient(ellipse 55% 45% at 85% 15%, rgba(139, 92, 246, 0.08), transparent 60%),
-      radial-gradient(ellipse 45% 35% at 0% 100%, rgba(251, 191, 36, 0.05), transparent 60%);
+      radial-gradient(ellipse 95% 65% at 12% -12%, rgba(34, 211, 238, 0.12), transparent 60%),
+      radial-gradient(ellipse 85% 60% at 108% 118%, rgba(16, 185, 129, 0.10), transparent 62%),
+      radial-gradient(ellipse 60% 45% at 50% 55%, rgba(148, 163, 184, 0.05), transparent 70%),
+      radial-gradient(ellipse 40% 30% at 82% 12%, rgba(139, 92, 246, 0.05), transparent 65%);
   }
 
   /* Static color bloom (no animation, no blur filter — zero GPU cost so it
@@ -282,39 +283,74 @@
 
   /* Solid premium panel (no backdrop-filter — GPU-cheap, legacy-safe) */
   .glass-panel {
-    background: rgba(7, 7, 13, 0.94);
+    background:
+      linear-gradient(180deg, rgba(20, 20, 30, 0.35) 0%, rgba(8, 8, 14, 0.94) 22%, rgba(6, 6, 11, 0.97) 100%);
   }
 
   /* Lux card: gradient top-light, hairline border, deep drop shadow */
   .card-lux {
     position: relative;
-    background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015) 40%, transparent);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015) 42%, transparent);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.07);
   }
 
   /* ---- Full terminal window chrome ---- */
 
-  /* The whole app lives inside a framed terminal window */
+  /* The whole app lives inside a framed terminal window. The top edge gets a
+     cyan->emerald hairline so the frame reads as a single premium instrument. */
   .term-window {
-    background: linear-gradient(180deg, rgba(9, 9, 15, 0.92) 0%, rgba(4, 4, 8, 0.97) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    position: relative;
+    background: linear-gradient(180deg, rgba(10, 10, 17, 0.96) 0%, rgba(4, 4, 8, 0.98) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
     box-shadow:
-      0 0 0 1px rgba(0, 0, 0, 0.55),
-      0 30px 90px -30px rgba(0, 0, 0, 0.95),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 34px 100px -28px rgba(0, 0, 0, 0.95),
+      0 0 60px -32px rgba(34, 211, 238, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+  .term-window::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 4%, rgba(34, 211, 238, 0.45) 28%, rgba(52, 211, 153, 0.45) 72%, transparent 96%);
+    pointer-events: none;
+    z-index: 70;
   }
 
-  /* macOS-style traffic lights */
+  /* Title bar: premium gradient + faint sheen */
+  .term-titlebar {
+    background: linear-gradient(180deg, rgba(22, 22, 32, 0.9) 0%, rgba(10, 10, 18, 0.95) 100%);
+  }
+
+  /* Tab strip: recessed channel below the title bar */
+  .term-tabstrip {
+    background: linear-gradient(180deg, rgba(7, 7, 13, 0.98) 0%, rgba(9, 9, 16, 0.98) 100%);
+  }
+
+  /* Status bar: raised footing with a faint top accent */
+  .term-statusbar {
+    background: linear-gradient(180deg, rgba(11, 11, 18, 0.98) 0%, rgba(6, 6, 11, 0.98) 100%);
+  }
+
+  /* Composer footer: recessed console deck */
+  .term-footer {
+    background: linear-gradient(180deg, rgba(9, 9, 16, 0.98) 0%, rgba(7, 7, 12, 0.98) 100%);
+  }
+
+  /* macOS-style traffic lights (polished: ring + soft glow) */
   .tl {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
     border-radius: 9999px;
     display: inline-block;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    position: relative;
   }
-  .tl-red   { background: #ff5f57; box-shadow: 0 0 8px rgba(255, 95, 87, 0.55); }
-  .tl-amber { background: #febc2e; box-shadow: 0 0 8px rgba(254, 188, 46, 0.5); }
-  .tl-green { background: #28c840; box-shadow: 0 0 8px rgba(40, 200, 64, 0.5); }
+  .tl-red   { background: radial-gradient(circle at 32% 28%, #ff8a84, #ff5f57 70%); box-shadow: 0 0 9px rgba(255, 95, 87, 0.5); }
+  .tl-amber { background: radial-gradient(circle at 32% 28%, #ffd97a, #febc2e 70%); box-shadow: 0 0 9px rgba(254, 188, 46, 0.45); }
+  .tl-green { background: radial-gradient(circle at 32% 28%, #6ede7e, #28c840 70%); box-shadow: 0 0 9px rgba(40, 200, 64, 0.45); }
 
   /* Subtle CRT phosphor flicker for the whole window */
   .crt-flicker {
