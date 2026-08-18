@@ -675,7 +675,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
             </div>
             <div className="flex items-center gap-3 shrink-0 text-[9px] md:text-[10px] font-bold tracking-widest uppercase text-zinc-500 tabular-nums">
               <span className="hidden sm:inline text-cyan-500/90">NODE: {deviceId.substring(0, 8)}</span>
-              <span className="text-emerald-500/90">{liveNow.toISOString().slice(11, 19)} UTC</span>
+              <span className="text-emerald-500/90">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </div>
           </div>
 
@@ -855,10 +855,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               <div 
                 ref={feedRef} 
                 className={`flex-1 overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative transition-all duration-500 ${stealthActive ? 'blur-xl opacity-30 select-none pointer-events-none' : ''}`}
-                style={{
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='14' font-family='monospace' fill='%23ffffff' fill-opacity='0.02' text-anchor='middle' transform='rotate(-45 150 100)'%3EAXON NODE: ${alias} | ${deviceId.substring(0,8)}%3C/text%3E%3C/svg%3E")`,
-                  backgroundRepeat: 'repeat'
-                }}
               >
                 {showVideoTunnel && activeChat && (
                   <Suspense fallback={null}>
@@ -934,7 +930,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                             {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
                           </span>
                           <span className="text-[10px] text-zinc-600 flex items-center gap-1">
-                            {new Date(msg.created_at).toLocaleTimeString([], { hour12: false, timeZone: 'UTC' })} UTC
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                             {isSelf && (
                               <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-500' : 'text-zinc-600'}>
                                 {msg.read_by && msg.read_by.length > 0 ? '✓✓' : '✓'}
@@ -1072,7 +1068,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
             {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">LAT: {latency}MS</span>}
             <span className="text-zinc-500">TERMS: {chats.length}</span>
             <span className="text-cyan-500/90 hidden sm:inline">NODE: {deviceId.substring(0, 8)}</span>
-            <span className="text-emerald-500/90 tabular-nums">{liveNow.toISOString().slice(11, 19)} UTC</span>
+            <span className="text-emerald-500/90 tabular-nums">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
           </div>
         </div>
       </div>

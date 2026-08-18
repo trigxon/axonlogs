@@ -82,7 +82,7 @@ export const LogsView: React.FC = () => {
               <div key={log.id || idx} className="flex items-start gap-3 pl-6 pr-4 py-2.5 hover:bg-white/[0.02] transition-colors">
                 <ChevronRight className="w-3.5 h-3.5 text-emerald-500/60 mt-0.5 shrink-0" />
                 <span className="text-[10px] text-zinc-600 font-mono shrink-0 pt-0.5 tabular-nums">
-                  {new Date(log.time).toLocaleString([], { hour12: false })}
+                  {new Date(log.time).toLocaleString([], { hour12: true })}
                 </span>
                 <span className="text-xs text-zinc-300 font-mono leading-relaxed break-words">
                   {log.msg}

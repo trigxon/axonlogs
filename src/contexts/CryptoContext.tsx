@@ -282,7 +282,13 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const addLog = useCallback((msg: string) => {
-    setSystemLogs(prev => [{ id: crypto.randomUUID(), time: new Date().toISOString(), msg }, ...prev]);
+    const id = crypto.randomUUID();
+    const time = new Date().toISOString();
+    setSystemLogs(prev => {
+      const next = [{ id, time, msg }, ...prev];
+      writeJSON('axon_logs', next);
+      return next;
+    });
   }, []);
 
   const clearLogs = useCallback(() => {
@@ -1128,8 +1134,13 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const purgeTerminal = useCallback(() => {
+    if (activeChat) {
+      // Remove all messages for this terminal from localStorage in local mode
+      const allMsgs = readJSON<Message[]>('axon_messages', []);
+      writeJSON('axon_messages', allMsgs.filter(m => m.chat_id !== activeChat.id));
+    }
     setMessages([]);
-  }, []);
+  }, [activeChat]);
 
   const deleteMessageLocally = useCallback((id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id));

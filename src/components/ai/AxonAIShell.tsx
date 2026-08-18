@@ -74,7 +74,7 @@ I can assist with real-time log analysis, transmission synthesis, threat modelin
 \`\`\`
 
 Select a suggestion below or enter a directive to begin.`,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
   },
 ];
 
@@ -143,7 +143,7 @@ export const AxonAIShell: React.FC = () => {
     const promptText = (textToSend || input).trim();
     if (!promptText && !attachedFile) return;
 
-    const userTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const userTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     const userMsg: AIMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
@@ -227,7 +227,7 @@ All requested instructions have been executed locally within your sandbox. Addit
         id: `ai-${Date.now()}`,
         sender: 'assistant',
         content: aiResponseText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
       };
 
       setMessages(prev => [...prev, aiMsg]);
