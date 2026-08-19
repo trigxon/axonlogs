@@ -1078,7 +1078,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
           <div
             data-hint="Passcode is stored on this device only: DevTools > Application > Local Storage > axon_device_keys. Never displayed in the UI."
-            className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
+            className="term-panel border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
           >
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
@@ -1096,7 +1096,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   value={newChatName}
                   onChange={e => setNewChatName(e.target.value.toUpperCase())}
                   placeholder="e.g. ALPHA-OPERATIONS"
-                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
+                  className="w-full term-input border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1107,7 +1107,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   value={newChatPassphrase}
                   onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
                   placeholder="SHARED SECRET"
-                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
+                  className="w-full term-input border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                 />
                 <div className="flex items-center justify-between mt-1">
                   <span className="text-[10px] text-emerald-500 tracking-widest uppercase">
@@ -1140,7 +1140,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-cyan-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
+          <div className="term-panel border-cyan-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-cyan-500" />
             <button onClick={() => setShowRenameModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1156,7 +1156,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   type="text" 
                   value={renameInput}
                   onChange={e => setRenameInput(e.target.value.toUpperCase())}
-                  className="w-full neo-inset border border-white/[0.05] focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
+                  className="w-full term-input border border-white/[0.05] focus:border-cyan-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1172,7 +1172,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="neo-raised border-red-500/45 w-full max-w-md p-6 relative theme-radius overflow-hidden">
+          <div className="term-panel border-red-500/45 w-full max-w-md p-6 relative theme-radius overflow-hidden">
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
             <button onClick={() => setShowPasswordModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
               <X className="w-5 h-5" />
@@ -1191,7 +1191,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   value={passwordInput}
                   onChange={e => setPasswordInput(e.target.value.toUpperCase())}
 
-                  className="w-full neo-inset border border-white/[0.05] focus:border-red-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
+                  className="w-full term-input border border-white/[0.05] focus:border-red-500 p-2 text-white font-mono text-sm outline-none uppercase transition-all"
                   autoFocus
                 />
               </div>
@@ -1209,7 +1209,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         <div className="fixed inset-0 bg-black/80 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
           <div
             data-hint="Recovery: right-click a terminal row and inspect its data-code attribute, or DevTools > Application > Local Storage > axon_device_keys."
-            className="neo-raised border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
+            className="term-panel border-emerald-500/40 w-full max-w-md p-6 relative theme-radius overflow-hidden"
           >
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-500" />
             <button onClick={() => setShowUnlockModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white">
@@ -1238,7 +1238,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   onChange={e => setUnlockPassword(e.target.value.toUpperCase())}
                   onKeyDown={handlePasswordKeyDown}
                   disabled={lockoutUntil > clock}
-                  className="w-full neo-inset border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase disabled:opacity-50 transition-all"
+                  className="w-full term-input border border-white/[0.05] focus:border-emerald-500 p-2 text-white font-mono text-sm outline-none uppercase disabled:opacity-50 transition-all"
                   autoFocus
                 />
                 <p className="text-[10px] text-zinc-600 mt-1.5 leading-relaxed">

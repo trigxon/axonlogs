@@ -280,7 +280,7 @@ export const SettingsPanel: React.FC = () => {
               </button>
             </form>
           </SettingRow>
-          <SettingRow title="Device Identifier" desc="Unique watermark ID for current node">
+          <SettingRow title="Device Identifier" desc="Unique node ID for this device">
             <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
               {deviceId || 'DEV_UNKNOWN'}
             </div>

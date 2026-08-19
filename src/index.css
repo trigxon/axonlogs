@@ -14,15 +14,15 @@
 
 @layer base {
   :root {
-    /* Premium Hacker Terminal Aesthetic */
+    /* Futuristic Terminal Aesthetic */
     --bg: #050506;
     --panel: #0a0a10;
-    --text-primary: #a3a3a3; /* Neutral Gray for base text */
+    --text-primary: #a3a3a3;
     --text-secondary: #52525b;
     --border: #27272a;
-    --accent: #22d3ee; /* Cyan */
+    --accent: #22d3ee;
     --accent-hover: #06b6d4;
-    
+
     --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
     --font-display: 'Space Grotesk', 'JetBrains Mono', ui-sans-serif, system-ui, sans-serif;
 
@@ -38,12 +38,11 @@
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
   }
 
-  /* Full-viewport height with a vh fallback for browsers without dvh support */
   .h-app {
     height: 100vh;
     height: 100dvh;
   }
-  
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -57,14 +56,13 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-zinc-700;
   }
-  
-  /* Input autofill override */
+
   input:-webkit-autofill,
-  input:-webkit-autofill:hover, 
-  input:-webkit-autofill:focus, 
-  input:-webkit-autofill:active{
-      -webkit-box-shadow: 0 0 0 30px #050505 inset !important;
-      -webkit-text-fill-color: #22d3ee !important;
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #050505 inset !important;
+    -webkit-text-fill-color: #22d3ee !important;
   }
 }
 
@@ -89,20 +87,16 @@
 
   /* ---- Premium utilities ---- */
 
-  /* Gradient headline text (cyan -> white -> emerald) */
   .text-gradient {
     @apply bg-clip-text text-transparent;
     background-image: linear-gradient(100deg, #67e8f9 0%, #e2e8f0 45%, #6ee7b7 100%);
   }
 
-  /* Subtle green-tinted terminal gradient */
   .text-gradient-terminal {
     @apply bg-clip-text text-transparent;
     background-image: linear-gradient(100deg, #34d399 0%, #e2e8f0 55%, #22d3ee 100%);
   }
 
-  /* Glass panel: premium surface (solid tones — no backdrop-filter so it runs
-     smooth on devices without GPU acceleration) */
   .glass {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 100%);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -113,7 +107,6 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
   }
 
-  /* Soft glow shadows */
   .glow-cyan {
     box-shadow: 0 0 24px -8px rgba(34, 211, 238, 0.35), 0 8px 32px -16px rgba(0, 0, 0, 0.9);
   }
@@ -124,7 +117,6 @@
     box-shadow: 0 0 24px -8px rgba(251, 191, 36, 0.3), 0 8px 32px -16px rgba(0, 0, 0, 0.9);
   }
 
-  /* Gradient hairline (top edge accent) */
   .hairline-gradient {
     position: relative;
   }
@@ -137,7 +129,6 @@
     pointer-events: none;
   }
 
-  /* Soft CRT scanline drift (very subtle, keeps terminal feel) */
   .scanlines::after {
     content: '';
     position: absolute;
@@ -153,7 +144,6 @@
     z-index: 60;
   }
 
-  /* Gradient CTA button */
   .btn-premium {
     @apply text-black font-bold uppercase tracking-[0.2em] transition-all duration-200;
     background-image: linear-gradient(100deg, #22d3ee 0%, #34d399 100%);
@@ -164,7 +154,6 @@
     filter: brightness(1.08);
   }
 
-  /* Gradient-border wrapper trick */
   .ring-gradient {
     position: relative;
     background: linear-gradient(180deg, #0b0b12, #070709);
@@ -189,51 +178,43 @@
     animation: axon-pulse 2s ease-in-out infinite;
   }
 
-  /* ---- Dark Neumorphic (soft-UI) system ----
-     Surfaces share the page background tone; depth comes from
-     dual light/dark shadows instead of hard borders. */
-  .neo-surface {
-    background: #0b0b12;
+  /* ---- Futuristic terminal surfaces ----
+     Flat, solid, zero-GPU. Hairline borders only. */
+  .term-bg {
+    background: #0a0a10;
   }
 
-  .neo-raised {
-    background: linear-gradient(145deg, #12121b 0%, #0a0a11 100%);
-    box-shadow: 6px 6px 14px rgba(0, 0, 0, 0.55), -6px -6px 14px rgba(255, 255, 255, 0.04);
+  .term-panel {
+    background: #0e0e16;
+    border: 1px solid rgba(255, 255, 255, 0.07);
   }
 
-  .neo-raised-sm {
-    background: linear-gradient(145deg, #101018 0%, #09090f 100%);
-    box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.5), -4px -4px 10px rgba(255, 255, 255, 0.035);
+  .term-panel-sm {
+    background: #0c0c14;
+    border: 1px solid rgba(255, 255, 255, 0.05);
   }
 
-  /* Interactive raised element: lifts on hover, presses in on click */
-  .neo-press {
-    transition: box-shadow 0.15s ease, transform 0.15s ease, color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  .term-interactive {
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
-  .neo-press:hover {
-    box-shadow: 8px 8px 18px rgba(0, 0, 0, 0.6), -8px -8px 18px rgba(255, 255, 255, 0.05);
+  .term-interactive:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.12);
   }
-  .neo-press:active {
-    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.6), inset -4px -4px 10px rgba(255, 255, 255, 0.04);
-    transform: translateY(1px);
-  }
-
-  /* Inset (sunken) surface: inputs, active nav states */
-  .neo-inset {
-    background: linear-gradient(145deg, #07070c 0%, #0e0e16 100%);
-    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.6), inset -4px -4px 10px rgba(255, 255, 255, 0.035);
+  .term-interactive:active {
+    background: rgba(255, 255, 255, 0.02);
   }
 
-  /* Neumorphic accent glow for active/live elements */
-  .neo-glow-cyan {
-    box-shadow: inset 4px 4px 10px rgba(0, 0, 0, 0.55), inset -4px -4px 10px rgba(255, 255, 255, 0.03),
-      0 0 22px -8px rgba(34, 211, 238, 0.45);
+  .term-input {
+    background: #07070d;
+    border: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  /* ---- Premium ambient background system ----
-     Deep near-black terminal room with controlled color washes.
-     Cyan (data) top-left, emerald (secure) bottom-right, plus a faint
-     centered console glow. All static - zero GPU cost. */
+  .term-glow-cyan {
+    box-shadow: 0 0 16px -6px rgba(34, 211, 238, 0.4);
+  }
+
+  /* ---- Premium ambient background system ---- */
   .premium-bg {
     background-color: #020207;
     background-image:
@@ -243,8 +224,6 @@
       radial-gradient(ellipse 40% 30% at 82% 12%, rgba(139, 92, 246, 0.05), transparent 65%);
   }
 
-  /* Static color bloom (no animation, no blur filter — zero GPU cost so it
-     stays smooth on integrated-graphics / legacy laptops) */
   .aurora-orb {
     position: absolute;
     border-radius: 9999px;
@@ -252,8 +231,7 @@
     pointer-events: none;
   }
 
-  /* ---- Dynamic theme settings (Settings > Interface Styling) ----
-     These bind the --ui-* variables so the controls visibly change UI. */
+  /* ---- Dynamic theme settings ---- */
   .theme-text {
     font-size: var(--ui-text-size);
   }
@@ -276,18 +254,17 @@
     mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, black 30%, transparent 78%);
   }
 
-  /* Edge vignette for cinematic depth */
   .vignette {
     background: radial-gradient(ellipse 90% 85% at 50% 45%, transparent 50%, rgba(0, 0, 0, 0.55) 100%);
   }
 
-  /* Solid premium panel (no backdrop-filter — GPU-cheap, legacy-safe) */
+  /* Solid premium panel */
   .glass-panel {
     background:
       linear-gradient(180deg, rgba(20, 20, 30, 0.35) 0%, rgba(8, 8, 14, 0.94) 22%, rgba(6, 6, 11, 0.97) 100%);
   }
 
-  /* Lux card: gradient top-light, hairline border, deep drop shadow */
+  /* Lux card */
   .card-lux {
     position: relative;
     background: linear-gradient(160deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015) 42%, transparent);
@@ -296,9 +273,6 @@
   }
 
   /* ---- Full terminal window chrome ---- */
-
-  /* The whole app lives inside a framed terminal window. The top edge gets a
-     cyan->emerald hairline so the frame reads as a single premium instrument. */
   .term-window {
     position: relative;
     background: linear-gradient(180deg, rgba(10, 10, 17, 0.96) 0%, rgba(4, 4, 8, 0.98) 100%);
@@ -319,27 +293,23 @@
     z-index: 70;
   }
 
-  /* Title bar: premium gradient + faint sheen */
   .term-titlebar {
     background: linear-gradient(180deg, rgba(22, 22, 32, 0.9) 0%, rgba(10, 10, 18, 0.95) 100%);
   }
 
-  /* Tab strip: recessed channel below the title bar */
   .term-tabstrip {
     background: linear-gradient(180deg, rgba(7, 7, 13, 0.98) 0%, rgba(9, 9, 16, 0.98) 100%);
   }
 
-  /* Status bar: raised footing with a faint top accent */
   .term-statusbar {
     background: linear-gradient(180deg, rgba(11, 11, 18, 0.98) 0%, rgba(6, 6, 11, 0.98) 100%);
   }
 
-  /* Composer footer: recessed console deck */
   .term-footer {
     background: linear-gradient(180deg, rgba(9, 9, 16, 0.98) 0%, rgba(7, 7, 12, 0.98) 100%);
   }
 
-  /* macOS-style traffic lights (polished: ring + soft glow) */
+  /* macOS-style traffic lights */
   .tl {
     width: 12px;
     height: 12px;
@@ -352,23 +322,19 @@
   .tl-amber { background: radial-gradient(circle at 32% 28%, #ffd97a, #febc2e 70%); box-shadow: 0 0 9px rgba(254, 188, 46, 0.45); }
   .tl-green { background: radial-gradient(circle at 32% 28%, #6ede7e, #28c840 70%); box-shadow: 0 0 9px rgba(40, 200, 64, 0.45); }
 
-  /* Subtle CRT phosphor flicker for the whole window */
   .crt-flicker {
     animation: axon-flicker 9s infinite;
   }
 
-  /* Premium display font for headlines / chrome */
   .font-display {
     font-family: var(--font-display);
   }
 
-  /* Terminal block caret for the composer (falls back to a line caret) */
   .axon-caret {
     caret-color: #22d3ee;
     caret-shape: block;
   }
 
-  /* Hide scrollbars on horizontal chrome strips (tab bar) */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -391,8 +357,7 @@
   98% { opacity: 1; }
 }
 
-/* Legacy / no-GPU friendly: kill all animation on devices that ask for less
-   motion, and keep the UI responsive on low-spec hardware. */
+/* Kill all animation on low-spec / reduced-motion devices */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001s !important;

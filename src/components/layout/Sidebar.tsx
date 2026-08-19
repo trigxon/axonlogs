@@ -11,7 +11,6 @@ import {
   UserCheck,
   KeyRound,
   Plus,
-  EyeOff,
   Search,
   Lock,
   LockOpen,
@@ -20,8 +19,6 @@ import {
   Archive,
   Trash2,
   Power,
-  ToggleRight,
-  ToggleLeft,
   MoreVertical,
 } from 'lucide-react';
 import { useCrypto, type Chat } from '../../contexts/CryptoContext';
@@ -59,7 +56,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [isJoining, setIsJoining] = useState(false);
   const [joinCode, setJoinCode] = useState('');
-  const [stealthMode, setStealthMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; chatId: string } | null>(null);
 
   // The mobile drawer always renders the FULL expanded sidebar;
@@ -140,10 +136,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={item.id}
               onClick={() => setActiveView(item.id)}
               title={railCollapsed ? item.label : undefined}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm neo-press ${
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm term-interactive ${
                 isActive
-                  ? 'text-cyan-300 font-semibold neo-inset neo-glow-cyan border-l-2 border-cyan-400/70'
-                  : 'text-zinc-400 hover:text-zinc-100 neo-raised-sm'
+                  ? 'text-cyan-300 font-semibold term-input term-glow-cyan border-l-2 border-cyan-400/70'
+                  : 'text-zinc-400 hover:text-zinc-100 term-panel-sm'
               } ${railCollapsed ? 'justify-center px-0' : ''}`}
             >
               {item.icon}
@@ -249,7 +245,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {!railCollapsed && (
-            <div className="flex items-center gap-2 neo-inset px-2 py-1.5 rounded-lg focus-within:ring-1 focus-within:ring-cyan-400/60 mb-2 transition-all">
+            <div className="flex items-center gap-2 term-input px-2 py-1.5 rounded-lg focus-within:ring-1 focus-within:ring-cyan-400/60 mb-2 transition-all">
               <Search className="w-3 h-3 text-zinc-500" />
               <input
                 type="text"
@@ -293,7 +289,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     title={`${chat.name}${isLocked ? ' [LOCKED]' : ''} — right-click for options`}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-all duration-150 rounded-lg border-l-2 group ${
                       isActive
-                        ? 'text-cyan-300 neo-inset border-cyan-400/70'
+                        ? 'text-cyan-300 term-input border-cyan-400/70'
                         : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] border-transparent'
                     }`}
                   >
@@ -350,7 +346,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={() => setIsJoining(true)}
                 title="Join Link"
-                className="neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-cyan-300"
+                className="term-panel-sm term-interactive w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-cyan-300"
               >
                 <KeyRound className="w-4 h-4" />
               </button>
@@ -358,17 +354,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={onCreateTunnel}
                 title="Create Tunnel"
-                className="neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-emerald-300"
+                className="term-panel-sm term-interactive w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:text-emerald-300"
               >
                 <Plus className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setStealthMode(!stealthMode)}
-                title={stealthMode ? 'Stealth Mode: ON' : 'Stealth Mode: OFF'}
-                className={`neo-raised-sm neo-press w-9 h-9 flex items-center justify-center rounded-lg ${stealthMode ? 'text-cyan-400' : 'text-zinc-500 hover:text-cyan-300'}`}
-              >
-                {stealthMode ? <ToggleRight className="w-5 h-5" /> : <EyeOff className="w-4 h-4" />}
               </button>
             </div>
           ) : isJoining ? (
@@ -378,7 +366,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 value={joinCode}
                 onChange={e => setJoinCode(e.target.value)}
                 placeholder="LINK CODE"
-                className="w-full neo-inset border border-white/[0.05] text-xs px-2 py-1.5 rounded-md focus:ring-1 focus:ring-cyan-400/60 outline-none text-white uppercase placeholder:text-zinc-700 transition-all"
+                className="w-full term-input border border-white/[0.05] text-xs px-2 py-1.5 rounded-md focus:ring-1 focus:ring-cyan-400/60 outline-none text-white uppercase placeholder:text-zinc-700 transition-all"
                 autoFocus
               />
               <button type="button" onClick={() => setIsJoining(false)} className="text-xs text-zinc-500 hover:text-white px-1">X</button>
@@ -388,29 +376,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsJoining(true)}
-                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-300 neo-press neo-raised-sm border border-white/[0.05] hover:border-cyan-400/40 hover:shadow-[0_0_14px_-5px_rgba(34,211,238,0.5)] p-2 rounded-md uppercase tracking-widest"
+                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-cyan-300 term-interactive term-panel-sm border border-white/[0.05] hover:border-cyan-400/40 hover:shadow-[0_0_14px_-5px_rgba(34,211,238,0.5)] p-2 rounded-md uppercase tracking-widest"
               >
                 <span className="flex items-center gap-2"><KeyRound className="w-3 h-3" /> Join Link</span>
               </button>
               <button
                 type="button"
                 onClick={onCreateTunnel}
-                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-300 neo-press neo-raised-sm border border-white/[0.05] hover:border-emerald-500/40 hover:shadow-[0_0_14px_-5px_rgba(52,211,153,0.5)] p-2 rounded-md uppercase tracking-widest"
+                className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-emerald-300 term-interactive term-panel-sm border border-white/[0.05] hover:border-emerald-500/40 hover:shadow-[0_0_14px_-5px_rgba(52,211,153,0.5)] p-2 rounded-md uppercase tracking-widest"
               >
                 <span className="flex items-center gap-2"><Plus className="w-3 h-3" /> Create Tunnel</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setStealthMode(!stealthMode)}
-                className="w-full flex items-center justify-between text-xs text-zinc-400 uppercase tracking-widest"
-              >
-                <span className="flex items-center gap-2 text-zinc-500">
-                  <EyeOff className="w-3 h-3" /> Stealth Mode
-                </span>
-                <span className="text-zinc-500">
-                  {stealthMode ? <ToggleRight className="w-5 h-5 text-cyan-400" /> : <ToggleLeft className="w-5 h-5" />}
-                </span>
-              </button>
+
             </div>
           )}
         </div>
@@ -419,7 +396,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Console / user box */}
       {!railCollapsed ? (
         <div className="p-3 mt-auto shrink-0">
-          <div className="neo-raised rounded-xl p-3 flex flex-col gap-3">
+          <div className="term-panel rounded-xl p-3 flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500/25 to-emerald-500/15 border border-cyan-400/30 flex items-center justify-center shrink-0 glow-cyan">
                 <UserCheck className="w-4 h-4 text-cyan-300" />
@@ -459,7 +436,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Right-click context menu for chat operations */}
       {contextMenu && menuChat && !railCollapsed && (
         <div
-          className="fixed z-[80] neo-raised border border-white/[0.08] rounded-lg py-1.5 w-52 shadow-2xl"
+          className="fixed z-[80] term-panel border border-white/[0.08] rounded-lg py-1.5 w-52 shadow-2xl"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={e => e.stopPropagation()}
         >
