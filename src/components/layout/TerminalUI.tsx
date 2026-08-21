@@ -727,7 +727,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
             </div>
             <div className="flex-1 min-w-0 text-center">
               <span className="font-display text-[10px] font-bold tracking-[0.3em] uppercase truncate block">
-                <span className="text-gradient">Axon Logs</span>
+                <span className="text-gradient phosphor-text">Axon Logs</span>
                 <span className="text-zinc-600 hidden sm:inline"> — secure terminal</span>
                 <span className="text-emerald-500/70 hidden lg:inline"> // axon@axonlogs:~/secure</span>
               </span>
@@ -1009,7 +1009,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <div className="absolute inset-0 rounded-full border-2 border-cyan-400/20 animate-ping" style={{ animationDuration: '3s' }} />
                     </div>
                     <div className="text-center">
-                      <div className="text-cyan-300 text-base sm:text-lg font-bold tracking-widest uppercase mb-2">
+                      <div className="phosphor-text text-cyan-300 text-base sm:text-lg font-bold tracking-widest uppercase mb-2">
                         NO CHANNEL SELECTED
                       </div>
                       <div className="text-zinc-500 text-xs sm:text-sm tracking-wider">
@@ -1040,7 +1040,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <Lock className="w-6 h-6 text-amber-400" />
                     </div>
                     <div className="text-center">
-                      <div className="text-amber-400 text-sm sm:text-base font-bold tracking-widest uppercase mb-1">
+                      <div className="phosphor-text text-amber-400 text-sm sm:text-base font-bold tracking-widest uppercase mb-1">
                         TERMINAL LOCKED
                       </div>
                       <div className="text-zinc-500 text-xs tracking-wider">

@@ -15,11 +15,11 @@
 @layer base {
   :root {
     /* Futuristic Terminal Aesthetic */
-    --bg: #030304;
-    --panel: #0a0a10;
-    --text-primary: #a3a3a3;
-    --text-secondary: #52525b;
-    --border: #27272a;
+    --bg: #04050a;
+    --panel: #0c0d14;
+    --text-primary: #d6d8de;
+    --text-secondary: #7b7f8c;
+    --border: #2b2e3a;
     --accent: #22d3ee;
     --accent-hover: #06b6d4;
 
@@ -108,7 +108,8 @@ body::before {
   width: 70vw;
   height: 70vh;
   transform: translate(-50%, -50%);
-  background: radial-gradient(ellipse at center, rgba(34, 211, 238, 0.04) 0%, rgba(52, 211, 153, 0.02) 40%, transparent 70%);
+  background:
+    radial-gradient(ellipse at center, rgba(34, 211, 238, 0.10) 0%, rgba(52, 211, 153, 0.05) 42%, transparent 72%);
   pointer-events: none;
   z-index: 0;
   opacity: 0;
@@ -351,16 +352,17 @@ body::before {
   /* ---- Full terminal window chrome ---- */
   .term-window {
     position: relative;
-    background: linear-gradient(180deg, rgba(10, 10, 17, 0.96) 0%, rgba(4, 4, 8, 0.98) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: linear-gradient(180deg, rgba(13, 15, 24, 0.97) 0%, rgba(5, 6, 11, 0.99) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: clamp(10px, 1vw + 6px, 16px);
     box-shadow:
       0 0 0 1px rgba(0, 0, 0, 0.6),
       0 8px 32px -4px rgba(0, 0, 0, 0.7),
       0 34px 100px -28px rgba(0, 0, 0, 0.95),
-      0 0 80px -32px rgba(34, 211, 238, 0.12),
-      0 0 0 1px rgba(34, 211, 238, 0.04),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      0 0 90px -30px rgba(34, 211, 238, 0.22),
+      0 0 0 1px rgba(34, 211, 238, 0.07),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 40px 80px -60px rgba(34, 211, 238, 0.12);
   }
   .term-window::before {
     content: '';
@@ -378,39 +380,46 @@ body::before {
     pointer-events: none;
     /* CRT barrel distortion: scanlines + edge vignette */
     background:
-      /* scanlines */
+      /* scanlines — kept whisper-subtle so text stays crisp */
       repeating-linear-gradient(
         0deg,
-        rgba(0, 0, 0, 0.08) 0px,
+        rgba(0, 0, 0, 0.05) 0px,
         transparent 1px,
         transparent 2px
       ),
-      /* barrel vignette — darkens corners to sell the curvature */
+      /* barrel vignette — light curvature hint, not a blackout */
       radial-gradient(
-        ellipse 85% 80% at 50% 50%,
-        transparent 50%,
-        rgba(0, 0, 0, 0.35) 80%,
-        rgba(0, 0, 0, 0.65) 100%
+        ellipse 90% 85% at 50% 50%,
+        transparent 58%,
+        rgba(0, 0, 0, 0.18) 82%,
+        rgba(0, 0, 0, 0.38) 100%
       );
     z-index: 60;
     border-radius: inherit;
-    opacity: 0.7;
+    opacity: 0.55;
   }
 
-  /* Inner glow ring — simulates the curved glass edge reflection */
+  /* Inner glow ring — faint glass reflection, cyan-tinted instead of black hole */
   .term-window > .term-inner-glow {
     position: absolute;
     inset: 0;
     pointer-events: none;
     border-radius: inherit;
     box-shadow:
-      inset 0 0 80px -20px rgba(0, 0, 0, 0.5),
-      inset 0 0 30px -10px rgba(0, 0, 0, 0.3);
+      inset 0 0 60px -26px rgba(0, 0, 0, 0.35),
+      inset 0 0 28px -16px rgba(34, 211, 238, 0.16);
     z-index: 55;
   }
 
   .term-titlebar {
-    background: linear-gradient(180deg, rgba(22, 22, 32, 0.9) 0%, rgba(10, 10, 18, 0.95) 100%);
+    background: linear-gradient(180deg, rgba(28, 31, 46, 0.92) 0%, rgba(12, 13, 21, 0.96) 100%);
+  }
+
+  /* Phosphor glow for key headings — CRT text that softly radiates */
+  .phosphor-text {
+    text-shadow:
+      0 0 8px rgba(34, 211, 238, 0.35),
+      0 0 26px rgba(34, 211, 238, 0.12);
   }
 
   .term-tabstrip {
@@ -577,6 +586,34 @@ body::before {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001s !important;
   }
+}
+
+/* ---- Performance lite mode (no-GPU / low-end devices) ----
+   Toggled automatically by src/lib/perfMode.ts (heuristic + FPS probe).
+   Strips only paint-expensive layers; layout, colors and interactions
+   stay identical so the UI never changes shape — it just stops paying
+   for effects the hardware can't composite for free. */
+html.perf-lite body::before {
+  animation: none;
+  opacity: 0.55;
+}
+html.perf-lite .term-window {
+  /* Drop the multi-layer shadow stack (large blurs are the #1 CPU cost) */
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+html.perf-lite .term-window::after,
+html.perf-lite .term-window > .term-inner-glow,
+html.perf-lite .vignette,
+html.perf-lite .scanlines::after {
+  display: none !important;
+}
+html.perf-lite .crt-flicker,
+html.perf-lite .crt-warmup {
+  animation: none !important;
+  filter: none !important;
+  clip-path: none !important;
 }
 
 /* ---- Responsive adaptations ---- */
