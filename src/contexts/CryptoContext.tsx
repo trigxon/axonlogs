@@ -9,6 +9,11 @@ export interface Chat {
   created_at: string;
 }
 
+export interface Reaction {
+  emoji: string;
+  user_id: string;
+}
+
 export interface Message {
   id: string;
   chat_id: string;
@@ -18,6 +23,9 @@ export interface Message {
   burn_on_read: boolean;
   reply_to_id?: string | null;
   read_by?: string[];
+  reactions?: Reaction[];
+  pinned?: boolean;
+  edited?: boolean;
   created_at: string;
   isDecryptionError?: boolean;
 }
@@ -68,6 +76,11 @@ interface CryptoContextType {
   createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
   sendMessage: (text: string, file?: File | null, replyToId?: string | null) => Promise<void>;
+  editMessage: (msgId: string, newText: string) => void;
+  toggleReaction: (msgId: string, emoji: string) => void;
+  togglePinMessage: (msgId: string) => void;
+  markAsRead: (msgId: string) => void;
+  resendMessage: (msgId: string) => void;
   purgeTerminal: () => void;
   addSystemMessage: (text: string) => void;
   deleteMessageLocally: (id: string) => void;
@@ -94,6 +107,13 @@ interface CryptoContextType {
   lockChat: (chatId: string) => void;
   settings: AppSettings;
   updateSettings: (patch: Partial<AppSettings>) => void;
+  // Calling state
+  callingChat: Chat | null;
+  callType: 'audio' | 'video' | null;
+  startCall: (chat: Chat, type: 'audio' | 'video') => void;
+  endCall: () => void;
+  messagesInView: string[];
+  setMessagesInView: (ids: string[]) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -1163,16 +1183,99 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     }]);
   }, [activeChat]);
 
+  const editMessage = useCallback((msgId: string, newText: string) => {
+    if (!activeChat) return;
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m));
+    if (backendMode !== 'online') {
+      const allMsgs = readJSON<Message[]>('axon_messages', []);
+      writeJSON('axon_messages', allMsgs.map(m => m.id === msgId ? { ...m, text: encryptText(newText, activeChat.share_code), edited: true } : m));
+    } else if (supabase) {
+      supabase.from('messages').update({ text: encryptText(newText, activeChat.share_code), edited: true }).eq('id', msgId).then();
+    }
+    addLog(`Message ${msgId.slice(0, 6)}... edited`);
+  }, [activeChat, backendMode, addLog]);
+
+  const toggleReaction = useCallback((msgId: string, emoji: string) => {
+    if (!activeChat || !deviceId) return;
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const reactions = m.reactions || [];
+      const existing = reactions.findIndex(r => r.emoji === emoji && r.user_id === deviceId);
+      const next = existing >= 0
+        ? reactions.filter((_, i) => i !== existing)
+        : [...reactions, { emoji, user_id: deviceId }];
+      return { ...m, reactions: next };
+    }));
+    if (backendMode !== 'online' && activeChat) {
+      const allMsgs = readJSON<Message[]>('axon_messages', []);
+      const msg = allMsgs.find(m => m.id === msgId);
+      if (msg) {
+        const reactions = msg.reactions || [];
+        const existing = reactions.findIndex((r: any) => r.emoji === emoji && r.user_id === deviceId);
+        msg.reactions = existing >= 0
+          ? reactions.filter((_: any, i: number) => i !== existing)
+          : [...reactions, { emoji, user_id: deviceId }];
+        writeJSON('axon_messages', allMsgs);
+      }
+    }
+  }, [activeChat, deviceId, backendMode]);
+
+  const togglePinMessage = useCallback((msgId: string) => {
+    if (!activeChat) return;
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, pinned: !m.pinned } : m));
+    if (backendMode !== 'online' && activeChat) {
+      const allMsgs = readJSON<Message[]>('axon_messages', []);
+      const msg = allMsgs.find(m => m.id === msgId);
+      if (msg) { msg.pinned = !msg.pinned; writeJSON('axon_messages', allMsgs); }
+    }
+    addLog(`Message ${msgId.slice(0, 6)}... ${messages.find(m => m.id === msgId)?.pinned ? 'unpinned' : 'pinned'}`);
+  }, [activeChat, backendMode, messages, addLog]);
+
+  const markAsRead = useCallback((msgId: string) => {
+    if (!activeChat) return;
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const readBy = m.read_by || [];
+      if (readBy.includes(deviceId)) return m;
+      return { ...m, read_by: [...readBy, deviceId] };
+    }));
+  }, [activeChat, deviceId]);
+
+  const resendMessage = useCallback((msgId: string) => {
+    const msg = messages.find(m => m.id === msgId);
+    if (!msg) return;
+    addSystemMessage(`⟳ Resent: ${msg.text.slice(0, 60)}${msg.text.length > 60 ? '…' : ''}`);
+  }, [messages, addSystemMessage]);
+
+  // Calling state
+  const [callingChat, setCallingChat] = useState<Chat | null>(null);
+  const [callType, setCallType] = useState<'audio' | 'video' | null>(null);
+  const [messagesInView, setMessagesInView] = useState<string[]>([]);
+
+  const startCall = useCallback((chat: Chat, type: 'audio' | 'video') => {
+    setCallingChat(chat);
+    setCallType(type);
+    addLog(`[CALL] ${type.toUpperCase()} call initiated on ${chat.name}`);
+  }, [addLog]);
+
+  const endCall = useCallback(() => {
+    setCallingChat(null);
+    setCallType(null);
+    addLog('[CALL] Call ended');
+  }, [addLog]);
+
   return (
     <CryptoContext.Provider
       value={{
         deviceId, alias, chats, archivedChats, activeChat, messages, latency,
         setActiveChat, createChat, joinChat, sendMessage, purgeTerminal,
-        addSystemMessage, deleteMessageLocally, updateAlias, systemLogs,
+        addSystemMessage, deleteMessageLocally, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage,
+        updateAlias, systemLogs,
         addLog, clearLogs, networkStatus, renameChat, archiveChat, restoreChat, deleteChat, changeChatPassword,
         onlineUsers, typingUsers, broadcastTyping, simBotActive, toggleSimBot,
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
         settings, updateSettings,
+        callingChat, callType, startCall, endCall, messagesInView, setMessagesInView,
       }}
     >
       {children}

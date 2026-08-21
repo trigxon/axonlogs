@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import CallOverlay from '../calling/CallOverlay';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import ReactMarkdown from 'react-markdown';
 import { VoiceRecorder } from '../chat/VoiceRecorder';
@@ -108,7 +109,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat, settings } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat, settings, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage, startCall } = useCrypto();
   const chatLocked = !!activeChat && unlockedChatId !== activeChat.id;
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
@@ -170,6 +171,15 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     return () => clearInterval(t);
   }, []);
 
+  // Context menu (right-click on message)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
+  // Edit message state
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  // Reaction picker
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '💯', '🚀', '👀', '✅'];
+
   const feedRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -179,7 +189,15 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   // Auto-scroll (instant — smooth scrolling janks on low-end hardware)
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages]);
+    // Mark visible messages as read (read receipts)
+    if (activeChat && !chatLocked) {
+      messages.forEach(m => {
+        if (m.sender_id !== deviceId && !(m.read_by || []).includes(deviceId)) {
+          markAsRead(m.id);
+        }
+      });
+    }
+  }, [messages, activeChat, chatLocked, deviceId, markAsRead]);
 
   // Incoming transmission alerts (sound + desktop notification)
   useEffect(() => {
@@ -264,6 +282,20 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       setShowUnlockModal(false);
     }
   }, [activeChat?.id, chatLocked]);
+
+  // Close context menu / reaction picker on outside click
+  useEffect(() => {
+    if (!contextMenu && !reactionPickerMsgId) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-ctx-menu]') && !target.closest('[data-reaction-picker]')) {
+        setContextMenu(null);
+        setReactionPickerMsgId(null);
+      }
+    };
+    document.addEventListener('mousedown', close, { capture: true });
+    return () => document.removeEventListener('mousedown', close, { capture: true });
+  }, [contextMenu, reactionPickerMsgId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -777,6 +809,22 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <Video size={12} className="inline mr-1" /> COMM-LINK
                     </button>
                   )}
+                  {activeChat && (
+                    <button 
+                      onClick={() => startCall(activeChat, 'audio')}
+                      className="border px-2 md:px-3 py-1 items-center gap-1.5 md:gap-2 flex transition-colors border-emerald-500/30 text-emerald-500 hover:bg-emerald-500 hover:text-black"
+                    >
+                      <Phone size={12} className="inline" /> <span className="hidden sm:inline">AUDIO</span><span className="sm:hidden">CALL</span>
+                    </button>
+                  )}
+                  {activeChat && (
+                    <button 
+                      onClick={() => startCall(activeChat, 'video')}
+                      className="border px-2 md:px-3 py-1 items-center gap-1.5 md:gap-2 hidden sm:flex transition-colors border-cyan-500/30 text-cyan-500 hover:bg-cyan-500 hover:text-black"
+                    >
+                      <Video size={12} className="inline mr-1" /> VIDEO
+                    </button>
+                  )}
                   <button 
                     onClick={purgeTerminal}
                     className="border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 px-3 py-1 transition-colors shrink-0"
@@ -901,12 +949,19 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <div 
                         key={msg.id} 
                         id={`msg-${msg.id}`}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, msgId: msg.id });
+                          setReactionPickerMsgId(null);
+                        }}
                         className={`flex flex-col w-full max-w-3xl border theme-pad relative group theme-radius transition-shadow duration-200 ${
+                          msg.pinned ? 'border-amber-500/40 ring-1 ring-amber-500/20' : ''} ${
                           isSelf 
                             ? 'ml-auto border-cyan-400/40 bg-gradient-to-br from-cyan-500/[0.09] via-cyan-500/[0.02] to-transparent shadow-[0_0_28px_-14px_rgba(34,211,238,0.5)] hover:shadow-[0_0_32px_-12px_rgba(34,211,238,0.65)]' 
                             : 'border-white/[0.07] border-l-2 border-l-emerald-500/60 bg-gradient-to-br from-emerald-500/[0.05] via-transparent to-transparent shadow-[0_0_28px_-16px_rgba(52,211,153,0.35)] hover:shadow-[0_0_32px_-14px_rgba(52,211,153,0.55)]'
                         }`}
                       >
+                        {/* Quick action buttons (hover) */}
                         <button 
                           onClick={() => setReplyToId(msg.id)}
                           className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-cyan-400 transition-opacity bg-black/50 p-1 rounded"
@@ -914,25 +969,52 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                         >
                           <Reply size={14} />
                         </button>
+                        <button 
+                          onClick={() => setReactionPickerMsgId(reactionPickerMsgId === msg.id ? null : msg.id)}
+                          className="absolute top-4 right-9 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-amber-400 transition-opacity bg-black/50 p-1 rounded text-xs"
+                          title="React"
+                        >
+                          😊
+                        </button>
                         {isSelf && (
                           <button 
                             onClick={() => {
                               if (confirm('INCINERATE THIS PAYLOAD? THIS CANNOT BE UNDONE.')) deleteMessageLocally(msg.id);
                             }}
-                            className="absolute top-4 right-11 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-opacity bg-black/50 p-1 rounded"
+                            className="absolute top-4 right-14 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-opacity bg-black/50 p-1 rounded"
                             title="Incinerate payload"
                           >
                             <Flame size={14} />
                           </button>
                         )}
+
+                        {/* Inline reaction picker */}
+                        {reactionPickerMsgId === msg.id && (
+                          <div data-reaction-picker className="absolute -top-10 right-4 z-30 flex items-center gap-1 bg-[#0a0f18] border border-white/10 rounded-lg px-2 py-1 shadow-xl">
+                            {QUICK_EMOJIS.map(em => (
+                              <button key={em} onClick={() => { toggleReaction(msg.id, em); setReactionPickerMsgId(null); }} className="text-sm hover:scale-125 transition-transform">
+                                {em}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Pinned indicator */}
+                        {msg.pinned && (
+                          <div className="text-[10px] text-amber-400 font-mono tracking-widest uppercase mb-1 flex items-center gap-1">
+                            <Pin size={10} className="rotate-45" /> PINNED
+                          </div>
+                        )}
+
                         <div className="flex justify-between items-center mb-3 pr-8">
                           <span className={`text-[10px] font-bold uppercase tracking-widest ${isSelf ? 'text-cyan-400' : 'text-emerald-500'}`}>
                             {isSelf ? alias : `NODE_${msg.sender_id.substring(0,4)}`}
                           </span>
-                          <span className="text-[10px] text-zinc-600 flex items-center gap-1">
+                          <span className="text-[10px] text-zinc-600 flex items-center gap-1.5">
                             {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            {msg.edited && <span className="text-zinc-700 italic">edited</span>}
                             {isSelf && (
-                              <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-500' : 'text-zinc-600'}>
+                              <span className={msg.read_by && msg.read_by.length > 0 ? 'text-cyan-400' : 'text-zinc-600'}>
                                 {msg.read_by && msg.read_by.length > 0 ? '✓✓' : '✓'}
                               </span>
                             )}
@@ -947,32 +1029,78 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }}
                           >
-                            {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
+                            ↪ {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
                           </div>
                         )}
 
-                        <div className="theme-text font-mono text-zinc-200 leading-relaxed">
-                          {msg.text.startsWith('data:audio/') ? (
-                            <audio controls src={msg.text} className="w-full max-w-sm h-9" />
-                          ) : (
-                            <ReactMarkdown 
-                              remarkPlugins={[remarkGfm]} 
-                              components={{
-                                code: CodeBlock,
-                                p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
-                                a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank" rel="noreferrer">{children}</a> },
-                                ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
-                                ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
-                                li({children}) { return <li className="mb-1">{children}</li> },
-                                blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
+                        {/* Edit mode */}
+                        {editingMsgId === msg.id ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && editingText.trim()) {
+                                  editMessage(msg.id, editingText.trim());
+                                  setEditingMsgId(null);
+                                  setEditingText('');
+                                } else if (e.key === 'Escape') {
+                                  setEditingMsgId(null);
+                                  setEditingText('');
+                                }
                               }}
-                            >
-                              {msg.text}
-                            </ReactMarkdown>
-                          )}
-                        </div>
+                              className="flex-1 bg-black/30 border border-cyan-500/30 text-cyan-300 text-sm font-mono px-3 py-2 focus:outline-none focus:border-cyan-400"
+                              autoFocus
+                            />
+                            <button onClick={() => { if (editingText.trim()) { editMessage(msg.id, editingText.trim()); } setEditingMsgId(null); setEditingText(''); }} className="text-cyan-400 hover:text-cyan-300 text-xs font-mono">SAVE</button>
+                            <button onClick={() => { setEditingMsgId(null); setEditingText(''); }} className="text-zinc-500 hover:text-zinc-400 text-xs font-mono">ESC</button>
+                          </div>
+                        ) : (
+                          <div className="theme-text font-mono text-zinc-200 leading-relaxed">
+                            {msg.text.startsWith('data:audio/') ? (
+                              <audio controls src={msg.text} className="w-full max-w-sm h-9" />
+                            ) : (
+                              <ReactMarkdown 
+                                remarkPlugins={[remarkGfm]} 
+                                components={{
+                                  code: CodeBlock,
+                                  p({children}) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p> },
+                                  a({href, children}) { return <a href={href} className="text-cyan-500 hover:underline" target="_blank" rel="noreferrer">{children}</a> },
+                                  ul({children}) { return <ul className="list-disc pl-4 mb-2">{children}</ul> },
+                                  ol({children}) { return <ol className="list-decimal pl-4 mb-2">{children}</ol> },
+                                  li({children}) { return <li className="mb-1">{children}</li> },
+                                  blockquote({children}) { return <blockquote className="border-l-2 border-zinc-700 pl-3 italic text-zinc-400">{children}</blockquote> }
+                                }}
+                              >
+                                {msg.text}
+                              </ReactMarkdown>
+                            )}
+                          </div>
+                        )}
 
                         {renderFile(msg.id, msg.file_url)}
+
+                        {/* Reactions display */}
+                        {msg.reactions && msg.reactions.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-white/[0.05]">
+                            {Object.entries(
+                              msg.reactions.reduce((acc: Record<string, number>, r) => {
+                                acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+                                return acc;
+                              }, {})
+                            ).map(([emoji, count]) => (
+                              <button
+                                key={emoji}
+                                onClick={() => toggleReaction(msg.id, emoji)}
+                                className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 bg-black/30 border border-white/10 rounded-full hover:border-cyan-500/40 transition-colors"
+                              >
+                                <span>{emoji}</span>
+                                <span className="text-[10px] text-zinc-500">{count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -1254,6 +1382,55 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
         </div>
       )}
+
+      {/* RIGHT-CLICK CONTEXT MENU */}
+      {contextMenu && (
+        <div 
+          data-ctx-menu
+          className="fixed z-[150] bg-[#0a0f18] border border-white/10 shadow-2xl min-w-[180px] py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {(() => {
+            const msg = messages.find(m => m.id === contextMenu.msgId);
+            if (!msg) return null;
+            const isSelf = msg.sender_id === deviceId;
+            return (
+              <>
+                <button onClick={() => { setReplyToId(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-cyan-400 transition-colors font-mono">
+                  <Reply size={12} /> Reply
+                </button>
+                <button onClick={() => { setReactionPickerMsgId(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-amber-400 transition-colors font-mono">
+                  \U0001f60a React
+                </button>
+                <button onClick={() => { togglePinMessage(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-amber-400 transition-colors font-mono">
+                  <Pin size={12} /> {msg.pinned ? 'Unpin' : 'Pin'}
+                </button>
+                {isSelf && (
+                  <button onClick={() => { setEditingMsgId(msg.id); setEditingText(msg.text); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-cyan-400 transition-colors font-mono">
+                    <Edit2 size={12} /> Edit
+                  </button>
+                )}
+                {isSelf && (
+                  <button onClick={() => { resendMessage(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-emerald-400 transition-colors font-mono">
+                    <RotateCcw size={12} /> Resend
+                  </button>
+                )}
+                {isSelf && (
+                  <>
+                    <div className="border-t border-white/5 my-1" />
+                    <button onClick={() => { if (confirm('INCINERATE THIS PAYLOAD?')) deleteMessageLocally(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-colors font-mono">
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* CALL OVERLAY */}
+      <CallOverlay />
 
     </div>
   );

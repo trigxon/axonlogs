@@ -365,3 +365,50 @@
     transition-duration: 0.001s !important;
   }
 }
+
+/* TV / Smartboard scaling (1280px+) */
+@media (min-width: 1280px) {
+  .term-window {
+    font-size: 16px;
+    max-width: 1400px;
+  }
+  .term-window .theme-text {
+    font-size: 1rem;
+  }
+  .term-statusbar, .term-tabstrip, .term-titlebar {
+    font-size: 11px;
+    height: auto;
+    padding: 0.5rem 1.25rem;
+  }
+}
+
+/* Extra-large displays (4K / smartboard 1920px+) */
+@media (min-width: 1920px) {
+  .term-window {
+    font-size: 18px;
+    max-width: 1600px;
+  }
+  .term-window .theme-text {
+    font-size: 1.125rem;
+  }
+}
+
+/* Mobile compact: ensure touch targets are at least 44px */
+@media (max-width: 640px) {
+  button {
+    min-height: 44px;
+  }
+  .term-window {
+    border-radius: 0 !important;
+  }
+}
+
+/* Safe area insets for phones with notches */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .term-titlebar {
+    padding-top: env(safe-area-inset-top);
+  }
+  .term-statusbar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
