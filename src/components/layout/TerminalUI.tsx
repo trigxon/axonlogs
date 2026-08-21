@@ -688,7 +688,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       )}
 
       {/* ── FULL TERMINAL WINDOW ── */}
-      <div className="relative z-10 flex-1 flex flex-col min-h-0 p-0 md:p-3 lg:p-4">
+      <div className="relative z-10 flex-1 flex flex-col min-h-0 p-0">
         <div className="term-window crt-flicker flex flex-col flex-1 min-h-0 md:rounded-2xl overflow-hidden">
 
           {/* TITLE BAR (traffic lights + session + live clock) */}
