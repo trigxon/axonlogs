@@ -120,6 +120,20 @@ body::before {
   to { opacity: 1; }
 }
 
+/* Terminal cursor blink for TypewriterText's cursor span
+   (Tailwind arbitrary animation animate-[cursor-blink_...]) */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Caret-only blink for real inputs — animates caret-color so the
+   input content itself never flashes */
+@keyframes caret-blink {
+  0%, 100% { caret-color: #22d3ee; }
+  50% { caret-color: transparent; }
+}
+
 @layer utilities {
   .font-chat {
     font-family: var(--font-mono);
@@ -435,12 +449,7 @@ body::before {
   .axon-caret {
     caret-color: #22d3ee;
     caret-shape: block;
-    animation: cursor-blink 1s step-end infinite;
-  }
-
-  @keyframes cursor-blink {
-    0%, 100% { caret-color: #22d3ee; }
-    50% { caret-color: transparent; }
+    animation: caret-blink 1s step-end infinite;
   }
 
   /* Outer glow on focus */
