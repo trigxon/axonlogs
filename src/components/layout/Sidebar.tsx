@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard,
   Bot,
@@ -168,13 +168,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
+  // Touch swipe to close on mobile
+  const touchStartXRef = useRef(0);
+  const handleTouchStart = (e: React.TouchEvent) => { touchStartXRef.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const delta = e.changedTouches[0].clientX - touchStartXRef.current;
+    if (delta < -60) onMobileClose(); // swipe left to close
+  };
+
   return (
     <aside
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
       className={`bg-[#0a0a12] flex flex-col select-none overflow-y-auto md:overflow-visible
-        fixed inset-y-0 left-0 z-50 w-[280px] transform transition-transform duration-300 shadow-[12px_0_32px_-20px_rgba(0,0,0,0.95)]
+        fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 shadow-[12px_0_32px_-20px_rgba(0,0,0,0.95)]
         md:static md:z-30 md:translate-x-0 md:border-r md:border-white/[0.05] ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${isCollapsed ? 'md:w-[72px]' : 'md:w-[260px]'}`}
+        } ${isCollapsed ? 'md:w-[72px]' : 'w-[min(85vw,280px)] md:w-[260px]'}`}
     >
       {/* Header / Brand */}
       <div className="h-16 flex items-center justify-between px-4 mt-2 shrink-0">

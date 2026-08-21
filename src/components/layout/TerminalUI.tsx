@@ -775,7 +775,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         {activeView === 'dashboard' && (
           <main className="flex-1 flex flex-col min-w-0 glass-panel border-l border-white/[0.04]">
               {/* Top Header */}
-              <header className="h-12 border-b border-white/[0.05] bg-[#090910] flex items-center justify-between px-4 md:px-8 gap-3 shrink-0">
+              <header className="border-b border-white/[0.05] bg-[#090910] flex items-center justify-between px-3 sm:px-4 md:px-8 gap-2 sm:gap-3 shrink-0 min-h-[clamp(40px,5vw,48px)]">
                 <div className="flex items-center gap-3 md:gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden min-w-0">
                   <button
                     onClick={() => setMobileSidebarOpen(true)}
@@ -836,7 +836,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               </header>
 
               {/* Sub Header */}
-              <div className="px-4 md:px-8 pt-4 md:pt-8 pb-4 shrink-0">
+              <div className="px-3 sm:px-4 md:px-8 pt-3 sm:pt-4 md:pt-8 pb-3 sm:pb-4 shrink-0">
                 <h2 className="text-white font-bold text-base md:text-lg tracking-widest uppercase mb-1 flex items-center gap-2 md:gap-3 min-w-0">
                   <span className="truncate">
                     <span className="text-gradient">TERMINAL //</span>{' '}                      <span className={chatLocked ? 'text-amber-400' : 'text-cyan-300'}>
@@ -914,6 +914,23 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   <div className="sticky top-2 z-20 mx-auto w-max px-4 py-1.5 rounded-full border border-blue-500/40 bg-[#0a1030] text-[10px] font-bold tracking-[0.25em] uppercase text-blue-400 flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
                     Stealth Mode Active
+                  </div>
+                )}
+
+                {/* Pinned messages banner */}
+                {activeChat && !chatLocked && messages.filter(m => m.pinned).length > 0 && (
+                  <div className="mx-2 sm:mx-4 mb-2 p-2 sm:p-3 bg-amber-500/[0.06] border border-amber-500/20 rounded-lg">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold tracking-widest text-amber-400/80 uppercase mb-1.5">
+                      <Pin size={10} className="rotate-45" /> PINNED ({messages.filter(m => m.pinned).length})
+                    </div>
+                    {messages.filter(m => m.pinned).slice(0, 3).map(pm => (
+                      <div key={pm.id} className="text-xs text-zinc-400 truncate cursor-pointer hover:text-amber-300 transition-colors py-0.5" onClick={() => {
+                        const el = document.getElementById(`msg-${pm.id}`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}>
+                        <span className="text-amber-500/60 mr-1">→</span> {pm.text.slice(0, 80)}{pm.text.length > 80 ? '…' : ''}
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -1110,8 +1127,30 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
               {/* Footer Input Bar */}
               {activeChat && !chatLocked && (
-                <footer className="term-footer px-4 md:px-8 py-2.5 md:py-3 border-t border-white/[0.06] shrink-0">
-                  <form onSubmit={handleSubmit} className="flex items-center gap-2 md:gap-3">
+                <footer className="term-footer border-t border-white/[0.06] shrink-0">
+                  {/* Reply preview */}
+                  {replyToId && (
+                    <div className="flex items-center gap-2 px-3 sm:px-4 md:px-8 py-1.5 bg-cyan-500/[0.04] border-b border-cyan-500/10 text-[10px] sm:text-xs">
+                      <Reply size={12} className="text-cyan-400 shrink-0" />
+                      <span className="text-zinc-400 truncate flex-1">
+                        Replying to: {messages.find(m => m.id === replyToId)?.text?.slice(0, 60) || 'message'}
+                      </span>
+                      <button type="button" onClick={() => setReplyToId(null)} className="text-zinc-500 hover:text-white shrink-0">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  {/* File preview */}
+                  {selectedFile && (
+                    <div className="flex items-center gap-2 px-3 sm:px-4 md:px-8 py-1.5 bg-emerald-500/[0.04] border-b border-emerald-500/10 text-[10px] sm:text-xs">
+                      <FileText size={12} className="text-emerald-400 shrink-0" />
+                      <span className="text-zinc-400 truncate flex-1">{selectedFile.name}</span>
+                      <button type="button" onClick={() => setSelectedFile(null)} className="text-zinc-500 hover:text-white shrink-0">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  <form onSubmit={handleSubmit} className="flex items-center gap-2 sm:gap-3 px-3 md:px-8 py-2.5 md:py-3">
                     {/* Shell prompt */}
                     <span className="text-[11px] md:text-xs font-bold shrink-0 select-none whitespace-nowrap" aria-hidden>
                       <span className="text-emerald-400">axon</span>
@@ -1181,22 +1220,33 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
 
           {/* ── STATUS BAR (tmux-style) ── */}
-          <div className="term-statusbar h-7 md:h-8 shrink-0 border-t border-white/[0.07] flex items-center gap-2.5 md:gap-4 px-3 md:px-4 text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none">
+          <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-2 sm:px-3 md:px-4 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
             <span className={`flex items-center gap-1.5 shrink-0 ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full dot-live ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`} />
-              {networkStatus === 'ONLINE' ? 'GLOBAL SYNC' : networkStatus === 'LOCAL' ? 'DEVICE-ONLY' : (networkStatus || 'OFFLINE')}
+              <span className="hidden sm:inline">{networkStatus === 'ONLINE' ? 'GLOBAL SYNC' : networkStatus === 'LOCAL' ? 'DEVICE-ONLY' : (networkStatus || 'OFFLINE')}</span>
+              <span className="sm:hidden">{networkStatus === 'ONLINE' ? 'ONLINE' : networkStatus === 'LOCAL' ? 'LOCAL' : 'OFF'}</span>
             </span>
             {activeChat && (
               <span className="text-zinc-400 truncate min-w-0 hidden md:inline">TERM: {activeChat.name}</span>
             )}
             {Object.keys(typingUsers).length > 0 && (
-              <span className="text-amber-400 animate-pulse truncate hidden md:inline">◉ {Object.values(typingUsers).join(', ')} TYPING…</span>
+              <span className="text-amber-400 truncate hidden sm:inline flex items-center gap-1">
+                <span className="flex gap-[3px]">
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                </span>
+                {Object.values(typingUsers).join(', ')}
+              </span>
             )}
             <div className="flex-1" />
+            {Object.keys(onlineUsers).length > 0 && (
+              <span className="text-cyan-400/70 hidden md:inline">USR: {Object.keys(onlineUsers).length}</span>
+            )}
             {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">LAT: {latency}MS</span>}
-            <span className="text-zinc-500">TERMS: {chats.length}</span>
-            <span className="text-cyan-500/90 hidden sm:inline">NODE: {deviceId.substring(0, 8)}</span>
-            <span className="text-emerald-500/90 tabular-nums">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+            <span className="text-zinc-500 hidden sm:inline">TERMS: {chats.length}</span>
+            <span className="text-cyan-500/90 hidden lg:inline">NODE: {deviceId.substring(0, 8)}</span>
+            <span className="text-emerald-500/90 tabular-nums shrink-0">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
           </div>
         </div>
       </div>

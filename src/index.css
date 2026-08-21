@@ -26,16 +26,33 @@
     --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
     --font-display: 'Space Grotesk', 'JetBrains Mono', ui-sans-serif, system-ui, sans-serif;
 
-    /* Dynamic UI Theme Settings */
-    --ui-text-size: 14px;
-    --ui-card-padding: 16px;
-    --ui-border-radius: 8px;
+    /* Dynamic UI Theme Settings — all fluid via clamp() */
+    --ui-text-size: clamp(12px, 0.85vw + 10px, 18px);
+    --ui-card-padding: clamp(12px, 1.2vw + 8px, 24px);
+    --ui-border-radius: clamp(6px, 0.5vw + 4px, 12px);
+
+    /* Fluid spacing scale */
+    --space-xs: clamp(4px, 0.3vw + 3px, 6px);
+    --space-sm: clamp(6px, 0.4vw + 4px, 10px);
+    --space-md: clamp(10px, 0.7vw + 7px, 16px);
+    --space-lg: clamp(16px, 1vw + 12px, 28px);
+    --space-xl: clamp(24px, 1.5vw + 18px, 40px);
+
+    /* Fluid font scale */
+    --font-xs: clamp(9px, 0.55vw + 7px, 11px);
+    --font-sm: clamp(10px, 0.6vw + 8px, 13px);
+    --font-base: clamp(12px, 0.7vw + 9px, 16px);
+    --font-lg: clamp(14px, 0.85vw + 11px, 20px);
+    --font-xl: clamp(18px, 1.1vw + 14px, 28px);
   }
 
   body {
     font-family: var(--font-mono);
     font-size: var(--ui-text-size);
     @apply bg-background text-text-primary antialiased overflow-hidden selection:bg-accent/30;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
   }
 
   .h-app {
@@ -44,8 +61,8 @@
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: clamp(4px, 0.3vw + 3px, 8px);
+    height: clamp(4px, 0.3vw + 3px, 8px);
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -63,6 +80,11 @@
   input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0 30px #050505 inset !important;
     -webkit-text-fill-color: #22d3ee !important;
+  }
+
+  /* Prevent iOS bounce */
+  html, body {
+    overscroll-behavior: none;
   }
 }
 
@@ -145,7 +167,9 @@
   }
 
   .btn-premium {
-    @apply text-black font-bold uppercase tracking-[0.2em] transition-all duration-200;
+    @apply text-black font-bold uppercase transition-all duration-200;
+    letter-spacing: 0.15em;
+    font-size: var(--font-xs);
     background-image: linear-gradient(100deg, #22d3ee 0%, #34d399 100%);
     box-shadow: 0 0 22px -6px rgba(34, 211, 238, 0.55);
   }
@@ -203,6 +227,7 @@
   }
   .term-interactive:active {
     background: rgba(255, 255, 255, 0.02);
+    transform: scale(0.98);
   }
 
   .term-input {
@@ -231,7 +256,7 @@
     pointer-events: none;
   }
 
-  /* ---- Dynamic theme settings ---- */
+  /* ---- Dynamic theme settings (fluid) ---- */
   .theme-text {
     font-size: var(--ui-text-size);
   }
@@ -244,12 +269,18 @@
     border-radius: var(--ui-border-radius);
   }
 
+  /* Fluid spacing classes */
+  .space-fluid-xs { gap: var(--space-xs); }
+  .space-fluid-sm { gap: var(--space-sm); }
+  .space-fluid-md { gap: var(--space-md); }
+  .space-fluid-lg { gap: var(--space-lg); }
+
   /* Faint technical grid, faded toward the edges */
   .grid-overlay {
     background-image:
       linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
       linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
-    background-size: 44px 44px;
+    background-size: clamp(32px, 3vw + 28px, 52px) clamp(32px, 3vw + 28px, 52px);
     -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, black 30%, transparent 78%);
     mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, black 30%, transparent 78%);
   }
@@ -311,8 +342,8 @@
 
   /* macOS-style traffic lights */
   .tl {
-    width: 12px;
-    height: 12px;
+    width: clamp(10px, 0.8vw + 8px, 14px);
+    height: clamp(10px, 0.8vw + 8px, 14px);
     border-radius: 9999px;
     display: inline-block;
     border: 1px solid rgba(0, 0, 0, 0.35);
@@ -341,6 +372,27 @@
   .no-scrollbar {
     scrollbar-width: none;
   }
+
+  /* Typing indicator animation */
+  .typing-dot {
+    animation: typing-bounce 1.4s ease-in-out infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  /* Slide in from left (mobile sidebar) */
+  @keyframes slide-in-left {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  .slide-in-left {
+    animation: slide-in-left 0.25s ease-out;
+  }
+
+  /* Bottom sheet slide up for mobile modals */
+  .bottom-sheet {
+    animation: sheet-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
 }
 
 @keyframes axon-pulse {
@@ -357,6 +409,16 @@
   98% { opacity: 1; }
 }
 
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 /* Kill all animation on low-spec / reduced-motion devices */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -366,49 +428,85 @@
   }
 }
 
-/* TV / Smartboard scaling (1280px+) */
-@media (min-width: 1280px) {
+/* ---- Responsive adaptations ---- */
+
+/* Small phones (320px - 480px) */
+@media (max-width: 480px) {
+  body { font-size: 12px; }
+  .term-window { border-radius: 0 !important; border: none !important; }
+  .term-titlebar { padding-top: env(safe-area-inset-top, 0px); }
+  .term-statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .term-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  /* Larger tap targets on tiny screens */
+  button, [role="button"] { min-height: 44px; min-width: 44px; }
+}
+
+/* Mobile (480px - 768px) */
+@media (min-width: 481px) and (max-width: 768px) {
+  body { font-size: 13px; }
+  .term-window { border-radius: 0 !important; }
+  .term-titlebar { padding-top: env(safe-area-inset-top, 0px); }
+  .term-statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  button { min-height: 40px; }
+}
+
+/* Tablet landscape (768px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .term-window { border-radius: var(--ui-border-radius) !important; }
+}
+
+/* Desktop (1024px - 1280px) — default, no overrides needed */
+
+/* Large desktop / TV (1280px - 1920px) */
+@media (min-width: 1281px) {
   .term-window {
-    font-size: 16px;
-    max-width: 1400px;
-  }
-  .term-window .theme-text {
-    font-size: 1rem;
+    max-width: min(1400px, 75vw);
+    margin-left: auto;
+    margin-right: auto;
   }
   .term-statusbar, .term-tabstrip, .term-titlebar {
-    font-size: 11px;
-    height: auto;
-    padding: 0.5rem 1.25rem;
+    min-height: clamp(36px, 2.5vw, 48px);
   }
 }
 
-/* Extra-large displays (4K / smartboard 1920px+) */
-@media (min-width: 1920px) {
+/* 4K / Smartboard (1920px+) */
+@media (min-width: 1921px) {
   .term-window {
-    font-size: 18px;
-    max-width: 1600px;
+    max-width: min(1600px, 65vw);
   }
-  .term-window .theme-text {
-    font-size: 1.125rem;
-  }
-}
-
-/* Mobile compact: ensure touch targets are at least 44px */
-@media (max-width: 640px) {
-  button {
-    min-height: 44px;
-  }
-  .term-window {
-    border-radius: 0 !important;
+  :root {
+    --ui-text-size: clamp(16px, 1vw + 12px, 22px);
+    --ui-card-padding: clamp(20px, 1.5vw + 14px, 32px);
   }
 }
 
-/* Safe area insets for phones with notches */
+/* Landscape phones */
+@media (max-height: 500px) and (orientation: landscape) {
+  .term-titlebar { padding-top: 0; height: auto; min-height: 28px; }
+  .term-statusbar { height: auto; min-height: 24px; }
+  .term-window { border-radius: 0 !important; }
+}
+
+/* Safe area insets for phones with notches / dynamic island */
 @supports (padding-top: env(safe-area-inset-top)) {
   .term-titlebar {
     padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
   .term-statusbar {
     padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .term-footer {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* High DPI: slightly thinner borders */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .term-panel, .term-panel-sm, .term-input {
+    border-width: 0.5px;
   }
 }
