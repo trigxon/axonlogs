@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2, ChevronLeft } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2, ChevronLeft, ChevronDown, Search } from 'lucide-react';
 import CallOverlay from '../calling/CallOverlay';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import ReactMarkdown from 'react-markdown';
@@ -43,6 +43,24 @@ const playPing = () => {
 // Local Storage) and on each chat row's data-code attribute in the DOM.
 const generateEasyPasscode = () => `AXON-${Math.floor(1000 + Math.random() * 9000)}`;
 
+// Date separator rendered whenever the feed crosses a calendar-day boundary.
+const DayDivider: React.FC<{ day: string }> = ({ day }) => {
+  const label = (() => {
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    if (day === today) return 'TODAY';
+    if (day === yesterday) return 'YESTERDAY';
+    return new Date(day).toLocaleDateString([], { month: 'short', day: 'numeric' }).toUpperCase();
+  })();
+  return (
+    <div className="flex items-center gap-3 my-1 select-none shrink-0" aria-hidden>
+      <span className="h-px flex-1 bg-white/[0.06]" />
+      <span className="text-[9px] sm:text-[10px] font-bold tracking-[0.3em] uppercase text-zinc-600">{label}</span>
+      <span className="h-px flex-1 bg-white/[0.06]" />
+    </div>
+  );
+};
+
 export interface TerminalUIProps {
   activeView?: ActiveView;
   setActiveView?: (view: ActiveView) => void;
@@ -66,6 +84,13 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [decoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // In-chat transmission search (filters the ACTIVE feed only)
+  const [chatSearch, setChatSearch] = useState('');
+  // Jump-to-latest plumbing
+  const [newBelowCount, setNewBelowCount] = useState(0);
+  const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
+  const isNearBottomRef = useRef(true);
 
   const [showVideoTunnel, setShowVideoTunnel] = useState(false);
 
@@ -135,10 +160,19 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
   const lastMsgCountRef = useRef(0);
+  const lastSeenCountRef = useRef(0);
 
-  // Auto-scroll (instant — smooth scrolling janks on low-end hardware)
+  // Smart auto-scroll: follow the live stream only while the reader is
+  // already near the bottom; otherwise tally arrivals into a jump chip so
+  // reading history is never yanked away by incoming traffic.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' });
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+      setNewBelowCount(0);
+    } else if (messages.length > lastSeenCountRef.current) {
+      setNewBelowCount(prev => prev + (messages.length - lastSeenCountRef.current));
+    }
+    lastSeenCountRef.current = messages.length;
     // Mark visible messages as read (read receipts)
     if (activeChat && !chatLocked) {
       messages.forEach(m => {
@@ -148,6 +182,38 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
       });
     }
   }, [messages, activeChat, chatLocked, deviceId, markAsRead]);
+
+  // Terminal switch: reset scroll tracking, land on the latest payload.
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    setNewBelowCount(0);
+    setChatSearch('');
+    requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ block: 'end' }));
+  }, [activeChat?.id]);
+
+  const handleFeedScroll = () => {
+    const el = feedRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+    if (nearBottom && !isNearBottomRef.current) setNewBelowCount(0);
+    isNearBottomRef.current = nearBottom;
+  };
+
+  const jumpToLatest = () => {
+    isNearBottomRef.current = true;
+    setNewBelowCount(0);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  };
+
+  // Glide to a message and pulse-highlight it (pinned banner / reply jumps).
+  const flashMessage = (id?: string | null) => {
+    if (!id) return;
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightMsgId(id);
+    window.setTimeout(() => setHighlightMsgId(prev => (prev === id ? null : prev)), 1600);
+  };
 
   // Incoming transmission alerts (sound + desktop notification)
   useEffect(() => {
@@ -233,7 +299,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
     }
   }, [activeChat?.id, chatLocked]);
 
-  // Close context menu / reaction picker on outside click
+  // Close context menu / reaction picker on outside click or Escape
   useEffect(() => {
     if (!contextMenu && !reactionPickerMsgId) return;
     const close = (e: MouseEvent) => {
@@ -243,8 +309,18 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         setReactionPickerMsgId(null);
       }
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setReactionPickerMsgId(null);
+      }
+    };
     document.addEventListener('mousedown', close, { capture: true });
-    return () => document.removeEventListener('mousedown', close, { capture: true });
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close, { capture: true });
+      document.removeEventListener('keydown', onKey);
+    };
   }, [contextMenu, reactionPickerMsgId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -844,6 +920,30 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                     </button>
                   )}
                 </h2>
+                {activeChat && !chatLocked && (
+                  <div className="mt-2 sm:mt-3 flex max-w-md">
+                    <div className="flex items-center gap-2 flex-1 min-w-0 term-panel border border-white/[0.07] focus-within:border-cyan-500/50 transition-colors px-3 py-1.5">
+                      <Search size={13} className="text-zinc-600 shrink-0" />
+                      <input
+                        value={chatSearch}
+                        onChange={e => setChatSearch(e.target.value)}
+                        placeholder="grep transmissions..."
+                        aria-label="Search messages in this terminal"
+                        className="flex-1 min-w-0 bg-transparent outline-none text-xs font-mono text-white placeholder:text-zinc-600"
+                      />
+                      {chatSearch.trim() && (
+                        <>
+                          <span className="text-[9px] font-bold tracking-widest text-cyan-500/80 shrink-0 tabular-nums">
+                            {messages.filter(m => (m.text ?? '').toLowerCase().includes(chatSearch.trim().toLowerCase())).length} HITS
+                          </span>
+                          <button type="button" onClick={() => setChatSearch('')} className="text-zinc-600 hover:text-white shrink-0" title="Clear search">
+                            <X size={12} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <span className="dot-live text-emerald-400 w-1.5 h-1.5" />
                   {activeChat ? (
@@ -867,9 +967,11 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
               </div>
 
               {/* Chat Feed */}
+              <div className="relative flex-1 min-h-0">
               <div 
                 ref={feedRef} 
-                className={`flex-1 overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative transition-all duration-500 ${stealthActive ? 'blur-xl opacity-30 select-none pointer-events-none' : ''}`}
+                onScroll={handleFeedScroll}
+                className={`feed-scroll h-full overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative transition-[filter,opacity] duration-500 ${stealthActive ? 'blur-xl opacity-30 select-none pointer-events-none' : ''}`}
               >
                 {showVideoTunnel && activeChat && (
                   <Suspense fallback={null}>
@@ -891,10 +993,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       <Pin size={10} className="rotate-45" /> PINNED ({messages.filter(m => m.pinned).length})
                     </div>
                     {messages.filter(m => m.pinned).slice(0, 3).map(pm => (
-                      <div key={pm.id} className="text-xs text-zinc-400 truncate cursor-pointer hover:text-amber-300 transition-colors py-0.5" onClick={() => {
-                        const el = document.getElementById(`msg-${pm.id}`);
-                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }}>
+                      <div key={pm.id} className="text-xs text-zinc-400 truncate cursor-pointer hover:text-amber-300 transition-colors py-0.5" onClick={() => flashMessage(pm.id)}>
                         <span className="text-amber-500/60 mr-1">→</span> {pm.text.slice(0, 80)}{pm.text.length > 80 ? '…' : ''}
                       </div>
                     ))}
@@ -959,30 +1058,43 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                     </div>
                   </div>
                 ) : (
-                  messages
-                    .filter(msg => !searchQuery || (msg.text && msg.text.toLowerCase().includes(searchQuery.toLowerCase())))
+                  (() => {
+                  let lastDay = '';
+                  return messages
+                    .filter(msg =>
+                      (!searchQuery || (msg.text ?? '').toLowerCase().includes(searchQuery.toLowerCase())) &&
+                      (!chatSearch.trim() || (msg.text ?? '').toLowerCase().includes(chatSearch.trim().toLowerCase()))
+                    )
                     .map(msg => {
                     const isSelf = msg.sender_id === deviceId;
                     const isSystem = msg.sender_id === 'SYSTEM';
+                    const msgDay = new Date(msg.created_at).toDateString();
+                    const dayChanged = msgDay !== lastDay;
+                    lastDay = msgDay;
 
                     if (isSystem) {
                       return (
-                        <div key={msg.id} className="hairline-gradient text-zinc-500 text-xs text-center border-y border-white/[0.05] py-2 my-2">
-                          {msg.text}
-                        </div>
+                        <React.Fragment key={msg.id}>
+                          {dayChanged && <DayDivider day={msgDay} />}
+                          <div className="hairline-gradient text-zinc-500 text-xs text-center border-y border-white/[0.05] py-2 my-2">
+                            {msg.text}
+                          </div>
+                        </React.Fragment>
                       );
                     }
 
                     return (
+                      <React.Fragment key={msg.id}>
+                      {dayChanged && <DayDivider day={msgDay} />}
                       <div 
-                        key={msg.id} 
                         id={`msg-${msg.id}`}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setContextMenu({ x: e.clientX, y: e.clientY, msgId: msg.id });
                           setReactionPickerMsgId(null);
                         }}
-                        className={`flex flex-col w-full max-w-3xl border theme-pad relative group theme-radius transition-shadow duration-200 ${
+                        className={`flex flex-col w-full max-w-3xl border theme-pad relative group theme-radius transition-all duration-300 ${
+                          highlightMsgId === msg.id ? 'ring-2 ring-cyan-400/80 bg-cyan-500/[0.07]' : ''} ${
                           msg.pinned ? 'border-amber-500/40 ring-1 ring-amber-500/20' : ''} ${
                           isSelf 
                             ? 'ml-auto border-cyan-400/40 bg-gradient-to-br from-cyan-500/[0.09] via-cyan-500/[0.02] to-transparent shadow-[0_0_28px_-14px_rgba(34,211,238,0.5)] hover:shadow-[0_0_32px_-12px_rgba(34,211,238,0.65)]' 
@@ -1052,10 +1164,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                         {msg.reply_to_id && (
                           <div 
                             className="mb-2 p-2 bg-black/20 border-l-2 border-zinc-700 text-xs text-zinc-500 truncate cursor-pointer hover:bg-black/40 transition-colors"
-                            onClick={() => {
-                              const el = document.getElementById(`msg-${msg.reply_to_id}`);
-                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }}
+                            onClick={() => flashMessage(msg.reply_to_id)}
                           >
                             ↪ {messages.find(m => m.id === msg.reply_to_id)?.text || 'Audio / Attachment'}
                           </div>
@@ -1136,10 +1245,23 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                           </div>
                         )}
                       </div>
+                      </React.Fragment>
                     );
-                  })
+                    });
+                  })()
                 )}
                 <div ref={messagesEndRef} />
+              </div>
+
+              {/* Jump-to-latest chip — appears when new traffic lands off-screen */}
+              {newBelowCount > 0 && (
+                <button
+                  onClick={jumpToLatest}
+                  className="absolute bottom-3 right-3 sm:right-6 z-30 flex items-center gap-1.5 bg-[#0a1220]/95 border border-cyan-500/40 text-cyan-300 text-[10px] font-bold tracking-widest uppercase pl-3 pr-2.5 py-1.5 rounded-full shadow-[0_0_24px_-8px_rgba(34,211,238,0.7)] hover:border-cyan-400 hover:text-white transition-colors"
+                >
+                  <ChevronDown size={12} /> {newBelowCount} NEW
+                </button>
+              )}
               </div>
 
               {/* Footer Input Bar */}
@@ -1455,7 +1577,10 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         <div 
           data-ctx-menu
           className="fixed z-[150] bg-[#0a0f18] border border-white/10 shadow-2xl min-w-[180px] py-1"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 200),
+            top: Math.min(contextMenu.y, window.innerHeight - 280),
+          }}
         >
           {(() => {
             const msg = messages.find(m => m.id === contextMenu.msgId);
@@ -1467,10 +1592,13 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   <Reply size={12} /> Reply
                 </button>
                 <button onClick={() => { setReactionPickerMsgId(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-amber-400 transition-colors font-mono">
-                  \U0001f60a React
+                  😊 React
                 </button>
                 <button onClick={() => { togglePinMessage(msg.id); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-amber-400 transition-colors font-mono">
                   <Pin size={12} /> {msg.pinned ? 'Unpin' : 'Pin'}
+                </button>
+                <button onClick={() => { navigator.clipboard.writeText(msg.text || ''); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-emerald-400 transition-colors font-mono">
+                  <Clipboard size={12} /> Copy Text
                 </button>
                 {isSelf && (
                   <button onClick={() => { setEditingMsgId(msg.id); setEditingText(msg.text); setContextMenu(null); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 hover:text-cyan-400 transition-colors font-mono">

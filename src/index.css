@@ -551,6 +551,26 @@ body::before {
 }
 
 /* Kill all animation on low-spec / reduced-motion devices */
+/* ── Touch-device compatibility ───────────────────────────────────────
+   iOS Safari auto-zooms any focused field whose font-size is < 16px.
+   Pinning form fields to 16px on coarse pointers kills that janky zoom
+   while keeping the desktop terminal aesthetic untouched. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Feed scroll container: keep momentum scrolling contained so flinging
+   inside the chat never bounces the whole document on mobile. */
+.feed-scroll {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001s !important;
