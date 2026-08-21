@@ -183,10 +183,9 @@ body::before {
     pointer-events: none;
     background: repeating-linear-gradient(
       0deg,
-      rgba(255, 255, 255, 0.012) 0px,
-      rgba(255, 255, 255, 0.012) 1px,
+      rgba(0, 0, 0, 0.12) 0px,
       transparent 1px,
-      transparent 3px
+      transparent 2px
     );
     z-index: 60;
   }
@@ -351,6 +350,21 @@ body::before {
     pointer-events: none;
     z-index: 70;
   }
+  .term-window::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.08) 0px,
+      transparent 1px,
+      transparent 2px
+    );
+    z-index: 60;
+    border-radius: inherit;
+    opacity: 0.6;
+  }
 
   .term-titlebar {
     background: linear-gradient(180deg, rgba(22, 22, 32, 0.9) 0%, rgba(10, 10, 18, 0.95) 100%);
@@ -462,6 +476,7 @@ body::before {
 @media (max-width: 480px) {
   body { font-size: 12px; }
   .term-window { border-radius: 8px !important; border: 1px solid rgba(255,255,255,0.06) !important; }
+  .term-window::after { display: none; } /* skip scanlines on tiny screens */
   .term-titlebar { padding-top: env(safe-area-inset-top, 0px); }
   .term-statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
   .term-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
