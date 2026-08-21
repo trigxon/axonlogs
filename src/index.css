@@ -15,7 +15,7 @@
 @layer base {
   :root {
     /* Futuristic Terminal Aesthetic */
-    --bg: #050506;
+    --bg: #030304;
     --panel: #0a0a10;
     --text-primary: #a3a3a3;
     --text-secondary: #52525b;
@@ -95,7 +95,22 @@
     width: 100%;
     margin: 0;
     padding: 0;
+    background: #030304;
   }
+}
+
+/* Subtle ambient glow behind terminal */
+body::before {
+  content: '';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 70vw;
+  height: 70vh;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(ellipse at center, rgba(34, 211, 238, 0.04) 0%, rgba(52, 211, 153, 0.02) 40%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 @layer utilities {
@@ -318,10 +333,13 @@
     position: relative;
     background: linear-gradient(180deg, rgba(10, 10, 17, 0.96) 0%, rgba(4, 4, 8, 0.98) 100%);
     border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: clamp(10px, 1vw + 6px, 16px);
     box-shadow:
       0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 8px 32px -4px rgba(0, 0, 0, 0.7),
       0 34px 100px -28px rgba(0, 0, 0, 0.95),
-      0 0 60px -32px rgba(34, 211, 238, 0.16),
+      0 0 80px -32px rgba(34, 211, 238, 0.12),
+      0 0 0 1px rgba(34, 211, 238, 0.04),
       inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
   .term-window::before {
@@ -443,18 +461,17 @@
 /* Small phones (320px - 480px) */
 @media (max-width: 480px) {
   body { font-size: 12px; }
-  .term-window { border-radius: 0 !important; border: none !important; }
+  .term-window { border-radius: 8px !important; border: 1px solid rgba(255,255,255,0.06) !important; }
   .term-titlebar { padding-top: env(safe-area-inset-top, 0px); }
   .term-statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
   .term-footer { padding-bottom: env(safe-area-inset-bottom, 0px); }
-  /* Larger tap targets on tiny screens */
   button, [role="button"] { min-height: 44px; min-width: 44px; }
 }
 
 /* Mobile (480px - 768px) */
 @media (min-width: 481px) and (max-width: 768px) {
   body { font-size: 13px; }
-  .term-window { border-radius: 0 !important; }
+  .term-window { border-radius: 10px !important; }
   .term-titlebar { padding-top: env(safe-area-inset-top, 0px); }
   .term-statusbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
   button { min-height: 40px; }
@@ -491,7 +508,7 @@
 @media (max-height: 500px) and (orientation: landscape) {
   .term-titlebar { padding-top: 0; height: auto; min-height: 28px; }
   .term-statusbar { height: auto; min-height: 24px; }
-  .term-window { border-radius: 0 !important; }
+  .term-window { border-radius: 6px !important; }
 }
 
 /* Safe area insets for phones with notches / dynamic island */
