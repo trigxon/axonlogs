@@ -1211,7 +1211,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       </button>
                     </div>
                   )}
-                  <form onSubmit={handleSubmit} className="flex items-center gap-1.5 sm:gap-2 md:gap-3 px-2.5 sm:px-3 md:px-8 py-2 sm:py-2.5 md:py-3">
+                  <form onSubmit={handleSubmit} className="flex items-center gap-1.5 sm:gap-2 md:gap-3 px-2.5 sm:px-3 md:px-8 py-2 sm:py-2.5 md:py-3 focus-within:shadow-[inset_0_0_30px_-15px_rgba(34,211,238,0.15)] transition-shadow duration-300">
                     {/* Shell prompt */}
                     <span className="text-[11px] md:text-xs font-bold shrink-0 select-none whitespace-nowrap" aria-hidden>
                       <span className="text-emerald-400">axon</span>

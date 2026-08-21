@@ -435,6 +435,17 @@ body::before {
   .axon-caret {
     caret-color: #22d3ee;
     caret-shape: block;
+    animation: cursor-blink 1s step-end infinite;
+  }
+
+  @keyframes cursor-blink {
+    0%, 100% { caret-color: #22d3ee; }
+    50% { caret-color: transparent; }
+  }
+
+  /* Outer glow on focus */
+  .axon-caret:focus {
+    text-shadow: 0 0 6px rgba(34, 211, 238, 0.25);
   }
 
   .no-scrollbar::-webkit-scrollbar {
