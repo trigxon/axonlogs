@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
-import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2, ChevronLeft } from 'lucide-react';
 import CallOverlay from '../calling/CallOverlay';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import ReactMarkdown from 'react-markdown';
@@ -109,7 +109,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat, settings, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage, startCall } = useCrypto();
+  const { deviceId, alias, chats, activeChat, messages, latency, setActiveChat, createChat, joinChat, sendMessage, purgeTerminal, addSystemMessage, networkStatus, renameChat, deleteChat, changeChatPassword, onlineUsers, broadcastTyping, typingUsers, deleteMessageLocally, simBotActive, toggleSimBot, unlockedChatId, unlockChat, lockChat, settings, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage, startCall } = useCrypto();
   const chatLocked = !!activeChat && unlockedChatId !== activeChat.id;
   const [input, setInput] = useState('');
   const [panicMode, setPanicMode] = useState(false);
@@ -712,7 +712,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
 
           {/* TERMINAL TAB STRIP (one tab per active terminal) */}
-          <div className="term-tabstrip h-9 md:h-10 shrink-0 flex items-stretch border-b border-white/[0.06] overflow-x-auto no-scrollbar">
+          <div className="term-tabstrip shrink-0 flex items-stretch border-b border-white/[0.06] overflow-x-auto no-scrollbar min-h-[clamp(32px,4vw,40px)]">
             {chats.map(chat => {
               const isTabActive = activeChat?.id === chat.id;
               const isTabLocked = unlockedChatId !== chat.id;
@@ -722,32 +722,42 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   onClick={() => setActiveChat(chat)}
                   data-code={chat.share_code}
                   title={`${chat.name}${isTabLocked ? ' [LOCKED]' : ''}`}
-                  className={`group relative flex items-center gap-2 px-3 md:px-4 min-w-0 shrink-0 border-r border-white/[0.04] transition-all ${
+                  className={`group relative flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 md:px-4 min-w-0 shrink-0 border-r border-white/[0.04] transition-all ${
                     isTabActive ? 'bg-[#0b0f16] text-cyan-300' : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.03]'
                   }`}
                 >
                   {isTabActive && (
                     <span className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-400 via-emerald-400 to-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
                   )}
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isTabLocked ? 'bg-amber-400/80' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]'}`} />
-                  <span className="text-[10px] font-bold tracking-wider uppercase truncate max-w-[7rem] md:max-w-[11rem]">{chat.name}</span>
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 transition-all ${
+                    isTabActive 
+                      ? (isTabLocked ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]') 
+                      : (isTabLocked ? 'bg-amber-400/50' : 'bg-emerald-400/50')
+                  }`} />
+                  <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase truncate max-w-[6rem] sm:max-w-[7rem] md:max-w-[11rem]">
+                    {chat.name}
+                  </span>
+                  {isTabLocked && (
+                    <Lock className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-500/60 shrink-0" />
+                  )}
                 </button>
               );
             })}
             <button
               onClick={openCreateModal}
               title="New terminal"
-              className="px-3 md:px-4 shrink-0 flex items-center text-zinc-500 hover:text-cyan-300 hover:bg-cyan-400/10 transition-colors"
+              className="px-2.5 sm:px-3 md:px-4 shrink-0 flex items-center gap-1 text-zinc-500 hover:text-cyan-300 hover:bg-cyan-400/10 transition-colors"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase hidden sm:inline">NEW</span>
             </button>
             <div className="flex-1" />
             {activeView !== 'dashboard' && (
               <button
                 onClick={() => setActiveView('dashboard')}
-                className="hidden sm:flex items-center px-4 text-[9px] font-bold tracking-widest uppercase text-zinc-500 hover:text-cyan-300 shrink-0 border-l border-white/[0.04] transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 md:px-4 text-[9px] sm:text-[10px] font-bold tracking-widest uppercase text-zinc-500 hover:text-cyan-300 shrink-0 border-l border-white/[0.04] transition-colors"
               >
-                ◂ Dashboard
+                <ChevronLeft className="w-3 h-3" /> DASHBOARD
               </button>
             )}
           </div>
@@ -883,9 +893,15 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                     </button>
                   )}
                 </h2>
-                <div className="text-emerald-500 text-xs mt-1 flex items-center gap-1.5">
+                <div className="mt-1.5 flex items-center gap-1.5">
                   <span className="dot-live text-emerald-400 w-1.5 h-1.5" />
-                  {activeChat ? 'Uplink Established' : 'Awaiting Connection...'}
+                  {activeChat ? (
+                    <span className="text-emerald-500 text-xs">Uplink Established</span>
+                  ) : (
+                    <span className="text-emerald-400 text-sm sm:text-base font-semibold tracking-wider animate-pulse">
+                      ⚡ Awaiting Connection...
+                    </span>
+                  )}
                   {activeChat && Object.keys(onlineUsers).length > 0 && (
                     <span className="ml-4 text-cyan-400">
                       ACTIVE NODES: {Object.values(onlineUsers).join(', ')}
@@ -935,17 +951,61 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 )}
 
                 {!activeChat ? (
-                  <div className="text-zinc-600 text-sm mt-4">
-                    [SYSTEM: NO CHANNEL SELECTED. CREATE OR JOIN TO INITIATE.]
+                  <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] gap-6">
+                    <div className="relative">
+                      <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full term-panel flex items-center justify-center border border-cyan-500/30">
+                        <span className="text-3xl sm:text-4xl">⚡</span>
+                      </div>
+                      <div className="absolute inset-0 rounded-full border-2 border-cyan-400/20 animate-ping" style={{ animationDuration: '3s' }} />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-cyan-300 text-base sm:text-lg font-bold tracking-widest uppercase mb-2">
+                        NO CHANNEL SELECTED
+                      </div>
+                      <div className="text-zinc-500 text-xs sm:text-sm tracking-wider">
+                        CREATE OR JOIN A TERMINAL TO INITIATE SECURE TRANSMISSIONS
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 mt-2">
+                      <button
+                        onClick={openCreateModal}
+                        className="btn-premium px-5 py-2.5 rounded-lg text-xs sm:text-sm flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" /> CREATE TERMINAL
+                      </button>
+                      <button
+                        onClick={() => {
+                          const code = prompt('Enter terminal link code:');
+                          if (code) joinChat(code.trim().toUpperCase());
+                        }}
+                        className="term-panel term-interactive px-5 py-2.5 rounded-lg text-xs sm:text-sm text-zinc-400 hover:text-cyan-300 flex items-center gap-2 border border-white/[0.06] hover:border-cyan-500/30"
+                      >
+                        <KeyRound className="w-4 h-4" /> JOIN TERMINAL
+                      </button>
+                    </div>
                   </div>
                 ) : chatLocked ? (
-                  <div className="text-zinc-600 text-sm mt-4 flex items-center gap-3">
-                    <Lock className="w-4 h-4 text-amber-500/70" />
-                    [SYSTEM: TERMINAL LOCKED. ENTER PASSPHRASE TO DECRYPT TRANSMISSIONS.]
+                  <div className="flex flex-col items-center justify-center flex-1 min-h-[200px] gap-4">
+                    <div className="w-16 h-16 rounded-full term-panel flex items-center justify-center border border-amber-500/40">
+                      <Lock className="w-6 h-6 text-amber-400" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-amber-400 text-sm sm:text-base font-bold tracking-widest uppercase mb-1">
+                        TERMINAL LOCKED
+                      </div>
+                      <div className="text-zinc-500 text-xs tracking-wider">
+                        Enter passphrase to decrypt transmissions
+                      </div>
+                    </div>
                   </div>
                 ) : messages.length === 0 ? (
-                  <div className="text-zinc-600 text-sm mt-4">
-                    [SYSTEM: CHANNEL SECURE. AWAITING TRANSMISSIONS...]
+                  <div className="flex flex-col items-center justify-center flex-1 min-h-[200px] gap-3">
+                    <div className="text-zinc-600 text-xs sm:text-sm tracking-widest uppercase">
+                      CHANNEL SECURE — AWAITING TRANSMISSIONS
+                    </div>
+                    <div className="text-zinc-700 text-[10px] sm:text-xs tracking-wider">
+                      Type a message below to begin
+                    </div>
                   </div>
                 ) : (
                   messages
@@ -1150,7 +1210,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                       </button>
                     </div>
                   )}
-                  <form onSubmit={handleSubmit} className="flex items-center gap-2 sm:gap-3 px-3 md:px-8 py-2.5 md:py-3">
+                  <form onSubmit={handleSubmit} className="flex items-center gap-1.5 sm:gap-2 md:gap-3 px-2.5 sm:px-3 md:px-8 py-2 sm:py-2.5 md:py-3">
                     {/* Shell prompt */}
                     <span className="text-[11px] md:text-xs font-bold shrink-0 select-none whitespace-nowrap" aria-hidden>
                       <span className="text-emerald-400">axon</span>

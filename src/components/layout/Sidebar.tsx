@@ -121,14 +121,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const menuChatIsArchived = !!contextMenu && archivedChats.some(c => c.id === contextMenu.chatId);
 
   const renderNavGroup = (title: string, items: typeof coreNav) => (
-    <div className="mb-4">
+    <div className="mb-5">
       {!railCollapsed && (
         <div className="px-3 mb-2 flex items-center gap-1.5 text-[10px] font-bold text-zinc-600 tracking-[0.2em] uppercase">
           <span className="w-1 h-1 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 inline-block" />
           {title}
         </div>
       )}
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         {items.map((item) => {
           const isActive = activeView === item.id;
           return (
@@ -187,7 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         } ${isCollapsed ? 'md:w-[72px]' : 'w-[min(85vw,280px)] md:w-[260px]'}`}
     >
       {/* Header / Brand */}
-      <div className="h-16 flex items-center justify-between px-4 mt-2 shrink-0">
+      <div className="h-14 sm:h-16 flex items-center justify-between px-3 sm:px-4 mt-2 shrink-0">
         {!railCollapsed ? (
           <div className="flex items-center gap-2.5 overflow-hidden">
             <div className="ring-gradient rounded-lg p-2 shrink-0">
@@ -238,14 +238,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Navigation Items */}
-      <nav className="px-3 overflow-y-auto pt-2">
+      <nav className="px-3 overflow-y-auto pt-3 space-y-1">
         {renderNavGroup('Core', coreNav)}
         {renderNavGroup('System', systemNav)}
       </nav>
 
       {/* Terminals Panel */}
       <div className="border-t border-white/[0.06] flex flex-col min-h-0 flex-1">
-        <div className="px-3 pt-3 pb-1 shrink-0">
+        <div className="px-3 pt-4 pb-1 shrink-0">
           {railCollapsed ? (
             <div className="flex justify-center mb-2">
               <span className="text-cyan-400/80 tabular-nums text-[10px] font-bold">{chats.length}</span>
@@ -268,9 +268,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {/* Active chat list */}
-          <div className="overflow-y-auto max-h-[28vh] space-y-1 pr-0.5">
+          <div className="overflow-y-auto max-h-[30vh] space-y-1.5 pr-0.5">
             {railCollapsed ? (
-              <div className="flex flex-col items-center gap-2 py-1">
+              <div className="flex flex-col items-center gap-3 py-2">
                 {chats.slice(0, 12).map(chat => {
                   const isActive = activeChat?.id === chat.id;
                   const isLocked = unlockedChatId !== chat.id;
@@ -279,7 +279,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       key={chat.id}
                       title={`${chat.name}${isLocked ? ' [LOCKED]' : ''}`}
                       onClick={() => setActiveChat(chat)}
-                      className={`w-2.5 h-2.5 rounded-full transition-all ${
+                      className={`w-3 h-3 rounded-full transition-all ${
                         isActive ? (isLocked ? 'bg-amber-400 glow-amber' : 'bg-cyan-400 glow-cyan') : 'bg-zinc-700 hover:bg-zinc-500'
                       }`}
                     />
@@ -323,7 +323,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Archived chats */}
         {!railCollapsed && archivedChats.length > 0 && (
-          <div className="px-3 pt-3 pb-1 shrink-0 border-t border-white/[0.05]">
+          <div className="px-3 pt-4 pb-2 shrink-0 border-t border-white/[0.05]">
             {renderSectionHeader('Archived', archivedChats.length)}
             <div className="space-y-1 max-h-[20vh] overflow-y-auto pr-0.5">
               {archivedChats.map(chat => (
@@ -405,8 +405,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Console / user box */}
       {!railCollapsed ? (
-        <div className="p-3 mt-auto shrink-0">
-          <div className="term-panel rounded-xl p-3 flex flex-col gap-3">
+        <div className="p-2.5 sm:p-3 mt-auto shrink-0">
+          <div className="term-panel rounded-xl p-2.5 sm:p-3 flex flex-col gap-2.5 sm:gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500/25 to-emerald-500/15 border border-cyan-400/30 flex items-center justify-center shrink-0 glow-cyan">
                 <UserCheck className="w-4 h-4 text-cyan-300" />
