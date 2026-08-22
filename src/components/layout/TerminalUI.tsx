@@ -719,7 +719,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           <div className="term-inner-glow" aria-hidden />
 
           {/* TITLE BAR (traffic lights + session + live clock) */}
-          <div className="term-titlebar h-9 shrink-0 flex items-center gap-3 px-3 md:px-4 border-b border-white/[0.07] select-none">
+          <div className="term-titlebar h-9 shrink-0 flex items-center gap-3 px-3 sm:px-4 lg:px-7 border-b border-white/[0.07] select-none">
             <div className="flex items-center gap-2 shrink-0" aria-hidden>
               <span className="tl tl-red" />
               <span className="tl tl-amber" />
@@ -812,7 +812,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
         {activeView === 'dashboard' && (
           <main className="flex-1 flex flex-col min-w-0 glass-panel border-l border-white/[0.04]">
               {/* Top Header */}
-              <header className="border-b border-white/[0.05] bg-[#090910] flex items-center justify-between px-3 sm:px-4 md:px-8 gap-2 sm:gap-3 shrink-0 min-h-[clamp(40px,5vw,48px)]">
+              <header className="border-b border-white/[0.05] bg-[#090910] flex items-center justify-between px-3 sm:px-4 md:px-6 lg:px-8 gap-2 sm:gap-3 shrink-0 min-h-[clamp(40px,5vw,48px)]">
                 <div className="flex items-center gap-3 md:gap-6 text-[10px] font-bold tracking-widest uppercase overflow-hidden min-w-0">
                   <button
                     onClick={() => setMobileSidebarOpen(true)}
@@ -1359,7 +1359,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
           </div>
 
           {/* ── STATUS BAR (tmux-style) ── */}
-          <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-2 sm:px-3 md:px-4 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
+          <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-3 sm:px-4 md:px-6 lg:px-7 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
             <span className={`flex items-center gap-1.5 shrink-0 ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full dot-live ${networkStatus === 'ONLINE' || networkStatus === 'LOCAL' ? 'text-emerald-400' : 'text-red-400'}`} />
               <span className="hidden sm:inline">{networkStatus === 'ONLINE' ? 'GLOBAL SYNC' : networkStatus === 'LOCAL' ? 'DEVICE-ONLY' : (networkStatus || 'OFFLINE')}</span>

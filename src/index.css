@@ -424,6 +424,8 @@ body::before {
 
   .term-tabstrip {
     background: linear-gradient(180deg, rgba(7, 7, 13, 0.98) 0%, rgba(9, 9, 16, 0.98) 100%);
+    padding-left: clamp(10px, 0.8vw + 4px, 20px);
+    padding-right: clamp(10px, 0.8vw + 4px, 20px);
   }
 
   .term-statusbar {
@@ -672,20 +674,19 @@ html.perf-lite .crt-warmup {
   .term-window { border-radius: 6px !important; }
 }
 
-/* Safe area insets for phones with notches / dynamic island */
+/* Safe area insets for phones with notches / dynamic island.
+   NOTE: vertical insets only — horizontal env() here previously ZEROED
+   the bars' side padding on every device (unlayered rules beat Tailwind
+   utilities), which made the clock/status text touch the window edges. */
 @supports (padding-top: env(safe-area-inset-top)) {
   .term-titlebar {
-    padding-top: env(safe-area-inset-top);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
+    padding-top: env(safe-area-inset-top, 0px);
   }
   .term-statusbar {
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .term-footer {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 
