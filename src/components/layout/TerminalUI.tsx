@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { useCrypto } from '../../contexts/CryptoContext';
 import { FileText, ToggleRight, ToggleLeft, ArrowRight, Download, Paperclip, Plus, KeyRound, X, Edit2, Key, Reply, Lock, LockOpen, Video, Clipboard, Check, Flame, Bot, Menu, Phone, Pin, RotateCcw, Trash2, ChevronLeft, ChevronDown, Search } from 'lucide-react';
-import CallOverlay from '../calling/CallOverlay';
+import CallOverlay, { IncomingCallScreen } from '../calling/CallOverlay';
 import { encodeSteganography, decodeSteganography } from '../../utils/steg';
 import ReactMarkdown from 'react-markdown';
 import { VoiceRecorder } from '../chat/VoiceRecorder';
@@ -11,7 +11,7 @@ import Sidebar, { type ActiveView } from './Sidebar';
 import remarkGfm from 'remark-gfm';
 
 // Lazy-loaded views keep the initial bundle tiny (great for legacy laptops).
-const VideoTunnel = lazy(() => import('./VideoTunnel').then(m => ({ default: m.VideoTunnel })));
+
 const LogsView = lazy(() => import('../logs/LogsView'));
 const AxonAIShell = lazy(() => import('../ai/AxonAIShell'));
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
@@ -92,7 +92,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
   const isNearBottomRef = useRef(true);
 
-  const [showVideoTunnel, setShowVideoTunnel] = useState(false);
 
   // Stealth mode: obfuscate the feed while the tab is hidden
   const [tabHidden, setTabHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
@@ -840,14 +839,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                   )}
                   {activeChat && (
                     <button 
-                      onClick={() => setShowVideoTunnel(!showVideoTunnel)}
-                      className={`border px-3 py-1 items-center gap-2 hidden md:flex transition-colors ${showVideoTunnel ? 'bg-cyan-500 text-black border-cyan-500' : 'border-cyan-500/30 text-cyan-500 hover:bg-cyan-500 hover:text-black'}`}
-                    >
-                      <Video size={12} className="inline mr-1" /> COMM-LINK
-                    </button>
-                  )}
-                  {activeChat && (
-                    <button 
                       onClick={() => startCall(activeChat, 'audio')}
                       className="border px-2 md:px-3 py-1 items-center gap-1.5 md:gap-2 flex transition-colors border-emerald-500/30 text-emerald-500 hover:bg-emerald-500 hover:text-black"
                     >
@@ -973,12 +964,6 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
                 onScroll={handleFeedScroll}
                 className={`feed-scroll h-full overflow-y-auto px-4 md:px-8 py-4 flex flex-col gap-6 relative transition-[filter,opacity] duration-500 ${stealthActive ? 'blur-xl opacity-30 select-none pointer-events-none' : ''}`}
               >
-                {showVideoTunnel && activeChat && (
-                  <Suspense fallback={null}>
-                    <VideoTunnel onClose={() => setShowVideoTunnel(false)} />
-                  </Suspense>
-                )}
-
                 {stealthActive && (
                   <div className="sticky top-2 z-20 mx-auto w-max px-4 py-1.5 rounded-full border border-blue-500/40 bg-[#0a1030] text-[10px] font-bold tracking-[0.25em] uppercase text-blue-400 flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
@@ -1626,6 +1611,7 @@ export const TerminalUI: React.FC<TerminalUIProps> = ({
 
       {/* CALL OVERLAY */}
       <CallOverlay />
+      <IncomingCallScreen />
 
     </div>
   );

@@ -14,6 +14,24 @@ export interface Reaction {
   user_id: string;
 }
 
+/** Lightweight call target (structural subset of Chat) */
+export interface CallTarget {
+  id: string;
+  name: string;
+}
+
+/** An incoming call announced over the room's realtime channel */
+export interface IncomingCall {
+  chatId: string;
+  chatName: string;
+  callId: string;
+  type: 'audio' | 'video';
+  fromDeviceId: string;
+  fromAlias: string;
+}
+
+export type CallStatus = 'idle' | 'ringing' | 'connecting' | 'connected' | 'failed';
+
 export interface Message {
   id: string;
   chat_id: string;
@@ -108,10 +126,18 @@ interface CryptoContextType {
   settings: AppSettings;
   updateSettings: (patch: Partial<AppSettings>) => void;
   // Calling state
-  callingChat: Chat | null;
+  callingChat: CallTarget | null;
   callType: 'audio' | 'video' | null;
+  callStatus: CallStatus;
+  callNotice: string | null;
+  incomingCall: IncomingCall | null;
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
   startCall: (chat: Chat, type: 'audio' | 'video') => void;
   endCall: () => void;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
+  getCallRtt: () => Promise<number | null>;
   messagesInView: string[];
   setMessagesInView: (ids: string[]) => void;
 }
@@ -894,6 +920,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
           setMessages(prev => [...prev, ephMsg]);
         })
+        .on('broadcast', { event: 'webrtc' }, ({ payload }) => {
+          webrtcSignalRef.current?.(payload);
+        })
         .subscribe(async (status) => {
           if (status === 'SUBSCRIBED') {
             await channel.track({ deviceId, alias, onlineAt: new Date().toISOString() });
@@ -1247,22 +1276,320 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     addSystemMessage(`⟳ Resent: ${msg.text.slice(0, 60)}${msg.text.length > 60 ? '…' : ''}`);
   }, [messages, addSystemMessage]);
 
-  // Calling state
-  const [callingChat, setCallingChat] = useState<Chat | null>(null);
+  /* ────────────────────────────────────────────────────────────────────
+     WebRTC Calling Engine — real P2P audio/video calls.
+     Signaling rides the existing Supabase Realtime room channel via
+     broadcast event 'webrtc'. Roles are strict: caller = answerer,
+     callee = offerer (offer is created only after the callee accepts).
+     ──────────────────────────────────────────────────────────────────── */
+  const [callingChat, setCallingChat] = useState<CallTarget | null>(null);
   const [callType, setCallType] = useState<'audio' | 'video' | null>(null);
+  const [callStatus, setCallStatus] = useState<CallStatus>('idle');
+  const [callNotice, setCallNotice] = useState<string | null>(null);
+  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [messagesInView, setMessagesInView] = useState<string[]>([]);
 
-  const startCall = useCallback((chat: Chat, type: 'audio' | 'video') => {
-    setCallingChat(chat);
-    setCallType(type);
-    addLog(`[CALL] ${type.toUpperCase()} call initiated on ${chat.name}`);
-  }, [addLog]);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
+  const callMetaRef = useRef<{ chatId: string; callId: string; role: 'caller' | 'callee'; type: 'audio' | 'video' } | null>(null);
+  const ringTimeoutRef = useRef<number | null>(null);
+  const connectTimeoutRef = useRef<number | null>(null);
+  const callStatusRef = useRef<CallStatus>('idle');
 
-  const endCall = useCallback(() => {
+  useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
+
+  const sendSignal = useCallback((chatId: string, kind: string, extra: Record<string, unknown> = {}) => {
+    if (!presenceChannel) return;
+    presenceChannel.send({
+      type: 'broadcast',
+      event: 'webrtc',
+      payload: { kind, chatId, from: deviceId, alias, callId: callMetaRef.current?.callId, ...extra },
+    });
+  }, [presenceChannel, deviceId, alias]);
+
+  const clearCallTimers = useCallback(() => {
+    if (ringTimeoutRef.current !== null) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
+    if (connectTimeoutRef.current !== null) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null; }
+  }, []);
+
+  const teardownCall = useCallback((opts?: { notify?: boolean; reason?: string }) => {
+    clearCallTimers();
+    if (opts?.notify && callMetaRef.current) {
+      sendSignal(callMetaRef.current.chatId, 'call-end', { reason: opts.reason });
+    }
+    try { pcRef.current?.close(); } catch { /* already closed */ }
+    pcRef.current = null;
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    localStreamRef.current = null;
+    pendingIceRef.current = [];
+    pendingOfferRef.current = null;
+    callMetaRef.current = null;
+    setLocalStream(null);
+    setRemoteStream(null);
     setCallingChat(null);
     setCallType(null);
+    setCallStatus('idle');
+    setIncomingCall(null);
+    setCallNotice(null);
+  }, [clearCallTimers, sendSignal]);
+
+  const acquireMedia = useCallback(async (type: 'audio' | 'video') => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: type === 'video' ? { width: { ideal: 1280 }, facingMode: 'user' } : false,
+    });
+    localStreamRef.current = stream;
+    setLocalStream(stream);
+    return stream;
+  }, []);
+
+  const createPeer = useCallback((chatId: string) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
+    });
+
+    localStreamRef.current?.getTracks().forEach(track => {
+      if (localStreamRef.current) pc.addTrack(track, localStreamRef.current);
+    });
+
+    const remote = new MediaStream();
+    pc.ontrack = (event) => {
+      event.streams[0]?.getTracks().forEach(t => {
+        if (!remote.getTracks().some(existing => existing.id === t.id)) remote.addTrack(t);
+      });
+      setRemoteStream(new MediaStream(remote.getTracks()));
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) sendSignal(chatId, 'call-ice', { candidate: event.candidate.toJSON() });
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        clearCallTimers();
+        setCallStatus('connected');
+        setCallNotice(null);
+        addLog('[CALL] Peer connection established');
+      } else if (pc.connectionState === 'failed') {
+        setCallStatus('failed');
+        setCallNotice('CONNECTION FAILED');
+        addLog('[CALL] Peer connection failed');
+      }
+    };
+
+    pcRef.current = pc;
+    return pc;
+  }, [sendSignal, clearCallTimers, addLog]);
+
+  const applyRemoteOffer = useCallback(async (sdp: RTCSessionDescriptionInit) => {
+    const pc = pcRef.current;
+    if (!pc) { pendingOfferRef.current = sdp; return; }
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    const meta = callMetaRef.current;
+    if (meta) sendSignal(meta.chatId, 'call-answer', { sdp: pc.localDescription });
+    for (const c of pendingIceRef.current.splice(0)) {
+      await pc.addIceCandidate(c).catch(() => { /* stale candidate */ });
+    }
+  }, [sendSignal]);
+
+  const handleSignal = useCallback(async (p: any) => {
+    if (!p || p.from === deviceId) return;
+    const meta = callMetaRef.current;
+
+    switch (p.kind) {
+      case 'call-invite': {
+        if (meta || incomingCall) {
+          sendSignal(p.chatId, 'call-end', { callId: p.callId, reason: 'busy' });
+          return;
+        }
+        setIncomingCall({
+          chatId: p.chatId,
+          chatName: p.chatName || 'UNKNOWN TERMINAL',
+          callId: p.callId,
+          type: p.callType === 'video' ? 'video' : 'audio',
+          fromDeviceId: p.from,
+          fromAlias: p.alias || 'UNKNOWN NODE',
+        });
+        addLog(`[CALL] Incoming ${p.callType} call from ${p.alias || p.from}`);
+        window.setTimeout(() => {
+          setIncomingCall(cur => (cur && cur.callId === p.callId ? null : cur));
+        }, 30000);
+        break;
+      }
+      case 'call-accept': {
+        if (!meta || meta.role !== 'caller' || p.callId !== meta.callId) return;
+        clearCallTimers();
+        setCallStatus('connecting');
+        try {
+          await acquireMedia(meta.type);
+          const pc = createPeer(meta.chatId);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          sendSignal(meta.chatId, 'call-offer', { sdp: pc.localDescription });
+          connectTimeoutRef.current = window.setTimeout(() => {
+            if (pcRef.current && pcRef.current.connectionState !== 'connected') {
+              setCallStatus('failed');
+              setCallNotice('PEER UNREACHABLE');
+              addLog('[CALL] Connect timeout');
+            }
+          }, 20000);
+        } catch {
+          setCallStatus('failed');
+          setCallNotice('MEDIA ACCESS DENIED');
+          sendSignal(meta.chatId, 'call-end', { reason: 'media-error' });
+        }
+        break;
+      }
+      case 'call-offer': {
+        if (!meta || meta.role !== 'callee' || p.callId !== meta.callId) return;
+        await applyRemoteOffer(p.sdp);
+        break;
+      }
+      case 'call-answer': {
+        if (!meta || meta.role !== 'caller' || p.callId !== meta.callId || !pcRef.current) return;
+        await pcRef.current.setRemoteDescription(new RTCSessionDescription(p.sdp));
+        for (const c of pendingIceRef.current.splice(0)) {
+          await pcRef.current.addIceCandidate(c).catch(() => { /* stale candidate */ });
+        }
+        break;
+      }
+      case 'call-ice': {
+        if (!meta || p.callId !== meta.callId || !p.candidate) return;
+        const pc = pcRef.current;
+        if (pc?.remoteDescription) {
+          await pc.addIceCandidate(p.candidate).catch(() => { /* stale candidate */ });
+        } else {
+          pendingIceRef.current.push(p.candidate);
+        }
+        break;
+      }
+      case 'call-end': {
+        if (incomingCall && incomingCall.callId === p.callId && !meta) {
+          setIncomingCall(null);
+          addLog('[CALL] Incoming call cancelled by caller');
+          return;
+        }
+        if (meta && p.callId === meta.callId) {
+          teardownCall();
+          if (p.reason === 'declined' || p.reason === 'busy' || p.reason === 'media-error') {
+            setCallStatus('failed');
+            setCallNotice(p.reason === 'declined' ? 'CALL DECLINED' : p.reason === 'busy' ? 'PEER BUSY' : 'PEER MEDIA ERROR');
+          }
+          addLog(`[CALL] Closed by peer (${p.reason || 'hangup'})`);
+        }
+        break;
+      }
+    }
+  }, [deviceId, incomingCall, sendSignal, addLog, clearCallTimers, acquireMedia, createPeer, applyRemoteOffer, teardownCall]);
+
+  // Route signals from the room channel through a ref (stable across renders)
+  const webrtcSignalRef = useRef<(p: any) => void>(() => {});
+  useEffect(() => {
+    webrtcSignalRef.current = (p: any) => { void handleSignal(p); };
+  }, [handleSignal]);
+
+  const startCall = useCallback((chat: Chat, type: 'audio' | 'video') => {
+    if (callingChat || incomingCall) return;
+    if (!presenceChannel) {
+      setCallingChat({ id: chat.id, name: chat.name });
+      setCallType(type);
+      setCallStatus('failed');
+      setCallNotice('SIGNALING OFFLINE — CONNECT TO CLOUD');
+      return;
+    }
+    const callId = `${deviceId}-${Date.now()}`;
+    callMetaRef.current = { chatId: chat.id, callId, role: 'caller', type };
+    setCallingChat({ id: chat.id, name: chat.name });
+    setCallType(type);
+    setCallStatus('ringing');
+    setCallNotice(null);
+    addLog(`[CALL] ${type.toUpperCase()} call initiated on ${chat.name}`);
+    sendSignal(chat.id, 'call-invite', { callId, callType: type, chatName: chat.name });
+    ringTimeoutRef.current = window.setTimeout(() => {
+      if (callMetaRef.current?.callId === callId && callStatusRef.current === 'ringing') {
+        sendSignal(chat.id, 'call-end', { callId, reason: 'timeout' });
+        teardownCall();
+        setCallStatus('failed');
+        setCallNotice('NO ANSWER');
+        addLog('[CALL] No answer — timed out');
+      }
+    }, 30000);
+  }, [callingChat, incomingCall, presenceChannel, deviceId, sendSignal, addLog, teardownCall]);
+
+  const acceptIncomingCall = useCallback(async () => {
+    const inv = incomingCall;
+    if (!inv) return;
+    setIncomingCall(null);
+    callMetaRef.current = { chatId: inv.chatId, callId: inv.callId, role: 'callee', type: inv.type };
+    setCallingChat({ id: inv.chatId, name: inv.chatName });
+    setCallType(inv.type);
+    setCallStatus('connecting');
+    sendSignal(inv.chatId, 'call-accept', { callId: inv.callId });
+    try {
+      await acquireMedia(inv.type);
+      createPeer(inv.chatId);
+      const buffered = pendingOfferRef.current;
+      pendingOfferRef.current = null;
+      if (buffered) await applyRemoteOffer(buffered);
+      connectTimeoutRef.current = window.setTimeout(() => {
+        if (pcRef.current && pcRef.current.connectionState !== 'connected') {
+          setCallStatus('failed');
+          setCallNotice('PEER UNREACHABLE');
+        }
+      }, 20000);
+      addLog('[CALL] Accepted incoming call');
+    } catch {
+      setCallStatus('failed');
+      setCallNotice('MEDIA ACCESS DENIED');
+      sendSignal(inv.chatId, 'call-end', { reason: 'media-error' });
+    }
+  }, [incomingCall, sendSignal, acquireMedia, createPeer, applyRemoteOffer, addLog]);
+
+  const rejectIncomingCall = useCallback(() => {
+    const inv = incomingCall;
+    if (!inv) return;
+    setIncomingCall(null);
+    sendSignal(inv.chatId, 'call-end', { callId: inv.callId, reason: 'declined' });
+    addLog('[CALL] Incoming call declined');
+  }, [incomingCall, sendSignal, addLog]);
+
+  const endCall = useCallback(() => {
+    teardownCall({ notify: true, reason: 'hangup' });
     addLog('[CALL] Call ended');
-  }, [addLog]);
+  }, [teardownCall, addLog]);
+
+  const getCallRtt = useCallback(async (): Promise<number | null> => {
+    const pc = pcRef.current;
+    if (!pc) return null;
+    try {
+      const stats = await pc.getStats();
+      let rtt: number | null = null;
+      stats.forEach(report => {
+        if (report.type === 'candidate-pair' && (report as any).state === 'succeeded' && (report as any).currentRoundTripTime != null) {
+          rtt = (report as any).currentRoundTripTime * 1000;
+        }
+      });
+      return rtt;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // End call automatically if the active terminal changes mid-call
+  useEffect(() => {
+    if (callingChat && activeChat && callingChat.id !== activeChat.id) endCall();
+  }, [activeChat, callingChat, endCall]);
+
+  // Full teardown on unmount (ref-indirected to avoid dep-driven restarts)
+  const teardownRef = useRef(teardownCall);
+  useEffect(() => { teardownRef.current = teardownCall; }, [teardownCall]);
+  useEffect(() => () => teardownRef.current(), []);
 
   return (
     <CryptoContext.Provider
@@ -1275,7 +1602,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         onlineUsers, typingUsers, broadcastTyping, simBotActive, toggleSimBot,
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
         settings, updateSettings,
-        callingChat, callType, startCall, endCall, messagesInView, setMessagesInView,
+        callingChat, callType, callStatus, callNotice, incomingCall, localStream, remoteStream,
+        startCall, endCall, acceptIncomingCall, rejectIncomingCall, getCallRtt, messagesInView, setMessagesInView,
       }}
     >
       {children}

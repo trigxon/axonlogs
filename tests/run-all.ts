@@ -5,6 +5,7 @@ import { runTier2Tests } from './tier2_dynamic_settings.test.ts';
 import { runTier3Tests } from './tier3_data_export_import.test.ts';
 import { runTier4Tests } from './tier4_danger_zone_reset.test.ts';
 import { runTier5Tests } from './tier5_typewriter_cursor.test.ts';
+import { runTier6Tests } from './tier6_webrtc_calls.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +40,10 @@ async function main() {
   console.log('--- Executing Tier 5: Typewriter & Cursor Contract ---');
   const t5 = await runTier5Tests(projectRoot);
   allResults.push(...t5);
+
+  console.log('--- Executing Tier 6: WebRTC Calling Contract ---');
+  const t6 = await runTier6Tests(projectRoot);
+  allResults.push(...t6);
 
   const totalDuration = Date.now() - startTime;
 
