@@ -31,6 +31,64 @@ create index if not exists idx_messages_chat_id
   on public.messages (chat_id, created_at);
 
 -- ------------------------------------------------------------
+-- 1b. Accounts (Instagram-style username + password sign-up)
+--     Passwords are PBKDF2-SHA256 hashed client-side before upload;
+--     the plaintext never reaches the database.
+-- ------------------------------------------------------------
+
+create table if not exists public.accounts (
+  id              uuid primary key default gen_random_uuid(),
+  username        text not null unique,
+  password_hash   text not null,
+  bio             text not null default '',
+  avatar_gradient text not null default '',
+  created_at      timestamptz not null default now(),
+  last_seen_at    timestamptz not null default now()
+);
+
+create index if not exists idx_accounts_username
+  on public.accounts (lower(username));
+
+alter table public.accounts enable row level security;
+
+drop policy if exists "public read accounts"    on public.accounts;
+drop policy if exists "public insert accounts"  on public.accounts;
+drop policy if exists "public update accounts"  on public.accounts;
+
+create policy "public read accounts"   on public.accounts for select using (true);
+create policy "public insert accounts" on public.accounts for insert with check (true);
+create policy "public update accounts" on public.accounts for update using (true);
+
+-- ------------------------------------------------------------
+-- 1c. DM invites — Instagram-style "Message @user" delivery.
+--     A DM channel is created with a random share_code (which doubles
+--     as the AES passphrase) and an invite row is addressed to the
+--     recipient's username. Their client auto-joins on arrival.
+-- ------------------------------------------------------------
+
+create table if not exists public.dm_invites (
+  id            uuid primary key default gen_random_uuid(),
+  chat_id       uuid not null references public.chats(id) on delete cascade,
+  share_code    text not null,
+  from_username text not null,
+  to_username   text not null,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists idx_dm_invites_to
+  on public.dm_invites (to_username, created_at);
+
+alter table public.dm_invites enable row level security;
+
+drop policy if exists "public read dm_invites"    on public.dm_invites;
+drop policy if exists "public insert dm_invites"  on public.dm_invites;
+drop policy if exists "public delete dm_invites"  on public.dm_invites;
+
+create policy "public read dm_invites"   on public.dm_invites for select using (true);
+create policy "public insert dm_invites" on public.dm_invites for insert with check (true);
+create policy "public delete dm_invites" on public.dm_invites for delete using (true);
+
+-- ------------------------------------------------------------
 -- 2. Row Level Security - the app relies on the anon key with
 --    no user session, so allow public access to both tables.
 -- ------------------------------------------------------------
@@ -75,6 +133,12 @@ begin
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'chats'
   ) then
     alter publication supabase_realtime add table public.chats;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'dm_invites'
+  ) then
+    alter publication supabase_realtime add table public.dm_invites;
   end if;
 end $$;
 

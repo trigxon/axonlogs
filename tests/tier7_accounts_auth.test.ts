@@ -1,0 +1,133 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { TestResult } from './tier1_build_and_navigation.test.ts';
+
+/**
+ * Tier 7: Accounts & DM Delivery Contract
+ * - AuthScreen exists and gates the app (username + password accounts)
+ * - Password hashing is PBKDF2 (crypto-js), verified locally
+ * - CryptoContext exposes account / logout / searchAccounts / startDmWithUser
+ * - DM display-name logic shows the OTHER handle (Instagram behavior)
+ * - supabase/schema.sql provisions accounts + dm_invites (+ realtime)
+ * - No story/note strip in the inbox (no stories, no reels, no posts)
+ * - Mac window chrome restored (traffic-light titlebar + tmux statusbar)
+ */
+export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> {
+  const results: TestResult[] = [];
+  const read = (...parts: string[]) =>
+    fs.readFileSync(path.join(projectRoot, ...parts), 'utf-8');
+
+  // 7.1: Auth gate + PBKDF2 password hashing
+  const authStart = Date.now();
+  try {
+    const authUtil = read('src', 'utils', 'auth.ts');
+    const authScreen = read('src', 'components', 'auth', 'AuthScreen.tsx');
+    const appTsx = read('src', 'App.tsx');
+
+    const checks: Array<[boolean, string]> = [
+      [authUtil.includes('CryptoJS.PBKDF2'), 'auth.ts must hash passwords with CryptoJS.PBKDF2'],
+      [authUtil.includes('verifyPassword'), 'auth.ts must verify passwords locally'],
+      [authUtil.includes('signupAccount') && authUtil.includes('loginAccount'), 'auth.ts must implement signup + login'],
+      [authUtil.includes("SESSION_KEY = 'axon_session'"), 'auth.ts must persist the account session'],
+      [authScreen.includes("placeholder=\"username\""), 'AuthScreen must collect a username'],
+      [authUtil.includes('validateUsername') && authScreen.includes('validateUsername'), 'AuthScreen must validate the username'],
+      [appTsx.includes('AuthScreen') && appTsx.includes('account'), 'App.tsx must gate ChatApp behind the account session'],
+    ];
+    const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
+    if (failed.length > 0) throw new Error(failed.join('; '));
+
+    results.push({
+      name: 'Tier 7.1: Account auth gate + PBKDF2 password hashing',
+      tier: 7,
+      passed: true,
+      durationMs: Date.now() - authStart,
+    });
+  } catch (err: any) {
+    results.push({
+      name: 'Tier 7.1: Account auth gate + PBKDF2 password hashing',
+      tier: 7,
+      passed: false,
+      error: err.message,
+      durationMs: Date.now() - authStart,
+    });
+  }
+
+  // 7.2: DM flow — context API + other-handle display + invite delivery
+  const dmStart = Date.now();
+  try {
+    const ctx = read('src', 'contexts', 'CryptoContext.tsx');
+    const inbox = read('src', 'components', 'chat', 'InboxPanel.tsx');
+    const authUtil = read('src', 'utils', 'auth.ts');
+    const schema = read('supabase', 'schema.sql');
+
+    // dmDisplayName('alice·bob sorted') behavior is structural: sorted join with ·
+    const dmNameSorted = authUtil.includes('.sort()');
+    const checks: Array<[boolean, string]> = [
+      [ctx.includes('startDmWithUser'), 'CryptoContext must expose startDmWithUser'],
+      [ctx.includes('searchAccounts'), 'CryptoContext must expose searchAccounts'],
+      [ctx.includes('loginWithAccount') && ctx.includes('logout'), 'CryptoContext must expose loginWithAccount + logout'],
+      [ctx.includes("table: 'dm_invites'"), 'CryptoContext must subscribe to dm_invites for DM delivery'],
+      [ctx.includes('fetchMyDmInvites'), 'CryptoContext must backfill DM invites on login'],
+      [authUtil.includes('dmChatName') && dmNameSorted, 'DM channel names must be deterministic (sorted handles)'],
+      [authUtil.includes('generateDmPasscode'), 'DM channels must use an invite-delivered passphrase'],
+      [inbox.includes('searchAccounts') && inbox.includes('Message'), 'Inbox must surface account search with a Message action'],
+      [schema.includes('create table if not exists public.accounts'), 'schema.sql must create accounts'],
+      [schema.includes('create table if not exists public.dm_invites'), 'schema.sql must create dm_invites'],
+      [schema.includes('tablename = \'dm_invites\''), 'schema.sql must add dm_invites to the realtime publication'],
+      [schema.includes('idx_accounts_username'), 'schema.sql must index usernames for search'],
+    ];
+    const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
+    if (failed.length > 0) throw new Error(failed.join('; '));
+
+    results.push({
+      name: 'Tier 7.2: DM accounts flow (search → Message → invite auto-join)',
+      tier: 7,
+      passed: true,
+      durationMs: Date.now() - dmStart,
+    });
+  } catch (err: any) {
+    results.push({
+      name: 'Tier 7.2: DM accounts flow (search → Message → invite auto-join)',
+      tier: 7,
+      passed: false,
+      error: err.message,
+      durationMs: Date.now() - dmStart,
+    });
+  }
+
+  // 7.3: No stories/notes strip + Mac window chrome restored
+  const themeStart = Date.now();
+  try {
+    const inbox = read('src', 'components', 'chat', 'InboxPanel.tsx');
+    const chatApp = read('src', 'components', 'layout', 'ChatApp.tsx');
+    const indexCss = read('src', 'index.css');
+
+    const checks: Array<[boolean, string]> = [
+      [!inbox.includes('Your note'), 'Inbox must NOT render the "Your note" story strip'],
+      [inbox.includes('Accounts'), 'Inbox must show the Accounts search section'],
+      [chatApp.includes('term-titlebar') && chatApp.includes('tl-red'), 'ChatApp must restore the macOS traffic-light titlebar'],
+      [chatApp.includes('term-statusbar'), 'ChatApp must restore the tmux-style statusbar'],
+      [chatApp.includes('term-window'), 'ChatApp must render inside the Mac term-window chrome'],
+      [indexCss.includes('.tl-red') && indexCss.includes('.term-titlebar'), 'index.css must keep the traffic-light + titlebar styles'],
+    ];
+    const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
+    if (failed.length > 0) throw new Error(failed.join('; '));
+
+    results.push({
+      name: 'Tier 7.3: Story-free inbox + restored Mac window chrome',
+      tier: 7,
+      passed: true,
+      durationMs: Date.now() - themeStart,
+    });
+  } catch (err: any) {
+    results.push({
+      name: 'Tier 7.3: Story-free inbox + restored Mac window chrome',
+      tier: 7,
+      passed: false,
+      error: err.message,
+      durationMs: Date.now() - themeStart,
+    });
+  }
+
+  return results;
+}

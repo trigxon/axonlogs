@@ -1,12 +1,18 @@
-import { CryptoProvider } from './contexts/CryptoContext';
+import { CryptoProvider, useCrypto } from './contexts/CryptoContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import ChatApp from './components/layout/ChatApp';
+import AuthScreen from './components/auth/AuthScreen';
+
+function Gate() {
+  const { account } = useCrypto();
+  return account ? <ChatApp /> : <AuthScreen />;
+}
 
 function App() {
   return (
     <ThemeProvider>
       <CryptoProvider>
-        <ChatApp />
+        <Gate />
       </CryptoProvider>
     </ThemeProvider>
   );

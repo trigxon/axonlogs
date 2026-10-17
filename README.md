@@ -16,9 +16,9 @@
 
 ## 📖 Overview
 
-**Axon Logs** is a distraction-free, chat-only messenger with the familiar flow of Instagram DMs — wrapped in the original cyber-terminal aesthetic. Powered by Supabase Realtime broadcast channels, nodes establish secure uplinks without relying on database insertions. All traffic is client-side encrypted using **AES-256** before being emitted over WebSockets.
+**Axon Logs** is a distraction-free, chat-only messenger with the familiar flow of Instagram DMs — wrapped in the original cyber-terminal aesthetic inside a restored macOS-style window (traffic-light titlebar + tmux statusbar). Create an **account with a username & password** (PBKDF2-hashed on-device), search any `@username`, and DM them instantly. Powered by Supabase Realtime broadcast channels, nodes establish secure uplinks without relying on database insertions. All traffic is client-side encrypted using **AES-256** before being emitted over WebSockets.
 
-**No feed. No reels. No posts. No noise. Just conversations.**
+**No feed. No reels. No stories. No posts. No noise. Just conversations.**
 
 If the key (room code) is wrong, the data remains cryptographic noise. **No logs. No traces. Total obfuscation.**
 
@@ -26,7 +26,9 @@ If the key (room code) is wrong, the data remains cryptographic noise. **No logs
 
 ## ⚡ What It Feels Like
 
-- 📥 **DM Inbox** — story-ring avatars ("Your note" strip), search, last-message previews, unread dots, timestamps. Sorts by recency.
+- 👤 **Accounts (username + password)** — Instagram-style sign-up / login gate. Passwords are PBKDF2-SHA256 hashed locally (60k iterations) before upload; sessions survive refresh; log out anytime from the profile page.
+- 🔎 **Search people, not just chats** — the inbox search finds registered accounts. Tap **Message** on an `@username` and an encrypted DM channel is created and delivered to them automatically (no code sharing needed).
+- 📥 **DM Inbox** — search, last-message previews, unread dots, timestamps. Sorts by recency. Shows only channels you actually created or joined.
 - 💬 **DM Conversation** — rounded bubbles (theirs left / yours in a cyan→emerald gradient), grouped messages, day dividers, "Active now" / typing indicators, **Seen** receipts.
 - ❤️ **Double-tap to heart** — the Instagram signature. Double-click/tap any message for the big heart pop + reaction badge.
 - 🙂 **Reactions & replies** — hover a message for the quick emoji bar; reply quotes jump back to the original.

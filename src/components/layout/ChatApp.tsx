@@ -4,6 +4,7 @@ import {
   ToggleRight, ToggleLeft, Lock,
 } from 'lucide-react';
 import { useCrypto, type Chat } from '../../contexts/CryptoContext';
+import { dmDisplayName } from '../../utils/auth';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
 import ProfilePanel from '../profile/ProfilePanel';
@@ -41,6 +42,7 @@ export const ChatApp: React.FC = () => {
     deviceId, alias, chats, activeChat, setActiveChat, messages,
     createChat, joinChat, renameChat, changeChatPassword,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
+    latency, typingUsers, onlineUsers, account,
   } = useCrypto();
 
   /* ---------------- navigation state ---------------- */
@@ -353,8 +355,12 @@ export const ChatApp: React.FC = () => {
 
   const showChatOnMobile = mobileView === 'chat' && activeChat;
 
+  // Chat rows / status bar show the other person's handle on DM channels
+  const displayChatName = (chat: Chat) =>
+    account ? dmDisplayName(chat.name, account.username) : chat.name;
+
   return (
-    <div className={`flex h-app w-full premium-bg text-[#d6d8de] font-mono overflow-hidden relative scanlines ${stealthActive ? 'blur-xl' : ''}`}>
+    <div className={`h-app w-full premium-bg text-[#d6d8de] font-mono overflow-hidden relative scanlines ${stealthActive ? 'blur-xl' : ''}`}>
       {/* ambient background */}
       <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden>
         <div className="absolute inset-0 grid-overlay" />
@@ -368,68 +374,121 @@ export const ChatApp: React.FC = () => {
         </div>
       )}
 
-      {/* ── DESKTOP LEFT RAIL (Instagram-web style) ── */}
-      <nav className="hidden md:flex flex-col items-center gap-1 w-[68px] shrink-0 border-r border-white/[0.05] bg-[#07070d]/60 py-4 z-20">
-        <div className="mb-4">
-          <div className="w-10 h-10 rounded-xl ring-gradient flex items-center justify-center">
-            <MessageCircle className="w-5 h-5 text-cyan-300" />
+      {/* ── MAC WINDOW (restored chrome) ── */}
+      <div className="relative z-10 flex flex-col h-full min-h-0 p-1.5 sm:p-3 lg:p-4 xl:p-5">
+        <div className="term-window flex flex-col flex-1 min-h-0 overflow-hidden">
+          <div className="term-inner-glow" aria-hidden />
+
+          {/* TITLE BAR (traffic lights + session + live clock) */}
+          <div className="term-titlebar h-9 shrink-0 flex items-center gap-3 px-3 sm:px-4 lg:px-7 border-b border-white/[0.07] select-none">
+            <div className="flex items-center gap-2 shrink-0" aria-hidden>
+              <span className="tl tl-red" />
+              <span className="tl tl-amber" />
+              <span className="tl tl-green" />
+            </div>
+            <div className="flex-1 min-w-0 text-center">
+              <span className="font-display text-[10px] font-bold tracking-[0.3em] uppercase truncate block">
+                <span className="text-gradient phosphor-text">Axon Logs</span>
+                <span className="text-zinc-600 hidden sm:inline"> — secure messenger</span>
+                <span className="text-emerald-500/70 hidden lg:inline"> // axon@axonlogs:~/direct</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 text-[9px] md:text-[10px] font-bold tracking-widest uppercase text-zinc-500 tabular-nums">
+              <span className="hidden sm:inline text-cyan-500/90">{account ? `@${account.username}` : `NODE: ${deviceId.substring(0, 8)}`}</span>
+              <span className="text-emerald-500/90">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+            </div>
+          </div>
+
+          {/* ── CONTENT ROW (rail + inbox + right pane) ── */}
+          <div className="flex flex-1 min-h-0 min-w-0">
+            {/* DESKTOP LEFT RAIL (Instagram-web style) */}
+            <nav className="hidden md:flex flex-col items-center gap-1 w-[68px] shrink-0 border-r border-white/[0.05] bg-[#07070d]/60 py-4 z-20">
+              <div className="mb-4">
+                <div className="w-10 h-10 rounded-xl ring-gradient flex items-center justify-center">
+                  <MessageCircle className="w-5 h-5 text-cyan-300" />
+                </div>
+              </div>
+              <RailButton
+                icon={<MessageCircle className="w-[22px] h-[22px]" />}
+                label="Chats"
+                active={pane === 'chat'}
+                onClick={() => { setPane('chat'); setMobileView('inbox'); }}
+              />
+              <RailButton
+                icon={<PlusSquare className="w-[22px] h-[22px]" />}
+                label="New message"
+                onClick={openCreateModal}
+              />
+              <RailButton
+                icon={<KeyRound className="w-[22px] h-[22px]" />}
+                label="Join code"
+                onClick={() => setShowJoinModal(true)}
+              />
+              <div className="flex-1" />
+              <RailButton
+                icon={<Avatar seed={deviceId} name={alias || '?'} size={26} gradient={myGradient} />}
+                label="Profile"
+                active={pane === 'profile'}
+                onClick={() => setPane('profile')}
+              />
+              <RailButton
+                icon={<SettingsIcon className="w-[22px] h-[22px]" />}
+                label="Settings"
+                active={pane === 'settings'}
+                onClick={() => setPane('settings')}
+              />
+            </nav>
+
+            {/* INBOX (middle column on desktop, full screen on mobile) */}
+            <div className={`w-full md:w-[340px] lg:w-[380px] shrink-0 min-h-0 ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'hidden md:block' : 'block'}`}>
+              <InboxPanel
+                onOpenChat={(chat: Chat) => { setActiveChat(chat); setPane('chat'); setMobileView('chat'); }}
+                onOpenProfile={() => { setPane('profile'); setMobileView('profile'); }}
+                onNewMessage={openCreateModal}
+                onJoinCode={() => setShowJoinModal(true)}
+                refreshKey={refreshKey}
+              />
+            </div>
+
+            {/* RIGHT PANE (conversation / profile / settings) */}
+            <main className={`flex-1 min-w-0 min-h-0 hidden md:block`}>
+              {rightPane}
+            </main>
+            <div className={`flex-1 min-w-0 min-h-0 md:hidden ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'block' : 'hidden'}`}>
+              {rightPane}
+            </div>
+          </div>
+
+          {/* ── STATUS BAR (tmux-style, restored) ── */}
+          <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-3 sm:px-4 md:px-6 lg:px-7 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
+            <span className={`flex items-center gap-1.5 shrink-0 ${backendMode === 'online' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className="w-1.5 h-1.5 rounded-full dot-live" />
+              <span className="hidden sm:inline">{backendMode === 'online' ? 'GLOBAL SYNC' : 'DEVICE-ONLY'}</span>
+              <span className="sm:hidden">{backendMode === 'online' ? 'ONLINE' : 'LOCAL'}</span>
+            </span>
+            {activeChat && (
+              <span className="text-zinc-400 truncate min-w-0 hidden md:inline">TERM: {displayChatName(activeChat)}</span>
+            )}
+            {Object.keys(typingUsers).length > 0 && (
+              <span className="text-amber-400 truncate hidden sm:inline flex items-center gap-1">
+                <span className="flex gap-[3px]">
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                  <span className="typing-dot w-1 h-1 rounded-full bg-amber-400" />
+                </span>
+                {Object.values(typingUsers).join(', ')}
+              </span>
+            )}
+            <div className="flex-1" />
+            {Object.keys(onlineUsers).length > 0 && (
+              <span className="text-cyan-400/70 hidden md:inline">USR: {Object.keys(onlineUsers).length}</span>
+            )}
+            {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">LAT: {latency}MS</span>}
+            <span className="text-zinc-500 hidden sm:inline">TERMS: {chats.length}</span>
+            <span className="text-cyan-500/90 hidden lg:inline">NODE: {deviceId.substring(0, 8)}</span>
+            <span className="text-emerald-500/90 tabular-nums shrink-0">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
           </div>
         </div>
-        <RailButton
-          icon={<MessageCircle className="w-[22px] h-[22px]" />}
-          label="Chats"
-          active={pane === 'chat'}
-          onClick={() => { setPane('chat'); setMobileView('inbox'); }}
-        />
-        <RailButton
-          icon={<PlusSquare className="w-[22px] h-[22px]" />}
-          label="New message"
-          onClick={openCreateModal}
-        />
-        <RailButton
-          icon={<KeyRound className="w-[22px] h-[22px]" />}
-          label="Join code"
-          onClick={() => setShowJoinModal(true)}
-        />
-        <div className="flex-1" />
-        <RailButton
-          icon={<Avatar seed={deviceId} name={alias || '?'} size={26} gradient={myGradient} />}
-          label="Profile"
-          active={pane === 'profile'}
-          onClick={() => setPane('profile')}
-        />
-        <RailButton
-          icon={<SettingsIcon className="w-[22px] h-[22px]" />}
-          label="Settings"
-          active={pane === 'settings'}
-          onClick={() => setPane('settings')}
-        />
-        <div className="mt-2 text-[7px] tracking-[0.2em] text-zinc-700 uppercase text-center leading-relaxed">
-          {liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
-          <br />
-          <span className={backendMode === 'online' ? 'text-emerald-500/70' : 'text-amber-500/70'}>
-            {backendMode === 'online' ? 'ONLINE' : 'LOCAL'}
-          </span>
-        </div>
-      </nav>
-
-      {/* ── INBOX (middle column on desktop, full screen on mobile) ── */}
-      <div className={`w-full md:w-[340px] lg:w-[380px] shrink-0 min-h-0 ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'hidden md:block' : 'block'}`}>
-        <InboxPanel
-          onOpenChat={(chat: Chat) => { setActiveChat(chat); setPane('chat'); setMobileView('chat'); }}
-          onOpenProfile={() => { setPane('profile'); setMobileView('profile'); }}
-          onNewMessage={openCreateModal}
-          onJoinCode={() => setShowJoinModal(true)}
-          refreshKey={refreshKey}
-        />
-      </div>
-
-      {/* ── RIGHT PANE (conversation / profile / settings) ── */}
-      <main className={`flex-1 min-w-0 min-h-0 hidden md:block ${pane === 'chat' && !activeChat ? '' : ''}`}>
-        {rightPane}
-      </main>
-      <div className={`flex-1 min-w-0 min-h-0 md:hidden ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'block' : 'hidden'}`}>
-        {rightPane}
       </div>
 
       {/* ══════════════ MODALS ══════════════ */}

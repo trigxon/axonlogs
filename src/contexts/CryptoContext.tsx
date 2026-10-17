@@ -2,6 +2,18 @@ import { createContext, useContext, useState, useEffect, type ReactNode, useCall
 import { createClient } from '@supabase/supabase-js';
 import CryptoJS from 'crypto-js';
 import { getMyAvatar, setMyAvatar } from '../utils/chatMeta';
+import {
+  type AxonSession,
+  type Account,
+  getStoredSession,
+  setStoredSession,
+  clearStoredSession,
+  searchAccounts as authSearchAccounts,
+  dmChatName,
+  generateDmPasscode,
+  sendDmInvite,
+  fetchMyDmInvites,
+} from '../utils/auth';
 
 export interface Chat {
   id: string;
@@ -144,6 +156,14 @@ interface CryptoContextType {
   /** gradient for MY avatar (profile picker) */
   myGradient: string;
   updateMyGradient: (gradient: string) => void;
+  /** Instagram-style account session (username + password accounts) */
+  account: AxonSession | null;
+  loginWithAccount: (session: AxonSession) => void;
+  logout: () => void;
+  /** Find accounts by username (cloud directory search) */
+  searchAccounts: (query: string) => Promise<Account[]>;
+  /** Instagram "Message @user" flow: create (or open) an encrypted DM and invite the recipient */
+  startDmWithUser: (username: string) => Promise<{ ok: boolean; chat?: Chat; error?: string }>;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -294,6 +314,8 @@ const fileToDataUrl = (file: File): Promise<string | null> =>
   });
 
 export const CryptoProvider = ({ children }: { children: ReactNode }) => {
+  // Instagram-style account session (survives refresh via localStorage)
+  const [account, setAccount] = useState<AxonSession | null>(() => getStoredSession());
   const [myGradient, setMyGradient] = useState<string>(() => getMyAvatar(localStorage.getItem('axon_deviceId') || ''));
   const updateMyGradient = useCallback((gradient: string) => {
     setMyAvatar(gradient);
@@ -391,12 +413,150 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       localStorage.setItem('axon_alias', storedAlias);
     }
 
+    // Signed-in accounts own the handle: alias follows the @username.
+    const session = getStoredSession();
+    if (session?.username) {
+      storedAlias = `@${session.username.toLowerCase()}`;
+      localStorage.setItem('axon_alias', storedAlias);
+    }
+
     setDeviceId(storedId);
     setAlias(storedAlias);
     setMyGradient(getMyAvatar(storedId));
     addLog(`Identity initialized: ${storedId.substring(0, 8)}...`);
     setNetworkStatus(isOnline ? 'ONLINE' : 'LOCAL');
   }, [addLog]);
+
+  /* ----------------- account session / DM delivery ----------------- */
+
+  const loginWithAccount = useCallback((session: AxonSession) => {
+    setStoredSession(session);
+    setAccount(session);
+    const handle = `@${session.username.toLowerCase()}`;
+    setAlias(handle);
+    localStorage.setItem('axon_alias', handle);
+    addLog(`Account session started: @${session.username}`);
+  }, [addLog]);
+
+  const logout = useCallback(() => {
+    clearStoredSession();
+    setAccount(null);
+    addLog('Account logged out');
+  }, [addLog]);
+
+  /** Quietly admit an invited DM: add to state, keyring it, auto-unlock. */
+  const admitDmChat = useCallback((chat: Chat) => {
+    saveKnownChat(chat.id);
+    saveDeviceKey(chat.id, chat.share_code);
+    setChats(prev => (prev.some(c => c.id === chat.id) ? prev : [chat, ...prev]));
+    setArchivedChats(prev => prev.filter(c => c.id !== chat.id));
+    setUnlockedChatId(prev => (prev === chat.id ? prev : chat.id));
+  }, []);
+
+  // Backfill: DM invitations addressed to this account (new device login,
+  // offline gap) are admitted silently so the inbox mirrors Instagram DMs.
+  useEffect(() => {
+    const u = account?.username;
+    if (!u || backendMode !== 'online' || !supabase) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const invites = await fetchMyDmInvites(supabase!, u);
+        if (cancelled || invites.length === 0) return;
+        for (const inv of invites) {
+          const keys = readJSON<Record<string, string>>('axon_device_keys', {});
+          if (keys[inv.chat_id]) continue; // already admitted on this device
+          const { data } = await supabase!.from('chats').select('*').eq('id', inv.chat_id).maybeSingle();
+          if (data) {
+            admitDmChat(data as Chat);
+            addLog(`DM channel with @${inv.from_username} restored`);
+          }
+        }
+      } catch {
+        /* invites are best-effort */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account?.username, backendMode, admitDmChat, addLog]);
+
+  // Realtime: incoming DM invitations auto-join (Instagram DM delivery)
+  useEffect(() => {
+    const u = account?.username;
+    if (!u || backendMode !== 'online' || !supabase) return;
+    const channel = supabase!
+      .channel(`dm-invites:${u}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'dm_invites', filter: `to_username=eq.${u}` },
+        (payload: any) => {
+          const inv = payload.new as { chat_id: string; share_code: string; from_username: string };
+          if (!inv?.share_code) return;
+          supabase!
+            .from('chats')
+            .select('*')
+            .eq('id', inv.chat_id)
+            .maybeSingle()
+            .then(({ data }: { data: Chat | null }) => {
+              if (data) {
+                admitDmChat(data);
+                addLog(`New DM from @${inv.from_username}`);
+              }
+            });
+        })
+      .subscribe();
+    return () => {
+      supabase!.removeChannel(channel);
+    };
+  }, [account?.username, backendMode, admitDmChat, addLog]);
+
+  const searchAccounts = useCallback(async (query: string): Promise<Account[]> => {
+    if (!supabase) return [];
+    try {
+      return await authSearchAccounts(supabase, query, account?.username || '');
+    } catch {
+      return [];
+    }
+  }, [account?.username]);
+
+  const startDmWithUser = useCallback(async (username: string): Promise<{ ok: boolean; chat?: Chat; error?: string }> => {
+    const target = username.trim().toLowerCase().replace(/^@/, '');
+    if (!account) return { ok: false, error: 'Sign in to send direct messages.' };
+    if (backendMode !== 'online' || !supabase) return { ok: false, error: 'DMs need the cloud backend (online mode).' };
+    if (!target) return { ok: false, error: 'Enter a username.' };
+    if (target === account.username.toLowerCase()) return { ok: false, error: "That's you." };
+
+    const me = account.username.toLowerCase();
+    const dmName = dmChatName(me, target);
+
+    // Reuse the existing DM channel when we already have it
+    const existing = chats.find(c => c.name === dmName) || archivedChats.find(c => c.name === dmName);
+    if (existing) {
+      admitDmChat(existing);
+      return { ok: true, chat: existing };
+    }
+
+    // Create the encrypted channel with an invite-delivered passphrase
+    const shareCode = generateDmPasscode();
+    const { data, error } = await supabase
+      .from('chats')
+      .insert({ name: dmName, share_code: shareCode })
+      .select()
+      .single();
+    if (error || !data) {
+      console.error('DM create error:', error);
+      return { ok: false, error: 'Could not create the DM. Is the backend set up?' };
+    }
+
+    const invited = await sendDmInvite(supabase, target, data.id, data.share_code, me);
+    if (!invited) {
+      // Keep the channel (it works once the recipient searches us instead)
+      addLog(`DM invite to @${target} failed — channel kept`);
+    }
+
+    admitDmChat(data as Chat);
+    setActiveChat(data as Chat);
+    addLog(`Direct message to @${target} started`);
+    return { ok: true, chat: data as Chat };
+  }, [account, backendMode, chats, archivedChats, admitDmChat, addLog]);
 
   // NOTE: no chat is auto-selected or auto-created on entry — the app always
   // opens on STANDBY. The user must explicitly CREATE a terminal; clicking one
@@ -1614,6 +1774,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
         settings, updateSettings,
         myGradient, updateMyGradient,
+        account, loginWithAccount, logout, searchAccounts, startDmWithUser,
         callingChat, callType, callStatus, callNotice, incomingCall, localStream, remoteStream,
         startCall, endCall, acceptIncomingCall, rejectIncomingCall, getCallRtt, messagesInView, setMessagesInView,
       }}

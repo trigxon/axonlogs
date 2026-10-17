@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import {
   ArrowLeft, Check, Pencil, Settings, ShieldAlert, Flame,
-  Eye, Download, LogOut, ChevronRight, MessageCircle, Send, Timer,
+  Eye, Download, LogOut, ChevronRight, MessageCircle, Send, Timer, AtSign,
 } from 'lucide-react';
-import { useCrypto } from '../../contexts/CryptoContext';
+import { useCrypto, supabase } from '../../contexts/CryptoContext';
 import Avatar from './Avatar';
 import { AVATAR_CHOICES, getMyBio, setMyBio, readPreviewCache } from '../../utils/chatMeta';
+import { updateAccountProfile } from '../../utils/auth';
 
 export interface ProfilePanelProps {
   onBack: () => void;
@@ -20,14 +21,16 @@ export interface ProfilePanelProps {
 export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettings, onTriggerPanic }) => {
   const {
     alias, deviceId, updateAlias, chats, settings, updateSettings,
-    backendMode, networkStatus, myGradient, updateMyGradient,
+    backendMode, networkStatus, myGradient, updateMyGradient, account, logout,
   } = useCrypto();
 
+  const myHandle = account?.username?.toLowerCase() || '';
   const [editingAlias, setEditingAlias] = useState(false);
   const [aliasInput, setAliasInput] = useState(alias);
   const [editingBio, setEditingBio] = useState(false);
   const [bioInput, setBioInput] = useState(getMyBio());
   const [pickingAvatar, setPickingAvatar] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const previewCache = readPreviewCache();
   const totalMessages = Object.keys(previewCache).length; // chats with activity
@@ -46,9 +49,24 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
     setEditingAlias(false);
   };
 
-  const saveBio = () => {
+  const saveBio = async () => {
     setMyBio(bioInput.trim());
+    if (myHandle && supabase && bioInput.trim() !== '') {
+      setSavingProfile(true);
+      await updateAccountProfile(supabase, myHandle, { bio: bioInput.trim().slice(0, 80) });
+      setSavingProfile(false);
+    }
     setEditingBio(false);
+  };
+
+  const pickAvatar = async (g: string) => {
+    updateMyGradient(g);
+    if (myHandle && supabase) {
+      setSavingProfile(true);
+      await updateAccountProfile(supabase, myHandle, { avatar_gradient: g });
+      setSavingProfile(false);
+    }
+    setPickingAvatar(false);
   };
 
   return (
@@ -92,14 +110,27 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           </div>
         </div>
 
-        {/* Name / alias */}
+        {/* Name / @username */}
         <div className="mt-6">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white text-base tracking-wide">{alias}</span>
-            <button onClick={() => { setEditingAlias(true); setAliasInput(alias); }} className="text-zinc-500 hover:text-cyan-300 transition-colors" title="Edit alias">
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
+            {myHandle ? (
+              <span className="font-bold text-white text-base tracking-wide flex items-center gap-1.5">
+                <AtSign className="w-3.5 h-3.5 text-cyan-400" />{myHandle}
+              </span>
+            ) : (
+              <>
+                <span className="font-bold text-white text-base tracking-wide">{alias}</span>
+                <button onClick={() => { setEditingAlias(true); setAliasInput(alias); }} className="text-zinc-500 hover:text-cyan-300 transition-colors" title="Edit alias">
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
           </div>
+          {!editingAlias && (
+            <p className="text-[11px] text-zinc-600 mt-1 font-mono">
+              {myHandle ? `AXON ACCOUNT · ${networkStatus}` : `NODE_${deviceId.substring(0, 8).toUpperCase()} · ${networkStatus}`}
+            </p>
+          )}
           {editingAlias ? (
             <div className="mt-2 flex items-center gap-2 max-w-sm">
               <input
@@ -112,9 +143,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
               />
               <button onClick={saveAlias} className="text-emerald-400 hover:text-emerald-300 p-1.5" title="Save"><Check className="w-4 h-4" /></button>
             </div>
-          ) : (
-            <p className="text-[11px] text-zinc-600 mt-1 font-mono">NODE_{deviceId.substring(0, 8).toUpperCase()} · {networkStatus}</p>
-          )}
+          ) : null}
         </div>
 
         {/* Bio / note */}
@@ -151,7 +180,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
               {AVATAR_CHOICES.map(g => (
                 <button
                   key={g}
-                  onClick={() => { updateMyGradient(g); setPickingAvatar(false); }}
+                  onClick={() => pickAvatar(g)}
                   className={`w-10 h-10 rounded-full transition-transform hover:scale-110 ${myGradient === g ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-[#0a0a12]' : ''}`}
                   style={{ background: g }}
                   aria-label="Avatar gradient"
@@ -226,6 +255,14 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
             hint="Instant fake 404 overlay (or type /panic)"
             onClick={onTriggerPanic}
           />
+          {myHandle && (
+            <ActionRow
+              icon={<LogOut className="w-4 h-4 text-zinc-400" />}
+              label={`Log out @${myHandle}`}
+              hint="End this account session on this device"
+              onClick={() => { if (confirm('Log out of Axon Logs?')) logout(); }}
+            />
+          )}
           <ActionRow
             icon={<LogOut className="w-4 h-4 text-red-400" />}
             label="Terminate session"
@@ -237,7 +274,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
 
         <div className="mt-6 flex items-center justify-center gap-2 text-[9px] tracking-[0.3em] uppercase text-zinc-700">
           <MessageCircle className="w-3 h-3" />
-          axon logs · chat only · no feeds no noise
+          {savingProfile ? 'syncing…' : 'axon logs · chat only · no feeds no noise'}
         </div>
       </div>
     </section>

@@ -236,3 +236,24 @@ export const setMyAvatar = (gradient: string) => {
 
 export const getMyBio = (): string => localStorage.getItem('axon_bio') || '';
 export const setMyBio = (bio: string) => localStorage.setItem('axon_bio', bio.slice(0, 80));
+
+/* --------------------- Known-chat (inbox) filter ------------------- */
+
+/**
+ * Instagram-style privacy for the inbox: only show channels this device
+ * actually created or joined (device keyring ∪ known list). The global
+ * cloud directory stays reachable through search / join-by-code.
+ */
+export const readKnownChatIds = (): string[] => {
+  try {
+    const known = JSON.parse(localStorage.getItem('axon_known_chats') || '[]');
+    const keys = JSON.parse(localStorage.getItem('axon_device_keys') || '{}');
+    const ids = new Set<string>([...(Array.isArray(known) ? known : []), ...Object.keys(keys)]);
+    return [...ids];
+  } catch {
+    return [];
+  }
+};
+
+export const isKnownChatId = (chatId: string): boolean =>
+  readKnownChatIds().includes(chatId);

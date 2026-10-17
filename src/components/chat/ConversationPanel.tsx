@@ -5,6 +5,7 @@ import {
   ChevronDown, Search, Check, KeyRound, Archive, Smile,
 } from 'lucide-react';
 import { useCrypto, type Chat } from '../../contexts/CryptoContext';
+import { dmDisplayName } from '../../utils/auth';
 import Avatar from '../profile/Avatar';
 import { VoiceRecorder } from '../chat/VoiceRecorder';
 import TypewriterText from '../ui/TypewriterText';
@@ -49,8 +50,12 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     deviceId, messages, latency, sendMessage, purgeTerminal, addSystemMessage,
     networkStatus, deleteMessageLocally, broadcastTyping, typingUsers, onlineUsers,
     unlockedChatId, lockChat, settings, editMessage, toggleReaction, togglePinMessage,
-    markAsRead, resendMessage, startCall, deleteChat, archiveChat,
+    markAsRead, resendMessage, startCall, deleteChat, archiveChat, account,
   } = useCrypto();
+
+  const myHandle = account?.username?.toLowerCase() || '';
+  // DM channels show the other person's handle (Instagram behavior)
+  const displayName = myHandle ? dmDisplayName(chat.name, myHandle) : chat.name;
 
   const chatLocked = unlockedChatId !== chat.id;
   const [input, setInput] = useState('');
@@ -265,10 +270,10 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
           <button onClick={onBack} className="md:hidden p-1.5 text-zinc-400 hover:text-white transition-colors" title="Back to inbox">
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <Avatar seed={chat.id} name={chat.name} size={40} online={!chatLocked && peerOnline} onClick={onBack} className="hidden sm:inline-flex md:inline-flex" />
+          <Avatar seed={displayName} name={displayName} size={40} online={!chatLocked && peerOnline} onClick={onBack} className="hidden sm:inline-flex md:inline-flex" />
           <div className="flex-1 min-w-0 cursor-pointer" onClick={onBack} title="Conversation info">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white truncate">{chat.name}</span>
+              <span className="text-sm font-bold text-white truncate">{displayName}</span>
               {chat.share_code.startsWith('EPH-') && (
                 <span className="text-[8px] font-bold tracking-widest text-red-400 border border-red-500/30 bg-red-500/10 rounded px-1 py-px shrink-0">EPHEMERAL</span>
               )}
@@ -322,7 +327,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               {optionsOpen && (
                 <div data-options-menu className="absolute right-0 top-full mt-2 w-60 z-50 term-panel rounded-xl py-1.5 shadow-2xl border border-white/10">
                   <div className="px-3 py-1.5 text-[9px] font-bold tracking-[0.25em] text-zinc-600 uppercase border-b border-white/[0.06] mb-1 truncate">
-                    {chat.name}
+                    {displayName}
                   </div>
                   <MenuRow icon={<Edit2 className="w-3.5 h-3.5" />} label="Rename" onClick={() => { setOptionsOpen(false); onRequestRename(chat.id); }} />
                   <MenuRow
@@ -410,8 +415,8 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             </div>
           ) : visibleMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center">
-              <Avatar seed={chat.id} name={chat.name} size={84} ring="story" />
-              <div className="text-white font-bold text-sm tracking-wide mt-2">{chat.name}</div>
+              <Avatar seed={displayName} name={displayName} size={84} ring="story" />
+              <div className="text-white font-bold text-sm tracking-wide mt-2">{displayName}</div>
               <div className="text-zinc-500 text-xs">End-to-end encrypted · burn-on-read ready</div>
               <div className="text-zinc-600 text-[10px] tracking-widest uppercase mt-1">Say hi — no logs are kept</div>
             </div>

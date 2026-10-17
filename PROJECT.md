@@ -44,3 +44,13 @@
 - SIM demo node moved to Settings → Global Cloud Sync (local mode only).
 - `react-markdown`/`remark-gfm`/`emoji-picker-react` are no longer referenced by the UI (kept in package.json; tree-shaken from bundle).
 - Legacy `tests/challenger_2_empirical_verification.ts` predates the pivot and is not part of `npm test`.
+
+## Milestone R1 — Accounts + Mac Chrome Restore
+
+- **Accounts (username + password):** new `AuthScreen` gates the app (`App.tsx` renders `AuthScreen` when no session). `src/utils/auth.ts` implements PBKDF2-SHA256 hashing (60k iterations, 128-bit salt, `pbkdf2$iter$salt$hash` format), username validation (`[a-z0-9._]{3,20}`), signup/login/search/profile-update against the new Supabase `accounts` table, and localStorage session persistence (`axon_session`).
+- **DM delivery (Instagram "Message @user"):** `CryptoContext.startDmWithUser(username)` creates an encrypted channel (`@a·@b` sorted name, `DM-XXXXXXXX` passphrase) and writes a row to the new `dm_invites` table. Recipients auto-join via realtime INSERT subscription + login backfill (`fetchMyDmInvites`), keyring the channel, and auto-unlock — no passphrase prompt. Inbox display names resolve DM channels to the OTHER handle via `dmDisplayName`.
+- **Inbox privacy:** chat list is filtered to the device keyring ∪ known chats (`isKnownChatId`), so the global channel directory is no longer dumped into the inbox; people search (accounts) surfaces in the same search box with a Message action.
+- **Story strip removed:** the "Your note" stories-position row is gone (no reels / no stories / no posts policy).
+- **Mac window chrome restored:** `ChatApp` + `AuthScreen` render inside the original `term-window` with traffic-light `term-titlebar` (@handle + live clock) and tmux-style `term-statusbar` (GLOBAL SYNC / TERM / typing / USR / LAT / TERMS / NODE / clock) using the untouched index.css theme.
+- **Schema:** `supabase/schema.sql` adds `accounts` + `dm_invites` (public policies, indexes, realtime publication) — idempotent, must be re-run once in the Supabase SQL editor.
+- **Tests:** new Tier 7 (auth gate + PBKDF2, DM flow contract, story-free inbox + Mac chrome) — suite 18/18 PASS.
