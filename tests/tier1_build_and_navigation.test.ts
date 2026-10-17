@@ -51,38 +51,47 @@ export async function runTier1Tests(projectRoot: string): Promise<TestResult[]> 
 
     const appContent = fs.readFileSync(appTsxPath, 'utf-8');
 
-    // Expected views contract: 'dashboard', 'settings', 'logs', 'axon-ai'
-    const expectedViews = ['dashboard', 'settings', 'logs', 'axon-ai'];
-    
-    // Check if App.tsx or subcomponents reference activeView contract or components
-    // If M2/M3 is partially built, inspect files
-    const sidebarPath = path.join(projectRoot, 'src', 'components', 'layout', 'Sidebar.tsx');
-    const axonAiPath = path.join(projectRoot, 'src', 'components', 'ai', 'AxonAIShell.tsx');
-    const settingsPath = path.join(projectRoot, 'src', 'components', 'settings', 'SettingsPanel.tsx');
-    const logsPath = path.join(projectRoot, 'src', 'components', 'logs', 'LogsView.tsx');
+    // Expected views contract: chat inbox | conversation | profile | settings
+    const expectedViews = ['chat', 'profile', 'settings'];
 
-    const createdComponents = [
-      { name: 'Sidebar.tsx', path: sidebarPath },
-      { name: 'AxonAIShell.tsx', path: axonAiPath },
+    // Instagram-style chat-only shell: rail + inbox + conversation + profile
+    const chatAppPath = path.join(projectRoot, 'src', 'components', 'layout', 'ChatApp.tsx');
+    const inboxPath = path.join(projectRoot, 'src', 'components', 'chat', 'InboxPanel.tsx');
+    const conversationPath = path.join(projectRoot, 'src', 'components', 'chat', 'ConversationPanel.tsx');
+    const profilePath = path.join(projectRoot, 'src', 'components', 'profile', 'ProfilePanel.tsx');
+    const settingsPath = path.join(projectRoot, 'src', 'components', 'settings', 'SettingsPanel.tsx');
+
+    const requiredComponents = [
+      { name: 'ChatApp.tsx', path: chatAppPath },
+      { name: 'InboxPanel.tsx', path: inboxPath },
+      { name: 'ConversationPanel.tsx', path: conversationPath },
+      { name: 'ProfilePanel.tsx', path: profilePath },
       { name: 'SettingsPanel.tsx', path: settingsPath },
-      { name: 'LogsView.tsx', path: logsPath },
     ];
 
-    const missingComponents = createdComponents.filter(c => !fs.existsSync(c.path));
+    const missingComponents = requiredComponents.filter(c => !fs.existsSync(c.path));
 
-    if (missingComponents.length > 0 && !appContent.includes('activeView')) {
-      // Contract specification verification
-      // Check if view navigation contract is respected
+    // Distraction-free contract: the old terminal views must be gone
+    const retiredComponents = [
+      'src/components/layout/TerminalUI.tsx',
+      'src/components/layout/Sidebar.tsx',
+      'src/components/ai/AxonAIShell.tsx',
+      'src/components/logs/LogsView.tsx',
+    ].map(p => path.join(projectRoot, p));
+
+    const lingering = retiredComponents.filter(p => fs.existsSync(p));
+
+    if (missingComponents.length > 0 || lingering.length > 0) {
       results.push({
-        name: 'Tier 1.2: View Navigation Contract (dashboard | settings | logs | axon-ai)',
+        name: 'Tier 1.2: Chat-Only Navigation Contract (inbox | chat | profile | settings)',
         tier: 1,
         passed: false,
-        error: `Navigation components pending implementation: ${missingComponents.map(c => c.name).join(', ')}`,
+        error: `Missing: ${missingComponents.map(c => c.name).join(', ') || 'none'}; Lingering: ${lingering.map(p => path.basename(p)).join(', ') || 'none'}`,
         durationMs: Date.now() - navStart,
       });
     } else {
       results.push({
-        name: 'Tier 1.2: View Navigation Contract (dashboard | settings | logs | axon-ai)',
+        name: 'Tier 1.2: Chat-Only Navigation Contract (inbox | chat | profile | settings)',
         tier: 1,
         passed: true,
         durationMs: Date.now() - navStart,
@@ -90,7 +99,7 @@ export async function runTier1Tests(projectRoot: string): Promise<TestResult[]> 
     }
   } catch (err: any) {
     results.push({
-      name: 'Tier 1.2: View Navigation Contract (dashboard | settings | logs | axon-ai)',
+      name: 'Tier 1.2: Chat-Only Navigation Contract (inbox | chat | profile | settings)',
       tier: 1,
       passed: false,
       error: err.message,

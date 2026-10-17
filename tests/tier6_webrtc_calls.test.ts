@@ -25,9 +25,9 @@ export async function runTier6Tests(projectRoot: string): Promise<TestResult[]> 
 
   // ── 6.1: COMM-LINK & VideoTunnel fully removed ──────────────────────────
   try {
-    const terminal = readSrc('src', 'components', 'layout', 'TerminalUI.tsx');
-    const noCommLink = !/COMM-LINK/i.test(terminal);
-    const noTunnel = !/VideoTunnel/i.test(terminal);
+    const shell = readSrc('src', 'components', 'layout', 'ChatApp.tsx');
+    const noCommLink = !/COMM-LINK/i.test(shell);
+    const noTunnel = !/VideoTunnel/i.test(shell);
     const tunnelFileGone = !fs.existsSync(path.join(projectRoot, 'src', 'components', 'layout', 'VideoTunnel.tsx'));
 
     const passed = noCommLink && noTunnel && tunnelFileGone;
@@ -89,7 +89,7 @@ export async function runTier6Tests(projectRoot: string): Promise<TestResult[]> 
     const audioCarrier = /<audio[^>]*remoteAudioRef|remoteAudioRef[^>]*>/.test(overlay) || /remoteAudioRef/.test(overlay);
     const incomingScreen = /IncomingCallScreen/.test(overlay) && /rejectIncomingCall/.test(overlay);
     const realQuality = /getCallRtt/.test(overlay);
-    const mounted = /<IncomingCallScreen \/>/.test(readSrc('src', 'components', 'layout', 'TerminalUI.tsx'));
+    const mounted = /<IncomingCallScreen \/>/.test(readSrc('src', 'components', 'layout', 'ChatApp.tsx'));
 
     const passed = usesRemote && attachesSrcObject && audioCarrier && incomingScreen && realQuality && mounted;
     results.push(makeResult(

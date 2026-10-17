@@ -31,9 +31,13 @@ import {
 const burnLabel = (seconds: number) =>
   seconds >= 3600 ? `${Math.round(seconds / 3600)}H` : seconds >= 60 ? `${Math.round(seconds / 60)}M` : `${seconds}S`;
 
-export const SettingsPanel: React.FC = () => {
+export interface SettingsPanelProps {
+  onBack?: () => void;
+}
+
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   const { textSize, cardPadding, borderRadius, setTextSize, setCardPadding, setBorderRadius } = useTheme();
-  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings } = useCrypto();
+  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings, simBotActive, toggleSimBot } = useCrypto();
 
   const [aliasInput, setAliasInput] = useState(alias);
   const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
@@ -214,7 +218,16 @@ export const SettingsPanel: React.FC = () => {
 
       {/* Header Sticky Bar */}
       <div className="sticky top-0 z-10 bg-[#08080f] border-b border-white/[0.06] px-4 py-4 md:px-6 md:p-6 flex justify-between items-center gap-4 hairline-gradient">
-        <div className="min-w-0">
+        <div className="min-w-0 flex items-center gap-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1.5 text-zinc-400 hover:text-cyan-300 transition-colors shrink-0"
+              title="Back"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+            </button>
+          )}
           <h1 className="text-xl font-bold tracking-[0.2em] uppercase flex items-center gap-3">
             <Settings className="w-5 h-5 text-cyan-400 shrink-0" /> <span className="text-gradient">SYSTEM PREFERENCES</span>
           </h1>
@@ -256,6 +269,23 @@ export const SettingsPanel: React.FC = () => {
               ? <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />
               : <ChevronRight className="w-4 h-4 text-emerald-500/60" />}
           </SettingRow>
+          {!syncOnline && (
+            <SettingRow
+              title="Simulated Contact"
+              desc="Local demo node that replies so you can try the chat"
+            >
+              <button
+                onClick={() => toggleSimBot()}
+                className={`px-3 py-1.5 rounded text-[10px] font-bold tracking-widest uppercase border transition-colors ${
+                  simBotActive
+                    ? 'bg-amber-500 text-black border-amber-500'
+                    : 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10'
+                }`}
+              >
+                {simBotActive ? 'ACTIVE' : 'OFF'}
+              </button>
+            </SettingRow>
+          )}
           {!syncOnline && (
             <div className="px-5 py-3 bg-amber-500/5 border-t border-amber-500/20 text-[10px] text-amber-500/90 tracking-wider uppercase leading-relaxed">
               [HINT] Run <span className="font-bold text-amber-400">supabase/schema.sql</span> in the Supabase SQL editor to

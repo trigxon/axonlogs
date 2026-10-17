@@ -46,16 +46,17 @@ export async function runTier5Tests(projectRoot: string): Promise<TestResult[]> 
     results.push(makeResult('Tier 5.1: TypewriterText onComplete ref stabilisation & rAF cleanup', false, String(err)));
   }
 
-  // ── 5.2: Freshness gate in TerminalUI (no replay of history) ───────────
+  // ── 5.2: Freshness gate in ConversationPanel (no replay of history) ──────
   try {
     const src = fs.readFileSync(
-      path.join(projectRoot, 'src/components/layout/TerminalUI.tsx'),
+      path.join(projectRoot, 'src/components/chat/ConversationPanel.tsx'),
       'utf8'
     );
-    const freshnessGate = /!animatedMsgs\.has\(msg\.id\)\s*&&\s*Date\.now\(\)\s*-\s*new Date\(msg\.created_at\)\.getTime\(\)\s*<\s*\d+/.test(src);
+    const freshnessGate = /!animatedMsgs\.has\(msg\.id\)\s*&&\s*Date\.now\(\)\s*-\s*(?:new Date\(msg\.created_at\)\.getTime\(\)|t)\s*<\s*\d+/.test(src);
+    const stampsT = /const t = new Date\(msg\.created_at\)\.getTime\(\)/.test(src);
     const skipsSelf = /!isSelf\s*&&/.test(src);
 
-    const passed = freshnessGate && skipsSelf;
+    const passed = freshnessGate && skipsSelf && stampsT;
     results.push(makeResult(
       'Tier 5.2: Typewriter freshness gate (history renders instantly, own messages never animate)',
       passed,
@@ -93,28 +94,27 @@ export async function runTier5Tests(projectRoot: string): Promise<TestResult[]> 
   // ── 5.4: Shared CodeBlock extraction (no duplicate definition) ─────────
   try {
     const shared = fs.readFileSync(path.join(projectRoot, 'src/components/CodeBlock.tsx'), 'utf8');
-    const terminal = fs.readFileSync(
-      path.join(projectRoot, 'src/components/layout/TerminalUI.tsx'),
-      'utf8'
-    );
     const typewriter = fs.readFileSync(
       path.join(projectRoot, 'src/components/ui/TypewriterText.tsx'),
       'utf8'
     );
 
     const sharedExports = /export default CodeBlock/.test(shared);
-    const terminalImports = /import CodeBlock from '\.\.\/CodeBlock'/.test(terminal);
     const typewriterImports = /import CodeBlock from '\.\.\/CodeBlock'/.test(typewriter);
-    // The old inline definition must be gone (no "const CodeBlock =" left in TerminalUI)
-    const noDuplicate = !/const CodeBlock\s*=/.test(terminal);
+    // The old inline definition must be gone (no "const CodeBlock =" in any chat view)
+    const conversation = fs.readFileSync(
+      path.join(projectRoot, 'src/components/chat/ConversationPanel.tsx'),
+      'utf8'
+    );
+    const noDuplicate = !/const CodeBlock\s*=/.test(conversation);
 
-    const passed = sharedExports && terminalImports && typewriterImports && noDuplicate;
+    const passed = sharedExports && typewriterImports && noDuplicate;
     results.push(makeResult(
       'Tier 5.4: CodeBlock extracted to shared module, no duplicate definitions',
       passed,
       passed
-        ? 'CodeBlock.tsx exports default; TerminalUI and TypewriterText both import it; no local redefinition'
-        : `sharedExports=${sharedExports} terminalImports=${terminalImports} typewriterImports=${typewriterImports} noDuplicate=${noDuplicate}`
+        ? 'CodeBlock.tsx exports default; TypewriterText imports it; no local redefinition in chat views'
+        : `sharedExports=${sharedExports} typewriterImports=${typewriterImports} noDuplicate=${noDuplicate}`
     ));
   } catch (err) {
     results.push(makeResult('Tier 5.4: Shared CodeBlock extraction', false, String(err)));

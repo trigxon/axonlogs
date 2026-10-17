@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, type ReactNode, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import CryptoJS from 'crypto-js';
+import { getMyAvatar, setMyAvatar } from '../utils/chatMeta';
 
 export interface Chat {
   id: string;
@@ -93,7 +94,7 @@ interface CryptoContextType {
   setActiveChat: (chat: Chat) => void;
   createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
-  sendMessage: (text: string, file?: File | null, replyToId?: string | null) => Promise<void>;
+  sendMessage: (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean) => Promise<void>;
   editMessage: (msgId: string, newText: string) => void;
   toggleReaction: (msgId: string, emoji: string) => void;
   togglePinMessage: (msgId: string) => void;
@@ -140,6 +141,9 @@ interface CryptoContextType {
   getCallRtt: () => Promise<number | null>;
   messagesInView: string[];
   setMessagesInView: (ids: string[]) => void;
+  /** gradient for MY avatar (profile picker) */
+  myGradient: string;
+  updateMyGradient: (gradient: string) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -290,6 +294,11 @@ const fileToDataUrl = (file: File): Promise<string | null> =>
   });
 
 export const CryptoProvider = ({ children }: { children: ReactNode }) => {
+  const [myGradient, setMyGradient] = useState<string>(() => getMyAvatar(localStorage.getItem('axon_deviceId') || ''));
+  const updateMyGradient = useCallback((gradient: string) => {
+    setMyAvatar(gradient);
+    setMyGradient(gradient);
+  }, []);
   const [deviceId, setDeviceId] = useState<string>('');
   const [alias, setAlias] = useState<string>('');
   const [chats, setChats] = useState<Chat[]>([]);
@@ -384,6 +393,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
     setDeviceId(storedId);
     setAlias(storedAlias);
+    setMyGradient(getMyAvatar(storedId));
     addLog(`Identity initialized: ${storedId.substring(0, 8)}...`);
     setNetworkStatus(isOnline ? 'ONLINE' : 'LOCAL');
   }, [addLog]);
@@ -1032,8 +1042,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [backendMode, simBotActive, activeChat?.id, encryptText, scheduleDestruct, addLog]);
 
-  const sendMessage = async (text: string, file?: File | null, replyToId?: string | null) => {
+  const sendMessage = async (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean) => {
     if (!activeChat || !deviceId) return;
+    const burnOnRead = burnOverride ?? settingsRef.current.burnOnRead;
 
     if (backendMode === 'online') {
       if (!supabase) return;
@@ -1107,7 +1118,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           sender_id: deviceId,
           text: encryptedText,
           file_url: fileUrl,
-          burn_on_read: settingsRef.current.burnOnRead,
+          burn_on_read: burnOnRead,
           reply_to_id: replyToId,
           read_by: [],
           created_at: now,
@@ -1123,7 +1134,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             sender_id: deviceId,
             text: encryptedText,
             file_url: fileUrl,
-            burn_on_read: settingsRef.current.burnOnRead,
+            burn_on_read: burnOnRead,
             reply_to_id: replyToId,
             read_by: [],
             created_at: now,
@@ -1170,7 +1181,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       sender_id: deviceId,
       text: encryptedText,
       file_url: fileUrl,
-      burn_on_read: settingsRef.current.burnOnRead,
+      burn_on_read: burnOnRead,
       reply_to_id: replyToId,
       read_by: [],
       created_at: new Date().toISOString(),
@@ -1602,6 +1613,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         onlineUsers, typingUsers, broadcastTyping, simBotActive, toggleSimBot,
         unlockedChatId, unlockChat, lockChat, backendMode, pushLocalToCloud,
         settings, updateSettings,
+        myGradient, updateMyGradient,
         callingChat, callType, callStatus, callNotice, incomingCall, localStream, remoteStream,
         startCall, endCall, acceptIncomingCall, rejectIncomingCall, getCallRtt, messagesInView, setMessagesInView,
       }}
