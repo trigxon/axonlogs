@@ -49,6 +49,28 @@ create table if not exists public.accounts (
 create index if not exists idx_accounts_username
   on public.accounts (lower(username));
 
+-- Instagram-style username format enforced server-side:
+-- 1-30 chars; letters, numbers, periods, underscores; no leading/trailing period.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'accounts_username_format'
+      and conrelid = 'public.accounts'::regclass
+  ) then
+    alter table public.accounts
+      add constraint accounts_username_format
+      check (
+        username ~ '^[a-z0-9._]{1,30}$'
+        and username !~ '^[.]'
+        and username !~ '[.]$'
+      );
+  end if;
+end $$;
+
+-- NOTE: no constraint on password_hash — the password policy is
+-- intentionally unrestricted (client enforces username rules only).
+
 alter table public.accounts enable row level security;
 
 drop policy if exists "public read accounts"    on public.accounts;

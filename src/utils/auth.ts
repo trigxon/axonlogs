@@ -73,22 +73,34 @@ export const verifyPassword = (password: string, stored: string): boolean => {
 
 /* ----------------------------- validation ------------------------------ */
 
-export const USERNAME_RE = /^[a-z0-9._]{3,20}$/;
+/**
+ * Username rules — exactly like Instagram:
+ *   • 1–30 characters
+ *   • letters (a–z), numbers (0–9), periods (.) and underscores (_) only
+ *   • can't start or end with a period
+ *   • must be unique (checked against the accounts table, live while typing)
+ * Usernames are stored lowercased and matched case-insensitively.
+ */
+export const USERNAME_MAX = 30;
+export const USERNAME_RE = /^[a-z0-9._]{1,30}$/;
 
 export const validateUsername = (username: string): string | null => {
   const u = username.trim().toLowerCase();
-  if (u.length < 3) return 'Username must be at least 3 characters.';
-  if (u.length > 20) return 'Username must be at most 20 characters.';
-  if (!USERNAME_RE.test(u)) return 'Only letters, numbers, dots and underscores.';
-  if (u.startsWith('.') || u.endsWith('.')) return "Username can't start or end with a dot.";
+  if (!u) return 'Choose a username.';
+  if (u.length > USERNAME_MAX) return `Username must be ${USERNAME_MAX} characters or less.`;
+  if (!USERNAME_RE.test(u)) return 'Only letters, numbers, periods and underscores are allowed.';
+  if (u.startsWith('.') || u.endsWith('.')) return "A username can't start or end with a period.";
   return null;
 };
 
-export const validatePassword = (password: string): string | null => {
-  if (!password || password.length < 4) return 'Password must be at least 4 characters.';
-  if (password.length > 72) return 'Password must be at most 72 characters.';
-  return null;
-};
+/**
+ * Password policy: intentionally NONE.
+ * Any password is accepted — no minimum length, no maximum, no character
+ * requirements, spaces and unicode included. (Instagram-style restrictions
+ * apply to usernames only, by design.) The password is PBKDF2-SHA256
+ * hashed on-device before it ever leaves the browser.
+ */
+export const validatePassword = (_password: string): string | null => null;
 
 /* ------------------------------ session -------------------------------- */
 

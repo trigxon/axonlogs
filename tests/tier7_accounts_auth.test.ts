@@ -129,5 +129,56 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
     });
   }
 
+  // 7.4: Instagram username rules + unrestricted password policy (runtime)
+  const rulesStart = Date.now();
+  try {
+    const authUtil = read('src', 'utils', 'auth.ts');
+    const authScreen = read('src', 'components', 'auth', 'AuthScreen.tsx');
+
+    // runtime behavior — actually execute the validators
+    const mod: any = await import('../src/utils/auth.ts');
+    const { validateUsername, validatePassword } = mod;
+    const checks: Array<[boolean, string]> = [
+      [validateUsername('ab') === null, '1-2 char usernames must be allowed (Instagram allows 1-30)'],
+      [validateUsername('a'.repeat(30)) === null, '30-character usernames must be allowed'],
+      [validateUsername('a'.repeat(31)) !== null, '31-character usernames must be rejected'],
+      [validateUsername('') !== null, 'empty usernames must be rejected'],
+      [validateUsername('john.doe_01') === null, 'letters/numbers/periods/underscores must be allowed'],
+      [validateUsername('_leading_underscore') === null, 'leading underscores must be allowed (Instagram behavior)'],
+      [validateUsername('.john') !== null, 'leading period must be rejected'],
+      [validateUsername('john.') !== null, 'trailing period must be rejected'],
+      [validateUsername('john doe') !== null, 'spaces must be rejected'],
+      [validateUsername('john-doe') !== null, 'hyphens must be rejected'],
+      [validateUsername('j@hn') !== null, 'special characters must be rejected'],
+      [validatePassword('') === null, 'passwords must be unrestricted (no minimum)'],
+      [validatePassword('a') === null, '1-char passwords must be allowed'],
+      [validatePassword('p@$$w0rd 💪 with spaces') === null, 'unicode/space/symbol passwords must be allowed'],
+      [validatePassword('x'.repeat(500)) === null, 'long passwords must be allowed (no maximum)'],
+      // structural guards so a future edit can't silently re-add password rules
+      [!authUtil.includes('Password must be at least'), 'auth.ts must not enforce a password minimum'],
+      [!authUtil.includes('Password must be at most'), 'auth.ts must not enforce a password maximum'],
+      [authUtil.includes('{1,30}'), 'username regex must implement the Instagram 1-30 rule'],
+      [authScreen.includes('maxLength={30}'), 'AuthScreen username input must cap at 30 characters'],
+      [authScreen.includes("This username isn't available"), 'AuthScreen must show the live availability result'],
+    ];
+    const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
+    if (failed.length > 0) throw new Error(failed.join('; '));
+
+    results.push({
+      name: 'Tier 7.4: Instagram username rules + unrestricted passwords (runtime)',
+      tier: 7,
+      passed: true,
+      durationMs: Date.now() - rulesStart,
+    });
+  } catch (err: any) {
+    results.push({
+      name: 'Tier 7.4: Instagram username rules + unrestricted passwords (runtime)',
+      tier: 7,
+      passed: false,
+      error: err.message,
+      durationMs: Date.now() - rulesStart,
+    });
+  }
+
   return results;
 }

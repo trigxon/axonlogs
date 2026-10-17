@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { AtSign, Lock, Eye, EyeOff, UserPlus, LogIn, AlertTriangle } from 'lucide-react';
+import { AtSign, Lock, Eye, EyeOff, UserPlus, LogIn, AlertTriangle, Check, X } from 'lucide-react';
 import { supabase, useCrypto } from '../../contexts/CryptoContext';
 import {
   signupAccount,
   loginAccount,
   validateUsername,
+  usernameAvailable,
   isMissingTableError,
 } from '../../utils/auth';
 
@@ -22,6 +23,7 @@ export const AuthScreen: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [avail, setAvail] = useState<'ok' | 'taken' | null>(null);
   const [clock, setClock] = useState(() => new Date());
 
   useEffect(() => {
@@ -29,10 +31,28 @@ export const AuthScreen: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
+  // Instagram-style live availability check while typing (signup only).
+  const uClean = username.trim().toLowerCase();
+  const uValid = mode === 'signup' && uClean.length > 0 && !validateUsername(uClean);
+  useEffect(() => {
+    if (!uValid) { setAvail(null); return; }
+    let dead = false;
+    setAvail(null);
+    const t = setTimeout(async () => {
+      if (!supabase) return;
+      try {
+        const ok = await usernameAvailable(supabase, uClean);
+        if (!dead) setAvail(ok ? 'ok' : 'taken');
+      } catch { /* offline — silently skip the live check */ }
+    }, 400);
+    return () => { dead = true; clearTimeout(t); };
+  }, [uValid, uClean]);
+
   const switchMode = (m: 'login' | 'signup') => {
     setMode(m);
     setError(null);
     setNeedsSetup(false);
+    setAvail(null);
   };
 
   const finishLocally = () => {
@@ -149,11 +169,30 @@ export const AuthScreen: React.FC = () => {
                     autoComplete="username"
                     autoCapitalize="none"
                     spellCheck={false}
-                    maxLength={20}
+                    maxLength={30}
                     className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
                     aria-label="Username"
                   />
                 </div>
+
+                {/* username feedback — Instagram rules + live availability */}
+                {mode === 'signup' && (
+                  <div className="min-h-[18px] px-1 flex items-center gap-1.5 text-[11px] leading-snug">
+                    {avail === 'ok' ? (
+                      <span className="text-emerald-400 flex items-center gap-1">
+                        <Check className="w-3 h-3 shrink-0" /> @{uClean} is available
+                      </span>
+                    ) : avail === 'taken' ? (
+                      <span className="text-red-400 flex items-center gap-1">
+                        <X className="w-3 h-3 shrink-0" /> This username isn't available. Try another.
+                      </span>
+                    ) : uValid && supabase ? (
+                      <span className="text-zinc-600">Checking availability…</span>
+                    ) : (
+                      <span className="text-zinc-600">Letters, numbers, periods and underscores. Up to 30 characters.</span>
+                    )}
+                  </div>
+                )}
 
                 {/* password */}
                 <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
