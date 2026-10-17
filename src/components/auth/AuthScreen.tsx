@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AtSign, Lock, Eye, EyeOff, UserPlus, LogIn, AlertTriangle, Check, X } from 'lucide-react';
 import { supabase, useCrypto } from '../../contexts/CryptoContext';
+import SecurityNote from '../ui/SecurityNote';
 import {
   signupAccount,
   loginAccount,
@@ -277,10 +278,7 @@ export const AuthScreen: React.FC = () => {
                 </button>
               )}
 
-              <p className="mt-6 text-center text-[9px] tracking-[0.2em] uppercase text-zinc-700 leading-relaxed">
-                Passwords are PBKDF2-hashed on-device before upload.<br />
-                Messages stay end-to-end encrypted.
-              </p>
+              <SecurityNote className="mt-6" />
             </div>
           </div>
 

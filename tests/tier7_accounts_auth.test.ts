@@ -23,6 +23,10 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
     const authUtil = read('src', 'utils', 'auth.ts');
     const authScreen = read('src', 'components', 'auth', 'AuthScreen.tsx');
     const appTsx = read('src', 'App.tsx');
+    const secNote = read('src', 'components', 'ui', 'SecurityNote.tsx');
+    const profilePanel = read('src', 'components', 'profile', 'ProfilePanel.tsx');
+    const settingsPanel = read('src', 'components', 'settings', 'SettingsPanel.tsx');
+    const chatApp = read('src', 'components', 'layout', 'ChatApp.tsx');
 
     const checks: Array<[boolean, string]> = [
       [authUtil.includes('CryptoJS.PBKDF2'), 'auth.ts must hash passwords with CryptoJS.PBKDF2'],
@@ -32,6 +36,11 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
       [authScreen.includes("placeholder=\"username\""), 'AuthScreen must collect a username'],
       [authUtil.includes('validateUsername') && authScreen.includes('validateUsername'), 'AuthScreen must validate the username'],
       [appTsx.includes('AuthScreen') && appTsx.includes('account'), 'App.tsx must gate ChatApp behind the account session'],
+      [secNote.includes('Passwords are PBKDF2-hashed on-device before upload.') && secNote.includes('Messages stay end-to-end encrypted.'), 'SecurityNote must highlight both security guarantees'],
+      [authScreen.includes('SecurityNote'), 'AuthScreen must show the highlighted security note'],
+      [profilePanel.includes('SecurityNote'), 'ProfilePanel must show the highlighted security note'],
+      [settingsPanel.includes('SecurityNote'), 'SettingsPanel must show the highlighted security note'],
+      [chatApp.includes('SecurityNote'), 'ChatApp welcome state must show the highlighted security note'],
     ];
     const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
     if (failed.length > 0) throw new Error(failed.join('; '));

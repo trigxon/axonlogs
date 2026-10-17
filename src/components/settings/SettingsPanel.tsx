@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCrypto, BURN_DELAY_OPTIONS } from '../../contexts/CryptoContext';
+import SecurityNote from '../ui/SecurityNote';
 import {
   exportAppData,
   exportPdfData,
@@ -341,6 +342,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               className="bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-1.5 text-blue-400 font-mono text-xs outline-none uppercase rounded-md text-right w-48 transition-colors"
             />
           </SettingRow>
+          <SecurityNote compact className="mx-5 mb-4 mt-1" />
         </SectionCard>
 
         {/* TERMINAL BEHAVIOR */}

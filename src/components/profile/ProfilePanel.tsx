@@ -7,6 +7,7 @@ import { useCrypto, supabase } from '../../contexts/CryptoContext';
 import Avatar from './Avatar';
 import { AVATAR_CHOICES, getMyBio, setMyBio, readPreviewCache } from '../../utils/chatMeta';
 import { updateAccountProfile } from '../../utils/auth';
+import SecurityNote from '../ui/SecurityNote';
 
 export interface ProfilePanelProps {
   onBack: () => void;
@@ -240,7 +241,8 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
         </div>
 
         {/* Security & data */}
-        <div className="mt-4 term-panel rounded-xl border border-white/[0.07] divide-y divide-white/[0.05] overflow-hidden">
+        <SecurityNote compact className="mt-4" />
+        <div className="mt-3 term-panel rounded-xl border border-white/[0.07] divide-y divide-white/[0.05] overflow-hidden">
           <div className="px-4 py-2.5 text-[9px] font-bold tracking-[0.25em] uppercase text-zinc-500">Security & data</div>
           <ActionRow
             icon={<Settings className="w-4 h-4 text-zinc-400" />}

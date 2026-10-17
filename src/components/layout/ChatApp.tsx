@@ -10,6 +10,7 @@ import ConversationPanel from '../chat/ConversationPanel';
 import ProfilePanel from '../profile/ProfilePanel';
 import Avatar from '../profile/Avatar';
 import CallOverlay, { IncomingCallScreen } from '../calling/CallOverlay';
+import SecurityNote from '../ui/SecurityNote';
 
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
 
@@ -687,6 +688,7 @@ const EmptyChatState: React.FC<{ onNewMessage: () => void; onJoin: () => void }>
         Join with code
       </button>
     </div>
+    <SecurityNote compact className="w-full max-w-xs mt-1" />
   </div>
 );
 
