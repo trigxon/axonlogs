@@ -214,7 +214,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           </div>
           {!editingAlias && (
             <p className="text-[11px] text-zinc-600 mt-1 font-mono">
-              {myHandle ? `AXON ACCOUNT · ${networkStatus}` : `NODE_${deviceId.substring(0, 8).toUpperCase()} · ${networkStatus}`}
+              {myHandle ? `AXON ACCOUNT · ${networkStatus === 'ONLINE' ? 'connected' : 'offline'}` : `DEVICE ${deviceId.substring(0, 8).toUpperCase()} · ${networkStatus}`}
             </p>
           )}
           {/* Instagram display name */}
@@ -309,22 +309,22 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           <QuickToggle
             icon={settings.stealthMode ? <Eye className="w-4 h-4 text-cyan-300" /> : <Eye className="w-4 h-4 text-zinc-500" />}
             label="Stealth mode"
-            hint="Blur everything when the tab loses focus"
+            hint="Blur the screen when you switch tabs"
             on={settings.stealthMode}
             onToggle={() => updateSettings({ stealthMode: !settings.stealthMode })}
           />
           <QuickToggle
             icon={settings.burnOnRead ? <Flame className="w-4 h-4 text-red-400" /> : <Flame className="w-4 h-4 text-zinc-500" />}
-            label="Burn-on-read"
-            hint="Messages auto-destruct after the timer"
+            label="Vanishing messages"
+            hint="New messages disappear shortly after they're read"
             on={settings.burnOnRead}
             onToggle={() => updateSettings({ burnOnRead: !settings.burnOnRead })}
           />
           <div className="flex items-center gap-3 px-4 py-3">
             <Timer className="w-4 h-4 text-zinc-500 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-zinc-200">Burn timer</div>
-              <div className="text-[10px] text-zinc-600">Seconds before payloads self-destruct</div>
+              <div className="text-xs text-zinc-200">Vanish timer</div>
+              <div className="text-[10px] text-zinc-600">How long a message stays after it's read</div>
             </div>
             <select
               value={settings.burnDelaySeconds}
@@ -383,7 +383,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           <ActionRow
             icon={<ShieldAlert className="w-4 h-4 text-amber-400" />}
             label="Panic screen"
-            hint="Instant fake 404 overlay (or type /panic)"
+            hint="Instantly show a fake error page (or type /panic)"
             onClick={onTriggerPanic}
           />
           <ActionRow
@@ -403,9 +403,9 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           )}
           <ActionRow
             icon={<LogOut className="w-4 h-4 text-red-400" />}
-            label="Terminate session"
-            hint="Wipe this device's local data and reload"
-            onClick={() => { if (confirm('Wipe ALL local Axon data on this device and reload?')) { localStorage.clear(); window.location.reload(); } }}
+            label="Erase everything on this device"
+            hint="Clears this device's app data and reloads"
+            onClick={() => { if (confirm('Clear ALL app data saved on this device and reload?')) { localStorage.clear(); window.location.reload(); } }}
             danger
           />
         </div>

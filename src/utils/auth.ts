@@ -145,6 +145,47 @@ export const isMissingTableError = (error: any): boolean => {
   );
 };
 
+/* ---------------- schema negotiation (graceful degradation) ----------------
+ * The cloud schema is one file: supabase/schema.sql. Until the site owner
+ * re-runs it after an update, the live database can lag behind the client
+ * (older accounts columns, no follows table yet). Instead of breaking the
+ * whole app, we probe once and negotiate down to what the DB supports.
+ * A page reload after the schema update picks everything back up. */
+
+type AccountColsMode = 'full' | 'min';
+let accountColsMode: AccountColsMode | null = null; // null = probe on first use
+let followsTableReady: boolean | null = null;       // null = probe on first use
+
+const isColumnError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = String(error.message || '');
+  return (
+    error.code === 'PGRST204' ||
+    error.code === '42703' ||
+    /Could not find the|schema cache|column .* does not exist/i.test(msg)
+  );
+};
+
+const FULL_COLS = 'id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at';
+const MIN_COLS = 'id, username, bio, avatar_gradient, created_at, last_seen_at';
+
+const accountCols = (withHash: boolean): string => {
+  const base = accountColsMode === 'min' ? MIN_COLS : FULL_COLS;
+  return withHash ? `password_hash, ${base}` : base;
+};
+
+/** One cheap probe so we never hammer a missing table. */
+const ensureFollowsTable = async (supabase: any): Promise<boolean> => {
+  if (followsTableReady !== null) return followsTableReady;
+  try {
+    const { error } = await supabase.from('follows').select('follower').limit(1);
+    followsTableReady = !error;
+  } catch {
+    followsTableReady = false;
+  }
+  return followsTableReady;
+};
+
 /** True when the username is free. */
 export const usernameAvailable = async (supabase: any, username: string): Promise<boolean> => {
   const u = username.trim().toLowerCase();
@@ -172,17 +213,23 @@ export const signupAccount = async (
   const free = await usernameAvailable(supabase, u).catch(() => true);
   if (!free) return { ok: false, error: 'That username is taken. Try another.' };
 
-  const { data, error } = await supabase
+  const fullPayload = { username: u, password_hash: hashPassword(password), bio: '', avatar_gradient: avatarGradient, display_name: '' };
+  const minPayload = { username: u, password_hash: hashPassword(password), bio: '', avatar_gradient: avatarGradient };
+
+  let { data, error } = await supabase
     .from('accounts')
-    .insert({
-      username: u,
-      password_hash: hashPassword(password),
-      bio: '',
-      avatar_gradient: avatarGradient,
-      display_name: '',
-    })
-    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
+    .insert(fullPayload)
+    .select(accountCols(false))
     .single();
+  if (error && accountColsMode === null && isColumnError(error)) {
+    // Older live schema — retry without the newer columns
+    accountColsMode = 'min';
+    ({ data, error } = await supabase
+      .from('accounts')
+      .insert(minPayload)
+      .select(accountCols(false))
+      .single());
+  }
 
   if (error) {
     if ((error as any).code === '23505') return { ok: false, error: 'That username is taken. Try another.' };
@@ -197,11 +244,19 @@ export const loginAccount = async (
   password: string
 ): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
   const u = username.trim().toLowerCase();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('accounts')
-    .select('id, username, password_hash, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
+    .select(accountCols(true))
     .eq('username', u)
     .maybeSingle();
+  if (error && accountColsMode === null && isColumnError(error)) {
+    accountColsMode = 'min';
+    ({ data, error } = await supabase
+      .from('accounts')
+      .select(accountCols(true))
+      .eq('username', u)
+      .maybeSingle());
+  }
 
   if (error) return { ok: false, error: error.message || 'Login failed.' };
   if (!data) return { ok: false, error: 'No account found with that username.' };
@@ -226,21 +281,38 @@ export const searchAccounts = async (
   if (!q) return [];
   let req = supabase
     .from('accounts')
-    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
+    .select(accountCols(false))
     .ilike('username', `%${q}%`)
     .limit(limit);
   if (excludeUsername) req = req.neq('username', excludeUsername);
-  const { data } = await req;
+  let { data, error } = await req;
+  if (error && accountColsMode === null && isColumnError(error)) {
+    accountColsMode = 'min';
+    ({ data, error } = await supabase
+      .from('accounts')
+      .select(accountCols(false))
+      .ilike('username', `%${q}%`)
+      .neq('username', excludeUsername)
+      .limit(limit));
+  }
   return (data || []) as Account[];
 };
 
 export const fetchAccount = async (supabase: any, username: string): Promise<Account | null> => {
   const u = username.trim().toLowerCase();
-  const { data } = await supabase
+  let { data, error } = await supabase
     .from('accounts')
-    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
+    .select(accountCols(false))
     .eq('username', u)
     .maybeSingle();
+  if (error && accountColsMode === null && isColumnError(error)) {
+    accountColsMode = 'min';
+    ({ data } = await supabase
+      .from('accounts')
+      .select(accountCols(false))
+      .eq('username', u)
+      .maybeSingle());
+  }
   return (data as Account) || null;
 };
 
@@ -250,7 +322,16 @@ export const updateAccountProfile = async (
   patch: { bio?: string; avatar_gradient?: string; display_name?: string; is_private?: boolean; show_activity?: string | boolean }
 ): Promise<boolean> => {
   const u = username.trim().toLowerCase();
-  const { error } = await supabase.from('accounts').update(patch).eq('username', u);
+  const applyPatch = (p: typeof patch) => supabase.from('accounts').update(p).eq('username', u);
+  let { error } = await applyPatch(patch);
+  if (error && accountColsMode === null && isColumnError(error)) {
+    // Older schema — drop the newer fields and retry with the basics
+    accountColsMode = 'min';
+    const minPatch: typeof patch = {};
+    if (patch.bio !== undefined) minPatch.bio = patch.bio;
+    if (patch.avatar_gradient !== undefined) minPatch.avatar_gradient = patch.avatar_gradient;
+    ({ error } = await applyPatch(minPatch));
+  }
   return !error;
 };
 
@@ -319,8 +400,6 @@ export const fetchMyDmInvites = async (supabase: any, username: string): Promise
  * on accounts.blocked_usernames (per-account blocklist).
  * ----------------------------------------------------------------------- */
 
-const ACCOUNT_COLS = 'id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at';
-
 export type FollowState = {
   following: boolean;   // I follow them (active)
   requested: boolean;   // I sent a follow request (pending, private account)
@@ -333,6 +412,7 @@ export const fetchFollowState = async (supabase: any, me: string, them: string):
   const b = them.trim().toLowerCase();
   const state: FollowState = { following: false, requested: false, followsMe: false };
   if (!supabase || !a || !b || a === b) return state;
+  if (!(await ensureFollowsTable(supabase))) return state; // social graph not set up yet
   const { data } = await supabase
     .from('follows')
     .select('follower, followed, status')
@@ -356,6 +436,7 @@ export const followUser = async (supabase: any, me: string, target: string, targ
   const a = me.trim().toLowerCase();
   const b = target.trim().toLowerCase();
   if (!supabase || !a || !b || a === b) return 'error';
+  if (!(await ensureFollowsTable(supabase))) return 'error'; // social graph not set up yet
   const status = targetIsPrivate ? 'pending' : 'active';
   const { error } = await supabase
     .from('follows')
@@ -366,6 +447,7 @@ export const followUser = async (supabase: any, me: string, target: string, targ
 export const unfollowUser = async (supabase: any, me: string, target: string): Promise<boolean> => {
   const a = me.trim().toLowerCase();
   const b = target.trim().toLowerCase();
+  if (!(await ensureFollowsTable(supabase))) return false;
   const { error } = await supabase.from('follows').delete().eq('follower', a).eq('followed', b);
   return !error;
 };
@@ -373,6 +455,7 @@ export const unfollowUser = async (supabase: any, me: string, target: string): P
 /** Usernames that actively follow `username` (their followers). */
 export const fetchFollowers = async (supabase: any, username: string, limit = 200): Promise<string[]> => {
   const u = username.trim().toLowerCase();
+  if (!supabase || !(await ensureFollowsTable(supabase))) return [];
   const { data } = await supabase
     .from('follows')
     .select('follower')
@@ -385,6 +468,7 @@ export const fetchFollowers = async (supabase: any, username: string, limit = 20
 /** Usernames that `username` actively follows. */
 export const fetchFollowing = async (supabase: any, username: string, limit = 200): Promise<string[]> => {
   const u = username.trim().toLowerCase();
+  if (!supabase || !(await ensureFollowsTable(supabase))) return [];
   const { data } = await supabase
     .from('follows')
     .select('followed')
@@ -397,6 +481,7 @@ export const fetchFollowing = async (supabase: any, username: string, limit = 20
 /** Pending follow requests addressed to me (private accounts). */
 export const fetchFollowRequests = async (supabase: any, username: string, limit = 100): Promise<string[]> => {
   const u = username.trim().toLowerCase();
+  if (!supabase || !(await ensureFollowsTable(supabase))) return [];
   const { data } = await supabase
     .from('follows')
     .select('follower')
@@ -428,7 +513,11 @@ export const declineFollowRequest = async (supabase: any, me: string, requester:
 export const fetchAccountsByUsernames = async (supabase: any, usernames: string[]): Promise<Account[]> => {
   const list = [...new Set(usernames.map(u => u.trim().toLowerCase()))].filter(Boolean);
   if (!supabase || list.length === 0) return [];
-  const { data } = await supabase.from('accounts').select(ACCOUNT_COLS).in('username', list);
+  let { data, error } = await supabase.from('accounts').select(accountCols(false)).in('username', list);
+  if (error && accountColsMode === null && isColumnError(error)) {
+    accountColsMode = 'min';
+    ({ data } = await supabase.from('accounts').select(accountCols(false)).in('username', list));
+  }
   return (data || []) as Account[];
 };
 
@@ -470,11 +559,12 @@ export const unblockUser = async (supabase: any, me: string, target: string): Pr
 export const fetchBlockedUsers = async (supabase: any, me: string): Promise<string[]> => {
   const a = me.trim().toLowerCase();
   if (!supabase || !a) return [];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('accounts')
     .select('blocked_usernames')
     .eq('username', a)
     .maybeSingle();
+  if (error) return []; // column/table not migrated yet — blocklist is optional
   return data?.blocked_usernames || [];
 };
 
@@ -483,10 +573,11 @@ export const isBlockedEitherWay = async (supabase: any, a: string, b: string): P
   const x = a.trim().toLowerCase();
   const y = b.trim().toLowerCase();
   if (!supabase || !x || !y) return false;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('accounts')
     .select('username, blocked_usernames')
     .in('username', [x, y]);
+  if (error) return false; // column/table not migrated yet
   for (const row of data || []) {
     const list: string[] = row.blocked_usernames || [];
     if (row.username === x && list.includes(y)) return true;

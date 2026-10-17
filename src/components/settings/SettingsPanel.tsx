@@ -60,16 +60,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     e.preventDefault();
     if (!aliasInput.trim()) return;
     updateAlias(aliasInput.trim());
-    showStatus('success', `STATION ALIAS UPDATED TO [${aliasInput.trim().toUpperCase()}]`);
+    showStatus('success', `Name updated to ${aliasInput.trim()}`);
   };
 
   const handleExportJson = () => {
     try {
       exportAppData();
       addLog('Exported JSON data archive.');
-      showStatus('success', 'JSON EXPORT DOWNLOAD INITIATED SUCCESSFULLY');
+      showStatus('success', 'Backup file downloaded');
     } catch (err: any) {
-      showStatus('error', `EXPORT FAILED: ${err.message}`);
+      showStatus('error', `Download failed: ${err.message}`);
     }
   };
 
@@ -77,9 +77,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     try {
       exportPdfData();
       addLog('Exported PDF log report.');
-      showStatus('success', 'PDF EXPORT DOWNLOAD INITIATED SUCCESSFULLY');
+      showStatus('success', 'PDF file downloaded');
     } catch (err: any) {
-      showStatus('error', `PDF EXPORT FAILED: ${err.message}`);
+      showStatus('error', `PDF download failed: ${err.message}`);
     }
   };
 
@@ -93,16 +93,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
       const result = importAppData(content);
       if (result.success) {
         addLog('Imported JSON data backup.');
-        showStatus('success', 'DATA IMPORT SUCCESSFUL! RELOADING STATE...');
+        showStatus('success', 'Backup restored — reloading…');
         setTimeout(() => {
           window.location.reload();
         }, 1200);
       } else {
-        showStatus('error', `IMPORT ERROR: ${result.error}`);
+        showStatus('error', `Restore failed: ${result.error}`);
       }
     };
     reader.onerror = () => {
-      showStatus('error', 'FAILED TO READ IMPORT FILE');
+      showStatus('error', "Couldn't read that file");
     };
     reader.readAsText(file);
 
@@ -113,7 +113,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     const next = !soundEnabled;
     setSoundEnabled(next);
     localStorage.setItem('axon_sound_enabled', next ? 'true' : 'false');
-    addLog(next ? 'Incoming transmission sound enabled' : 'Incoming transmission sound disabled');
+    addLog(next ? 'Message sound on' : 'Message sound off');
   };
 
   const handleNotificationsToggle = () => {
@@ -123,44 +123,44 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
         if (perm === 'granted') {
           setNotificationsEnabled(true);
           localStorage.setItem('axon_notifications_enabled', 'true');
-          addLog('Desktop alerts enabled');
+          addLog('Desktop notifications enabled');
         } else {
-          addLog('Desktop alert permission denied');
+          addLog('Desktop notifications permission denied');
         }
       });
       return;
     }
     setNotificationsEnabled(next);
     localStorage.setItem('axon_notifications_enabled', next ? 'true' : 'false');
-    addLog(next ? 'Desktop alerts enabled' : 'Desktop alerts disabled');
+    addLog(next ? 'Desktop notifications enabled' : 'Desktop notifications disabled');
   };
 
   const handlePushToCloud = async () => {
     if (backendMode !== 'online') {
-      showStatus('error', 'CLOUD BACKEND UNAVAILABLE - RUN supabase/schema.sql FIRST');
+      showStatus('error', 'Not connected — run supabase/schema.sql first');
       return;
     }
     setSyncing(true);
     const pushed = await pushLocalToCloud();
     setSyncing(false);
     if (pushed > 0) {
-      addLog(`Pushed ${pushed} local terminal(s) to global cloud storage`);
-      showStatus('success', `PUSHED ${pushed} LOCAL TERMINAL(S) TO GLOBAL CLOUD`);
+      addLog(`Uploaded ${pushed} local chat(s) to the cloud`);
+      showStatus('success', `Uploaded ${pushed} chat(s) to the cloud`);
     } else {
-      showStatus('success', 'ALL DATA ALREADY SYNCHRONIZED TO THE CLOUD');
+      showStatus('success', 'Everything is already synced');
     }
   };
 
   const handleConfirmReset = () => {
     try {
       resetAllLocalData();
-      showStatus('success', 'DANGER ZONE: ALL LOCAL DATA CLEARED. RESETTING...');
+      showStatus('success', 'Everything cleared. Reloading…');
       setShowResetModal(false);
       setTimeout(() => {
         window.location.reload();
       }, 1000);
     } catch (err: any) {
-      showStatus('error', `RESET FAILED: ${err.message}`);
+      showStatus('error', `Couldn't clear data: ${err.message}`);
     }
   };
 
@@ -230,7 +230,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
             </button>
           )}
           <h1 className="text-xl font-bold tracking-[0.2em] uppercase flex items-center gap-3">
-            <Settings className="w-5 h-5 text-cyan-400 shrink-0" /> <span className="text-gradient">SYSTEM PREFERENCES</span>
+            <Settings className="w-5 h-5 text-cyan-400 shrink-0" /> <span className="text-gradient">Settings</span>
           </h1>
         </div>
         {statusMessage && (
@@ -247,17 +247,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
 
       <div className="p-4 md:p-6 max-w-4xl space-y-2">
 
-        {/* GLOBAL CLOUD SYNC */}
-        <SectionCard icon={Cloud} title="Global Cloud Sync" accent={syncOnline ? 'bg-emerald-500' : 'bg-amber-500'}>
+        {/* SYNC & STORAGE */}
+        <SectionCard icon={Cloud} title="Sync & storage" accent={syncOnline ? 'bg-emerald-500' : 'bg-amber-500'}>
           <SettingRow
-            title={syncOnline ? 'Cloud Sync Active' : 'Local Sandbox Mode'}
+            title={syncOnline ? 'Synced to the cloud' : 'This device only'}
             desc={syncOnline
-              ? `All terminals sync globally via Supabase (${networkStatus}) - accessible from anywhere`
-              : 'Data stored on this device only - cloud backend unavailable'}
+              ? `Your chats are saved online and show up on every device (${networkStatus})`
+              : 'Your chats are saved on this device only — the site isn\'t connected to its database yet'}
           >
             {syncOnline ? (
               <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 text-[10px] font-bold tracking-widest uppercase">
-                <Cloud className="w-3 h-3" /> GLOBAL
+                <Cloud className="w-3 h-3" /> SYNCED
               </span>
             ) : (
               <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/40 text-amber-400 text-[10px] font-bold tracking-widest uppercase">
@@ -265,15 +265,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               </span>
             )}
           </SettingRow>
-          <SettingRow title="Push Local Data to Cloud" desc="Upload any locally-stored terminals to global storage" isButton onClick={handlePushToCloud}>
+          <SettingRow title="Upload this device's chats" desc="Copy chats saved on this device to the cloud" isButton onClick={handlePushToCloud}>
             {syncing
               ? <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />
               : <ChevronRight className="w-4 h-4 text-emerald-500/60" />}
           </SettingRow>
           {!syncOnline && (
             <SettingRow
-              title="Simulated Contact"
-              desc="Local demo node that replies so you can try the chat"
+              title="Practice bot"
+              desc="A demo contact that replies, so you can try the chat"
             >
               <button
                 onClick={() => toggleSimBot()}
@@ -283,44 +283,43 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                     : 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10'
                 }`}
               >
-                {simBotActive ? 'ACTIVE' : 'OFF'}
+                {simBotActive ? 'ON' : 'OFF'}
               </button>
             </SettingRow>
           )}
           {!syncOnline && (
             <div className="px-5 py-3 bg-amber-500/5 border-t border-amber-500/20 text-[10px] text-amber-500/90 tracking-wider uppercase leading-relaxed">
-              [HINT] Run <span className="font-bold text-amber-400">supabase/schema.sql</span> in the Supabase SQL editor to
-              enable global sync. The app re-checks on reload and switches to CLOUD mode automatically.
+              Setup needed: run <span className="font-bold text-amber-400">supabase/schema.sql</span> once in your Supabase dashboard to turn on cloud sync.
             </div>
           )}
         </SectionCard>
 
         {/* IDENTITY */}
-        <SectionCard icon={UserCheck} title="Identity & Profile" accent="bg-cyan-500">
-          <SettingRow title="Station Alias" desc="Operator handle for identity masking">
+        <SectionCard icon={UserCheck} title="You & this device" accent="bg-cyan-500">
+          <SettingRow title="Local nickname" desc="A private nickname for you, shown only on this device">
             <form onSubmit={handleAliasSave} className="flex items-center gap-2">
               <input
                 type="text"
                 value={aliasInput}
                 onChange={e => setAliasInput(e.target.value)}
-                placeholder="OPERATOR_ALPHA"
-                className="bg-[#050505] border border-zinc-800 focus:border-cyan-500 px-3 py-1.5 text-cyan-400 font-mono text-xs outline-none uppercase rounded-md text-right w-40 transition-colors"
+                placeholder="Your nickname"
+                className="bg-[#050505] border border-zinc-800 focus:border-cyan-500 px-3 py-1.5 text-cyan-400 font-mono text-xs outline-none rounded-md text-right w-40 transition-colors"
               />
               <button type="submit" className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-1.5 rounded-md transition-colors">
                 <Check className="w-4 h-4" />
               </button>
             </form>
           </SettingRow>
-          <SettingRow title="Device Identifier" desc="Unique node ID for this device">
+          <SettingRow title="Device ID" desc="A random ID for this device — used to keep your stuff separate">
             <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
-              {deviceId || 'DEV_UNKNOWN'}
+              {deviceId || 'UNKNOWN'}
             </div>
           </SettingRow>
         </SectionCard>
 
-        {/* SECURITY & PRIVACY */}
-        <SectionCard icon={ShieldAlert} title="Privacy & Mitigation" accent="bg-blue-500">
-          <SettingRow title="Stealth Mode" desc="Blur the terminal feed while the tab is hidden">
+        {/* PRIVACY & SAFETY */}
+        <SectionCard icon={ShieldAlert} title="Privacy & safety" accent="bg-blue-500">
+          <SettingRow title="Stealth mode" desc="Blur your chats while the tab is hidden">
             <button
               onClick={() => {
                 updateSettings({ stealthMode: !settings.stealthMode });
@@ -361,7 +360,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               {settings.privateAccount === false ? <ToggleLeft className="text-zinc-700 w-8 h-8" /> : <ToggleRight className="text-blue-400 w-8 h-8" />}
             </button>
           </SettingRow>
-          <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
+          <SettingRow title="Decoy password" desc="Typing this secret password at the unlock screen opens a fake notes page instead of your chats">
             <input
               type="text"
               value={decoyPassphrase}
@@ -376,13 +375,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           <SecurityNote compact className="mx-5 mb-4 mt-1" />
         </SectionCard>
 
-        {/* TERMINAL BEHAVIOR */}
-        <SectionCard icon={Flame} title="Terminal Behavior" accent="bg-cyan-500">
+        {/* MESSAGES */}
+        <SectionCard icon={Flame} title="Messages" accent="bg-cyan-500">
           <SettingRow
-            title="Auto Message Delete"
+            title="Vanishing messages"
             desc={settings.burnOnRead
-              ? `Payloads auto-destruct after ${burnLabel(settings.burnDelaySeconds)} of being received`
-              : 'Payloads persist until manually incinerated'}
+              ? `New messages disappear ${burnLabel(settings.burnDelaySeconds)} after they're read`
+              : "Off — messages stay until they're deleted"}
           >
             <button
               onClick={() => {
@@ -396,7 +395,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           {settings.burnOnRead && (
             <div className="px-5 py-4 border-b border-zinc-800/50">
               <div className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] uppercase text-zinc-500 mb-2.5">
-                <Timer className="w-3 h-3 text-cyan-500/70" /> Destruct Timer
+                <Timer className="w-3 h-3 text-cyan-500/70" /> Vanish timer
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {BURN_DELAY_OPTIONS.map(opt => (
@@ -417,11 +416,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                 ))}
               </div>
               <div className="mt-2 text-[9px] text-zinc-600 uppercase tracking-wider">
-                Applies to all terminals on this device
+                Applies to all chats on this device
               </div>
             </div>
           )}
-          <SettingRow title="File & Photo Attachments" desc="Allow sending files and photos inside transmissions">
+          <SettingRow title="Files & photos" desc="Let you send files and photos in chats">
             <button
               onClick={() => {
                 updateSettings({ allowFiles: !settings.allowFiles });
@@ -431,7 +430,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               {settings.allowFiles ? <ToggleRight className="text-cyan-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
-          <SettingRow title="Voice Messages" desc="Show the voice memo recorder in the composer">
+          <SettingRow title="Voice messages" desc="Let you record and send voice notes">
             <button
               onClick={() => {
                 updateSettings({ allowVoice: !settings.allowVoice });
@@ -443,55 +442,55 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           </SettingRow>
         </SectionCard>
 
-        {/* ALERTS & NOTIFICATIONS */}
-        <SectionCard icon={BellRing} title="Alerts & Notifications" accent="bg-amber-500">
-          <SettingRow title="Incoming Transmission Sound" desc="Play a ping when a new payload arrives">
+        {/* NOTIFICATIONS */}
+        <SectionCard icon={BellRing} title="Notifications" accent="bg-amber-500">
+          <SettingRow title="Message sound" desc="Play a sound when a new message arrives">
             <button onClick={handleSoundToggle}>
               {soundEnabled ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
-          <SettingRow title="Desktop Alerts" desc="System notification when a transmission arrives while tab is hidden">
+          <SettingRow title="Desktop notifications" desc="Get a system notification for new messages while the tab is hidden">
             <button onClick={handleNotificationsToggle}>
               {notificationsEnabled ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
         </SectionCard>
 
-        {/* UI CUSTOMIZATION */}
-        <SectionCard icon={Monitor} title="Interface Styling" accent="bg-purple-500">
-          <SettingRow title="UI Text Size" desc="Scale interface font elements">
+        {/* LOOK & FEEL */}
+        <SectionCard icon={Monitor} title="Look & feel" accent="bg-purple-500">
+          <SettingRow title="Text size" desc="Make text smaller or bigger">
             <SegmentedControl options={['small', 'medium', 'large']} current={textSize} onChange={setTextSize} />
           </SettingRow>
-          <SettingRow title="Card Padding" desc="Adjust spacing inside containers">
+          <SettingRow title="Spacing" desc="How much breathing room cards get">
             <SegmentedControl options={['compact', 'normal', 'relaxed']} current={cardPadding} onChange={setCardPadding} />
           </SettingRow>
-          <SettingRow title="Border Radius" desc="Shape of buttons and modules">
+          <SettingRow title="Corner rounding" desc="Shape of buttons and cards">
             <SegmentedControl options={['sharp', 'rounded', 'pill']} current={borderRadius} onChange={setBorderRadius} />
           </SettingRow>
         </SectionCard>
 
-        {/* DATA EXPORT */}
+        {/* EXPORT */}
         <SectionCard icon={Download} title="Export" accent="bg-emerald-500">
-          <SettingRow title="Export PDF Report" desc="Download complete performance logs as PDF" isButton onClick={handleExportPdf}>
+          <SettingRow title="Download everything as PDF" desc="Save your chat history as a PDF file" isButton onClick={handleExportPdf}>
             <ChevronRight className="w-4 h-4 text-zinc-600" />
           </SettingRow>
-          <SettingRow title="Export JSON Backup" desc="Download local storage dump as JSON archive" isButton onClick={handleExportJson}>
+          <SettingRow title="Download a backup file" desc="Save your chats and settings as a JSON backup" isButton onClick={handleExportJson}>
             <ChevronRight className="w-4 h-4 text-zinc-600" />
           </SettingRow>
         </SectionCard>
 
-        {/* DATA IMPORT */}
+        {/* IMPORT */}
         <SectionCard icon={Upload} title="Import" accent="bg-fuchsia-500">
-          <SettingRow title="Import JSON Backup" desc="Restore data from a JSON archive" isButton onClick={() => fileInputRef.current?.click()}>
+          <SettingRow title="Restore a backup" desc="Bring your chats back from a backup file" isButton onClick={() => fileInputRef.current?.click()}>
             <ChevronRight className="w-4 h-4 text-zinc-600" />
           </SettingRow>
           <input type="file" accept=".json,application/json" ref={fileInputRef} onChange={handleImportJson} className="hidden" />
         </SectionCard>
 
         {/* DANGER ZONE */}
-        <SectionCard icon={AlertTriangle} title="Danger Zone" accent="bg-red-500">
+        <SectionCard icon={AlertTriangle} title="Danger zone" accent="bg-red-500">
           <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-red-500" />
-          <SettingRow title="Reset All Data" desc="Permanently wipe all logs and custom settings" isButton onClick={() => setShowResetModal(true)}>
+          <SettingRow title="Erase everything" desc="Permanently delete all chats and settings on this device" isButton onClick={() => setShowResetModal(true)}>
             <ChevronRight className="w-4 h-4 text-red-500/50" />
           </SettingRow>
         </SectionCard>
@@ -509,24 +508,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
             <div className="flex items-center gap-3 text-red-500">
               <AlertTriangle className="w-6 h-6 shrink-0" />
               <h3 className="text-sm font-bold tracking-widest uppercase">
-                CONFIRM DANGER ZONE RESET
+                Erase everything?
               </h3>
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              Are you completely sure? This action will permanently erase all local application state, custom preferences, active encryption keys, and terminal channels.
+              This permanently deletes all chats, keys, and settings saved on this device. Chats already synced to the cloud will come back when you log in again.
             </p>
 
             <div className="p-3 bg-red-950/30 border border-red-500/30 rounded-lg text-[10px] text-red-400 font-mono tracking-widest">
-              [WARNING]: Action is irreversible.
+              This can't be undone.
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button onClick={() => setShowResetModal(false)} className="px-4 py-2 text-zinc-300 hover:text-white text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
-                CANCEL
+                Cancel
               </button>
               <button onClick={handleConfirmReset} className="px-4 py-2 bg-red-500 hover:bg-red-400 text-black text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
-                CONFIRM & WIPE
+                Erase everything
               </button>
             </div>
           </div>

@@ -2,12 +2,12 @@ import React from 'react';
 import { ShieldCheck, KeyRound, Lock } from 'lucide-react';
 
 /**
- * Highlighted security assurance — rendered wherever the user needs to
- * SEE the guarantees, not squint at a disclaimer:
- *   • Passwords are PBKDF2-hashed on-device before upload.
- *   • Messages stay end-to-end encrypted.
+ * Highlighted security assurance — plain-language guarantees wherever the
+ * user needs to SEE them, not squint at jargon:
+ *   • Your password is scrambled on your device before it's saved.
+ *   • Only you and the person you message can read your chats.
  * Used by: AuthScreen (login + signup), ProfilePanel (Security & data),
- * SettingsPanel (Privacy & Mitigation), ChatApp (welcome state).
+ * SettingsPanel (Privacy & safety), ChatApp (welcome state).
  */
 export const SecurityNote: React.FC<{ className?: string; compact?: boolean }> = ({
   className = '',
@@ -20,14 +20,14 @@ export const SecurityNote: React.FC<{ className?: string; compact?: boolean }> =
   >
     <div className="flex items-start gap-2.5">
       <ShieldCheck className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} text-emerald-400 shrink-0 mt-0.5`} />
-      <div className={`min-w-0 ${compact ? 'text-[10px]' : 'text-xs'} leading-relaxed font-mono`}>
-        <p className="flex items-center gap-1.5 font-bold text-emerald-300">
-          <KeyRound className="w-3 h-3 shrink-0 text-emerald-400" />
-          <span>Passwords are PBKDF2-hashed on-device before upload.</span>
+      <div className={`min-w-0 ${compact ? 'text-[10px]' : 'text-xs'} leading-relaxed`}>
+        <p className="flex items-start gap-1.5 font-bold text-emerald-300">
+          <KeyRound className="w-3 h-3 shrink-0 text-emerald-400 mt-0.5" />
+          <span>Your password is scrambled on your device before it's saved — nobody can read it.</span>
         </p>
-        <p className="flex items-center gap-1.5 font-bold text-cyan-300 mt-1">
-          <Lock className="w-3 h-3 shrink-0 text-cyan-400" />
-          <span>Messages stay end-to-end encrypted.</span>
+        <p className="flex items-start gap-1.5 font-bold text-cyan-300 mt-1">
+          <Lock className="w-3 h-3 shrink-0 text-cyan-400 mt-0.5" />
+          <span>Only you and the person you message can read your chats.</span>
         </p>
       </div>
     </div>

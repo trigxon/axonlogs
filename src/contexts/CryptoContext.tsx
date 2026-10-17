@@ -15,6 +15,8 @@ import {
   fetchMyDmInvites,
   touchLastSeen,
   isBlockedEitherWay,
+  fetchFollowState,
+  fetchFollowing,
 } from '../utils/auth';
 
 export interface Chat {
@@ -569,6 +571,18 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     // Blocks are enforced like Instagram: neither side can DM the other
     if (await isBlockedEitherWay(supabase, me, target)) {
       return { ok: false, error: "You can't message this account." };
+    }
+
+    // FOLLOW GATE: you can only start a chat with someone you follow.
+    // (Existing chats keep working — history is never locked away.)
+    const follow = await fetchFollowState(supabase, me, target);
+    if (!follow.following) {
+      return {
+        ok: false,
+        error: follow.requested
+          ? `Your follow request to @${target} hasn't been accepted yet.`
+          : `Follow @${target} to message them — chats are only for people you follow.`,
+      };
     }
 
     // Reuse the existing DM channel when we already have it
@@ -1572,6 +1586,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const me = account.username.toLowerCase();
     const members = [...new Set(memberUsernames.map(u => u.trim().toLowerCase().replace(/^@/, '')))].filter(u => u && u !== me);
     if (members.length === 0) return { ok: false, error: 'Add at least one member.' };
+
+    // FOLLOW GATE: groups are only for people you follow (Instagram-style).
+    const myFollowing = new Set(await fetchFollowing(supabase, me));
+    const notFollowed = members.filter(u => !myFollowing.has(u));
+    if (notFollowed.length > 0) {
+      return {
+        ok: false,
+        error: `You can only add people you follow: ${notFollowed.map(u => `@${u}`).join(', ')}.`,
+      };
+    }
 
     const shareCode = generateDmPasscode();
     const { data, error } = await supabase

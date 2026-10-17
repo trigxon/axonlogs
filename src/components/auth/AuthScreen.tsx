@@ -74,7 +74,7 @@ export const AuthScreen: React.FC = () => {
     if (!password) { setError('Enter your password.'); return; }
 
     if (!supabase) {
-      setError('Cloud backend not configured on this deployment.');
+      setError("This site isn't connected to its database yet.");
       setNeedsSetup(true);
       return;
     }
@@ -133,7 +133,7 @@ export const AuthScreen: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center gap-3 shrink-0 text-[9px] md:text-[10px] font-bold tracking-widest uppercase text-zinc-500 tabular-nums">
-              <span className="hidden sm:inline text-cyan-500/90">AUTH GATE</span>
+              <span className="hidden sm:inline text-cyan-500/90">SIGN IN</span>
               <span className="text-emerald-500/90">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </div>
           </div>
@@ -149,7 +149,7 @@ export const AuthScreen: React.FC = () => {
                 <h1 className="text-white font-bold text-2xl tracking-wide">Axon Logs</h1>
                 {mode === 'signup' ? (
                   <p className="text-zinc-500 text-xs mt-2 text-center leading-relaxed">
-                    Sign up to message friends privately.<br />No feeds. No reels. No noise.
+                    Sign up to chat with people you follow.<br />Private by default. No feeds. No noise.
                   </p>
                 ) : (
                   <p className="text-zinc-500 text-xs mt-2 text-center leading-relaxed">
@@ -227,8 +227,8 @@ export const AuthScreen: React.FC = () => {
                   <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs rounded-lg flex items-start gap-2">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <span>
-                      One-time backend setup: open your Supabase dashboard → SQL Editor and run the updated
-                      <code className="text-amber-200 mx-1">supabase/schema.sql</code> from the repo (adds the accounts + dm_invites tables).
+                      One-time setup: the site owner needs to open the Supabase dashboard → SQL Editor and run
+                      <code className="text-amber-200 mx-1">supabase/schema.sql</code> once to create the account tables.
                     </span>
                   </div>
                 )}
@@ -286,12 +286,12 @@ export const AuthScreen: React.FC = () => {
           <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-3 sm:px-4 md:px-6 lg:px-7 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
             <span className="flex items-center gap-1.5 shrink-0 text-emerald-400">
               <span className="w-1.5 h-1.5 rounded-full dot-live" />
-              <span className="hidden sm:inline">SECURE GATE</span>
+              <span className="hidden sm:inline">READY</span>
               <span className="sm:hidden">OK</span>
             </span>
-            <span className="text-zinc-500 hidden sm:inline">AES-256 · PBKDF2 · NO LOGS</span>
+            <span className="text-zinc-500 hidden sm:inline">PRIVATE BY DEFAULT · NO CHAT HISTORY KEPT</span>
             <div className="flex-1" />
-            <span className="text-cyan-500/90 hidden md:inline">NODE: {deviceId.substring(0, 8)}</span>
+            <span className="text-cyan-500/90 hidden md:inline">ID: {deviceId.substring(0, 8)}</span>
             <span className="text-emerald-500/90 tabular-nums shrink-0">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
           </div>
         </div>

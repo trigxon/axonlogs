@@ -192,6 +192,16 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
 
   const handleDm = async (acc: Account) => {
     setDmError(null);
+    // FOLLOW GATE: chats are only for people you follow
+    const st = followMap[acc.username];
+    if (!st?.following) {
+      setDmError(
+        st?.requested
+          ? `Your follow request to @${acc.username} hasn't been accepted yet.`
+          : `Follow @${acc.username} first — you can only message people you follow.`
+      );
+      return;
+    }
     setStartingDm(acc.username);
     const res = await startDmWithUser(acc.username);
     setStartingDm(null);
@@ -279,7 +289,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
             ) : (
               <span className={`text-xs truncate ${unread ? 'text-zinc-100 font-semibold' : 'text-zinc-500'}`}>
                 {mine && preview ? <span className="text-zinc-600">You: </span> : null}
-                {preview?.text || 'End-to-end encrypted'}
+                {preview?.text || 'Say hi…'}
               </span>
             )}
             {unread && <span className="w-2 h-2 rounded-full bg-cyan-400 glow-cyan shrink-0" />}
@@ -299,7 +309,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
         <button onClick={() => onOpenChat(chat)} className="flex-1 min-w-0 text-left">
           <div className="text-sm text-white font-semibold truncate">{displayName}</div>
           <div className="text-[10px] text-zinc-600 truncate">
-            {preview?.text || 'Wants to connect · end-to-end encrypted'}
+            {preview?.text || 'Wants to chat with you'}
           </div>
         </button>
         <button
@@ -321,17 +331,30 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
     );
   };
 
-  const followButton = (acc: Account) => {
+  const followButton = (acc: Account, withMessage = false) => {
     const st = followMap[acc.username];
     if (st?.following) {
       return (
-        <button
-          onClick={() => toggleFollow(acc)}
-          className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-white/10 text-zinc-300 hover:border-white/25 transition-colors"
-          title={`Following @${acc.username} — tap to unfollow`}
-        >
-          <span className="flex items-center gap-1"><UserCheck className="w-3 h-3" /> Following</span>
-        </button>
+        <>
+          <button
+            onClick={() => toggleFollow(acc)}
+            className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-white/10 text-zinc-300 hover:border-white/25 transition-colors"
+            title={`Following @${acc.username} — tap to unfollow`}
+          >
+            <span className="flex items-center gap-1"><UserCheck className="w-3 h-3" /> Following</span>
+          </button>
+          {withMessage && (
+            <button
+              onClick={() => handleDm(acc)}
+              disabled={startingDm === acc.username}
+              className="shrink-0 flex items-center gap-1.5 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-cyan-400/40 text-cyan-300 hover:bg-cyan-400/10 transition-colors disabled:opacity-50"
+              title={`Message @${acc.username}`}
+            >
+              <Send className="w-3 h-3" />
+              {startingDm === acc.username ? '…' : 'Message'}
+            </button>
+          )}
+        </>
       );
     }
     if (st?.requested) {
@@ -339,7 +362,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
         <button
           onClick={() => toggleFollow(acc)}
           className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-amber-400/40 text-amber-300 hover:bg-amber-400/10 transition-colors"
-          title="Follow request pending — tap to cancel"
+          title="Follow request sent — tap to cancel"
         >
           Requested
         </button>
@@ -442,19 +465,10 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
                   <div className="text-sm text-white font-semibold truncate">@{acc.username}</div>
                   <div className="text-[10px] text-zinc-600 truncate">
                     {acc.display_name?.trim() ? `${acc.display_name} · ` : ''}
-                    {acc.bio?.trim() ? acc.bio : `Axon member · ${new Date(acc.created_at).toLocaleDateString([], { month: 'short', year: 'numeric' })}`}
+                    {acc.bio?.trim() ? acc.bio : `Member since ${new Date(acc.created_at).toLocaleDateString([], { month: 'short', year: 'numeric' })}`}
                   </div>
                 </button>
-                {followButton(acc)}
-                <button
-                  onClick={() => handleDm(acc)}
-                  disabled={startingDm === acc.username}
-                  className="shrink-0 flex items-center gap-1.5 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-cyan-400/40 text-cyan-300 hover:bg-cyan-400/10 transition-colors disabled:opacity-50"
-                  title={`Message @${acc.username}`}
-                >
-                  <Send className="w-3 h-3" />
-                  {startingDm === acc.username ? '…' : 'Message'}
-                </button>
+                {followButton(acc, true)}
               </div>
             ))}
             {dmError && (
@@ -475,7 +489,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
                 <div>
                   <div className="text-white font-bold text-sm tracking-wide mb-1">No chats yet</div>
                   <div className="text-zinc-500 text-xs leading-relaxed">
-                    Search a @username above to start a<br />private, end-to-end encrypted DM.
+                    Follow someone, then message them.<br />Search a @username above to get started.
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -501,7 +515,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
                 <div className="w-14 h-14 rounded-full border border-white/10 bg-white/[0.03] flex items-center justify-center">
                   <MessageCircle className="w-6 h-6 text-zinc-600" />
                 </div>
-                <div className="text-zinc-500 text-xs">No message requests.</div>
+                <div className="text-zinc-500 text-xs">No message requests right now.</div>
               </div>
             ) : (
               visibleRequests.map(renderRequestRow)
@@ -511,9 +525,9 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
 
         {q && !searchingAccounts && filteredAccounts.length === 0 && visibleChats.length === 0 && visibleRequests.length === 0 && (
           <div className="py-10 text-center">
-            <div className="text-zinc-500 text-xs">No chats or accounts match “{search.trim()}”.</div>
+            <div className="text-zinc-500 text-xs">No chats or people match “{search.trim()}”.</div>
             <div className="text-zinc-600 text-[10px] mt-1">
-              {backendMode === 'online' ? 'Try the full @username.' : 'Cloud search needs online mode.'}
+              {backendMode === 'online' ? 'Try the full @username.' : 'Search works when you\'re online.'}
             </div>
           </div>
         )}
@@ -527,7 +541,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="text-xs text-zinc-400 truncate">{myHandle ? dmDisplayName(chat.name, myHandle) : chat.name}</div>
                   <div className="text-[10px] text-zinc-600 flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5" /> archived — restore from chat options
+                    <Lock className="w-2.5 h-2.5" /> Archived — open it, then choose Unarchive
                   </div>
                 </div>
               </div>
@@ -538,7 +552,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
         {visibleChats.length > 0 && !q && tab === 'primary' && (
           <div className="pt-3 pb-2 text-center">
             <span className="text-[9px] tracking-[0.3em] uppercase text-zinc-700">
-              {activeOnline ? 'Uplink established' : 'AES-256 • ephemeral • no logs'}
+              {activeOnline ? 'Connected' : 'Private — only you two can read these messages'}
             </span>
           </div>
         )}

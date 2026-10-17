@@ -145,5 +145,48 @@ export async function runTier8Tests(projectRoot: string): Promise<TestResult[]> 
     });
   }
 
+  // 8.4: Follow-gated chat + plain-language copy
+  const gateStart = Date.now();
+  try {
+    const ctx = read('src', 'contexts', 'CryptoContext.tsx');
+    const chatApp = read('src', 'components', 'layout', 'ChatApp.tsx');
+    const inbox = read('src', 'components', 'chat', 'InboxPanel.tsx');
+    const secNote = read('src', 'components', 'ui', 'SecurityNote.tsx');
+    const settingsPanel = read('src', 'components', 'settings', 'SettingsPanel.tsx');
+
+    const checks: Array<[boolean, string]> = [
+      // FOLLOW GATE — chats are only for people you follow
+      [ctx.includes('FOLLOW GATE: you can only start a chat with someone you follow') && ctx.includes('fetchFollowState(supabase, me, target)'), 'startDmWithUser must refuse DMs to people you do not follow'],
+      [ctx.includes('fetchFollowState') && ctx.includes("Follow @${target} to message them"), 'DM errors must tell the user to follow first (plain language)'],
+      [ctx.includes('FOLLOW GATE: groups are only for people you follow') && ctx.includes('fetchFollowing(supabase, me)'), 'createGroupChat must only add people the creator follows'],
+      [inbox.includes('you can only message people you follow'), 'Inbox DM helper must enforce the follow gate'],
+      [chatApp.includes('dmPickerRow') && chatApp.includes('You follow'), 'New message modal must be an Instagram-style people picker with followed suggestions'],
+      [chatApp.includes("Search people you follow") && chatApp.includes('groupEligible'), 'Group member search must be filtered to followed accounts'],
+      // PLAIN LANGUAGE — no crypto jargon in user-facing guarantees
+      [secNote.includes("Your password is scrambled on your device before it's saved"), 'SecurityNote must say the password guarantee in plain words'],
+      [secNote.includes('Only you and the person you message can read your chats.'), 'SecurityNote must say the privacy guarantee in plain words'],
+      [!secNote.includes('PBKDF2-hashed'), 'SecurityNote must not use crypto jargon (PBKDF2-hashed)'],
+      [settingsPanel.includes('Vanishing messages') && settingsPanel.includes('Vanish timer'), 'Burn-on-read must be explained as vanishing messages'],
+      [chatApp.includes('CHATS: {chats.length}'), 'Status bar must label chat count in plain words'],
+    ];
+    const failed = checks.filter(([ok]) => !ok).map(([, why]) => why);
+    if (failed.length > 0) throw new Error(failed.join('; '));
+
+    results.push({
+      name: 'Tier 8.4: Follow-gated chat + plain-language copy',
+      tier: 8,
+      passed: true,
+      durationMs: Date.now() - gateStart,
+    });
+  } catch (err: any) {
+    results.push({
+      name: 'Tier 8.4: Follow-gated chat + plain-language copy',
+      tier: 8,
+      passed: false,
+      error: err.message,
+      durationMs: Date.now() - gateStart,
+    });
+  }
+
   return results;
 }

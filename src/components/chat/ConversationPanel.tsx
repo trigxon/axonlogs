@@ -58,7 +58,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     deviceId, messages, latency, sendMessage, purgeTerminal, addSystemMessage,
     networkStatus, broadcastTyping, typingUsers, onlineUsers,
     unlockedChatId, lockChat, settings, editMessage, toggleReaction, togglePinMessage,
-    markAsRead, startCall, deleteChat, archiveChat, account,
+    markAsRead, startCall, deleteChat, archiveChat, restoreChat, account,
     unsendMessage, forwardMessage, chats, archivedChats,
   } = useCrypto();
 
@@ -68,6 +68,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   const peer = myHandle ? dmPeer(chat.name, myHandle) : null;
   const isDm = !!peer;
   const isGroup = !isDm;
+  const isArchivedChat = archivedChats.some(c => c.id === chat.id);
   const nick = isDm ? getNickname(chat.id, peer!) : '';
   const displayName = isDm ? (nick || (myHandle ? dmDisplayName(chat.name, myHandle) : chat.name)) : chat.name;
   const theme = getChatTheme(chat.id);
@@ -280,7 +281,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             </span>
             <div className="flex flex-col overflow-hidden">
               <span className="text-white text-xs truncate">{file.name}</span>
-              <span className="text-zinc-500 text-[10px]">{((file.size || 0) / 1024 / 1024).toFixed(2)} MB · encrypted</span>
+              <span className="text-zinc-500 text-[10px]">{((file.size || 0) / 1024 / 1024).toFixed(2)} MB · locked</span>
             </div>
           </div>
           <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 p-1.5 shrink-0">
@@ -320,12 +321,12 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-white truncate">{displayName}</span>
               {chat.share_code.startsWith('EPH-') && (
-                <span className="text-[8px] font-bold tracking-widest text-red-400 border border-red-500/30 bg-red-500/10 rounded px-1 py-px shrink-0">EPHEMERAL</span>
+                <span className="text-[8px] font-bold tracking-widest text-red-400 border border-red-500/30 bg-red-500/10 rounded px-1 py-px shrink-0">VANISH</span>
               )}
             </div>
             <div className="text-[10px] tracking-wide truncate">
               {chatLocked ? (
-                <span className="text-amber-400 flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Locked — end-to-end encrypted</span>
+                <span className="text-amber-400 flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Locked — enter the key to read this chat</span>
               ) : isTypingHere() ? (
                 <span className="text-emerald-400">typing…</span>
               ) : peerOnline ? (
@@ -333,9 +334,9 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               ) : isDm && activityLabel(peerAccount) ? (
                 <span className="text-emerald-400">{activityLabel(peerAccount)}</span>
               ) : isGroup ? (
-                <span className="text-zinc-500">Group · {groupMemberCount} member{groupMemberCount === 1 ? '' : 's'} · AES-256 encrypted</span>
+                <span className="text-zinc-500">Group · {groupMemberCount} member{groupMemberCount === 1 ? '' : 's'} · private</span>
               ) : (
-                <span className="text-zinc-500">Offline · AES-256 encrypted</span>
+                <span className="text-zinc-500">Offline · private</span>
               )}
             </div>
           </div>
@@ -368,7 +369,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               <button
                 onClick={() => setOptionsOpen(v => !v)}
                 data-options-menu
-                title="Conversation options"
+                title="Chat options"
                 className="p-2 rounded-full text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
               >
                 <Info className="w-[18px] h-[18px]" />
@@ -459,7 +460,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                   <MenuRow icon={<Edit2 className="w-3.5 h-3.5" />} label="Rename" onClick={() => { setOptionsOpen(false); onRequestRename(chat.id); }} />
                   <MenuRow
                     icon={<Clipboard className="w-3.5 h-3.5" />}
-                    label="Copy join code"
+                    label="Copy invite code"
                     onClick={() => {
                       navigator.clipboard.writeText(chat.share_code);
                       setCopiedCode(true);
@@ -473,20 +474,24 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     label={chatLocked ? 'Unlock chat' : 'Lock chat'}
                     onClick={() => { setOptionsOpen(false); if (chatLocked) { onBack(); } else lockChat(chat.id); }}
                   />
-                  <MenuRow icon={<KeyRound className="w-3.5 h-3.5" />} label="Rotate key" onClick={() => { setOptionsOpen(false); onRequestKeyRotation(chat.id); }} danger />
+                  <MenuRow icon={<KeyRound className="w-3.5 h-3.5" />} label="Change chat key" onClick={() => { setOptionsOpen(false); onRequestKeyRotation(chat.id); }} danger />
                   <MenuRow
                     icon={<Archive className="w-3.5 h-3.5" />}
-                    label={isGroup ? 'Leave group' : 'Archive'}
-                    onClick={() => { setOptionsOpen(false); if (confirm(isGroup ? `Leave "${chat.name}"?` : `Archive "${chat.name}"? You can restore it later.`)) { archiveChat(chat.id); onBack(); } }}
+                    label={isGroup ? 'Leave group' : isArchivedChat ? 'Unarchive' : 'Archive'}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      if (isArchivedChat) { restoreChat(chat.id); return; }
+                      if (confirm(isGroup ? `Leave "${chat.name}"?` : `Archive "${chat.name}"? You can unarchive it later.`)) { archiveChat(chat.id); onBack(); }
+                    }}
                   />
-                  <MenuRow icon={<Trash2 className="w-3.5 h-3.5" />} label="Purge messages" onClick={() => { setOptionsOpen(false); purgeTerminal(); }} danger />
+                  <MenuRow icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete all messages" onClick={() => { setOptionsOpen(false); purgeTerminal(); }} danger />
                   {isDm && (
                     <MenuRow
                       icon={<Flag className="w-3.5 h-3.5" />}
                       label="Report"
                       onClick={() => {
                         setOptionsOpen(false);
-                        if (confirm(`Report @${peer}?`)) addSystemMessage(`@${peer} reported. Thanks for keeping Axon safe.`);
+                        if (confirm(`Report @${peer}?`)) addSystemMessage(`@${peer} reported. Thanks for keeping this place safe.`);
                       }}
                       danger
                     />
@@ -514,8 +519,8 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                   <div className="border-t border-white/[0.06] my-1" />
                   <MenuRow
                     icon={<Trash2 className="w-3.5 h-3.5" />}
-                    label="Delete everywhere"
-                    onClick={() => { setOptionsOpen(false); if (confirm(`Permanently delete "${chat.name}" and ALL its messages globally?`)) { deleteChat(chat.id); onBack(); } }}
+                    label="Delete chat everywhere"
+                    onClick={() => { setOptionsOpen(false); if (confirm(`Permanently delete "${chat.name}" and ALL its messages for everyone?`)) { deleteChat(chat.id); onBack(); } }}
                     danger
                   />
                 </div>
@@ -567,16 +572,16 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 <Lock className="w-6 h-6 text-amber-400" />
               </div>
               <div>
-                <div className="text-amber-400 text-sm font-bold tracking-widest uppercase mb-1">Chat locked</div>
-                <div className="text-zinc-500 text-xs">Enter the passphrase to decrypt this conversation.</div>
+                <div className="text-amber-400 text-sm font-bold tracking-widest uppercase mb-1">This chat is locked</div>
+                <div className="text-zinc-500 text-xs">Enter the chat key to open it. Keys stay on your device.</div>
               </div>
             </div>
           ) : visibleMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center">
               <Avatar seed={displayName} name={displayName} size={84} ring="story" />
               <div className="text-white font-bold text-sm tracking-wide mt-2">{displayName}</div>
-              <div className="text-zinc-500 text-xs">End-to-end encrypted · burn-on-read ready</div>
-              <div className="text-zinc-600 text-[10px] tracking-widest uppercase mt-1">Say hi — no logs are kept</div>
+              <div className="text-zinc-500 text-xs">Private chat — only you two can read this</div>
+              <div className="text-zinc-600 text-[10px] tracking-widest uppercase mt-1">Say hi</div>
             </div>
           ) : (
             <>
@@ -719,7 +724,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                             <>
                               {msg.burn_on_read && (
                                 <span className="inline-flex items-center gap-1 text-[8px] font-bold tracking-widest text-red-400/90 uppercase mr-1.5 align-middle">
-                                  <Flame size={9} /> burn
+                                  <Flame size={9} /> vanish
                                 </span>
                               )}
                               {msg.pinned && (
@@ -881,7 +886,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setBurnNext(v => !v)}
-                title={burnNext ? 'Burn-on-read ON for next message' : 'Send next message with burn-on-read'}
+                title={burnNext ? 'Vanishing ON — disappears after it\'s read' : 'Send next message so it disappears after it\'s read'}
                 className={`p-1 shrink-0 transition-colors ${burnNext ? 'text-red-400' : 'text-zinc-600 hover:text-red-400'}`}
               >
                 <Flame className={`w-4 h-4 ${burnNext ? 'drop-shadow-[0_0_6px_rgba(239,68,68,0.7)]' : ''}`} />

@@ -3,8 +3,11 @@ import {
   MessageCircle, PlusSquare, Settings as SettingsIcon, X, KeyRound, Users,
   ToggleRight, ToggleLeft, Lock,
 } from 'lucide-react';
-import { useCrypto, type Chat } from '../../contexts/CryptoContext';
-import { dmDisplayName, type Account } from '../../utils/auth';
+import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
+import {
+  dmDisplayName, fetchFollowState, followUser, unfollowUser,
+  fetchFollowing, fetchAccountsByUsernames, type Account, type FollowState,
+} from '../../utils/auth';
 import { isChatMuted } from '../../utils/chatMeta';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
@@ -43,6 +46,7 @@ export const ChatApp: React.FC = () => {
   const {
     deviceId, alias, chats, activeChat, setActiveChat, messages,
     createChat, joinChat, renameChat, changeChatPassword, createGroupChat, searchAccounts,
+    startDmWithUser,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
     latency, typingUsers, onlineUsers, account,
   } = useCrypto();
@@ -70,6 +74,15 @@ export const ChatApp: React.FC = () => {
   const [newChatName, setNewChatName] = useState('');
   const [newChatPassphrase, setNewChatPassphrase] = useState('');
   const [isEphemeralChat, setIsEphemeralChat] = useState(false);
+
+  // Instagram-style "New message" people picker (online mode)
+  const [dmTo, setDmTo] = useState('');
+  const [dmSearch, setDmSearch] = useState('');
+  const [dmResults, setDmResults] = useState<Account[]>([]);
+  const [dmSuggested, setDmSuggested] = useState<Account[]>([]);
+  const [dmFollow, setDmFollow] = useState<Record<string, FollowState>>({});
+  const [dmBusy, setDmBusy] = useState(false);
+  const [dmError, setDmError] = useState<string | null>(null);
 
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -124,8 +137,8 @@ export const ChatApp: React.FC = () => {
         if (!muted && localStorage.getItem('axon_sound_enabled') !== 'false') playPing();
         if (!muted && localStorage.getItem('axon_notifications_enabled') === 'true' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
           try {
-            new Notification('[AXON LOGS] NEW MESSAGE', {
-              body: `${latest.text?.slice(0, 120) || '[ATTACHMENT / VOICE MEMO]'}`,
+            new Notification('New message', {
+              body: `${latest.text?.slice(0, 120) || 'Sent a file or voice note'}`,
               tag: 'axon-incoming',
             });
           } catch {
@@ -181,7 +194,133 @@ export const ChatApp: React.FC = () => {
     setNewChatName('');
     setNewChatPassphrase(generateEasyPasscode());
     setIsEphemeralChat(false);
+    setDmTo('');
+    setDmSearch('');
+    setDmResults([]);
+    setDmSuggested([]);
+    setDmFollow({});
+    setDmError(null);
     setShowCreateModal(true);
+    // Instagram behavior: suggest the people you follow first
+    if (backendMode === 'online' && supabase && account) {
+      fetchFollowing(supabase, account.username)
+        .then(handles => fetchAccountsByUsernames(supabase, handles))
+        .then(accs => {
+          setDmSuggested(accs);
+          const next: Record<string, FollowState> = {};
+          accs.forEach(a => { next[a.username] = { following: true, requested: false, followsMe: false }; });
+          setDmFollow(prev => ({ ...prev, ...next }));
+        })
+        .catch(() => setDmSuggested([]));
+    }
+  };
+
+  // People search inside the New message picker (debounced)
+  useEffect(() => {
+    if (!showCreateModal || backendMode !== 'online' || !dmSearch.trim()) {
+      setDmResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      searchAccounts(dmSearch)
+        .then(res => {
+          setDmResults(res);
+          if (supabase && account) {
+            Promise.all(res.map(async a => ({ u: a.username, s: await fetchFollowState(supabase, account.username, a.username) })))
+              .then(pairs => setDmFollow(prev => {
+                const next = { ...prev };
+                pairs.forEach(p => { next[p.u] = p.s; });
+                return next;
+              }))
+              .catch(() => undefined);
+          }
+        })
+        .catch(() => setDmResults([]));
+    }, 220);
+    return () => clearTimeout(t);
+  }, [dmSearch, showCreateModal, backendMode, searchAccounts, account]);
+
+  const toggleDmFollow = async (acc: Account) => {
+    if (!supabase || !account) return;
+    const st = dmFollow[acc.username] || { following: false, requested: false, followsMe: false };
+    if (st.following || st.requested) {
+      await unfollowUser(supabase, account.username, acc.username);
+      setDmFollow(prev => ({ ...prev, [acc.username]: { ...st, following: false, requested: false } }));
+    } else {
+      const status = await followUser(supabase, account.username, acc.username, acc.is_private === true);
+      setDmFollow(prev => ({
+        ...prev,
+        [acc.username]: { ...st, following: status === 'active', requested: status === 'pending' },
+      }));
+    }
+  };
+
+  const handleDmStart = async (handle?: string) => {
+    setDmError(null);
+    setDmBusy(true);
+    const res = await startDmWithUser(handle ?? dmTo);
+    setDmBusy(false);
+    if (res.ok && res.chat) {
+      setShowCreateModal(false);
+      setActiveChat(res.chat);
+      setPane('chat');
+      setMobileView('chat');
+    } else {
+      setDmError(res.error || 'Could not start the chat.');
+    }
+  };
+
+  const dmPickerRow = (acc: Account) => {
+    const st = dmFollow[acc.username];
+    return (
+      <div key={acc.id} className="flex items-center gap-2.5 px-1 py-2 rounded-xl hover:bg-white/[0.04] transition-colors">
+        <Avatar seed={acc.username} name={`@${acc.username}`} size={40} gradient={acc.avatar_gradient || undefined} />
+        <button type="button" onClick={() => { setDmTo(`@${acc.username}`); setDmError(null); }} className="flex-1 min-w-0 text-left">
+          <div className="text-sm text-white font-semibold truncate">@{acc.username}</div>
+          <div className="text-[10px] text-zinc-600 truncate">
+            {acc.display_name?.trim() ? acc.display_name : (acc.bio?.trim() ? acc.bio : 'Follow them to chat')}
+          </div>
+        </button>
+        {st?.following ? (
+          <>
+            <button
+              type="button"
+              onClick={() => toggleDmFollow(acc)}
+              className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg border border-white/10 text-zinc-300 hover:border-white/25 transition-colors"
+              title="Tap to unfollow"
+            >
+              Following
+            </button>
+            <button
+              type="button"
+              onClick={() => { handleDmStart(`@${acc.username}`); }}
+              className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/25 transition-colors"
+              title={`Message @${acc.username}`}
+            >
+              Message
+            </button>
+          </>
+        ) : st?.requested ? (
+          <button
+            type="button"
+            onClick={() => toggleDmFollow(acc)}
+            className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg border border-amber-400/40 text-amber-300 hover:bg-amber-400/10 transition-colors"
+            title="Tap to cancel the request"
+          >
+            Requested
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => toggleDmFollow(acc)}
+            className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/25 transition-colors"
+            title={`Follow @${acc.username}`}
+          >
+            Follow
+          </button>
+        )}
+      </div>
+    );
   };
 
   const handleCreateChat = async (e: React.FormEvent) => {
@@ -194,15 +333,27 @@ export const ChatApp: React.FC = () => {
   };
 
   /* ---------------- group creation (Instagram group DM) ---------------- */
+  // FOLLOW GATE: only people you follow can be added
+  const [groupEligible, setGroupEligible] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!showGroupModal || backendMode !== 'online' || !supabase || !account) {
+      setGroupEligible(new Set());
+      return;
+    }
+    fetchFollowing(supabase, account.username).then(list => setGroupEligible(new Set(list))).catch(() => setGroupEligible(new Set()));
+  }, [showGroupModal, backendMode, account]);
+
   useEffect(() => {
     if (!showGroupModal || !groupSearch.trim()) { setGroupResults([]); return; }
     const t = setTimeout(() => {
       searchAccounts(groupSearch)
-        .then(res => setGroupResults(res.filter(a => !groupMembers.some(m => m.username === a.username))))
+        .then(res => setGroupResults(res.filter(a =>
+          !groupMembers.some(m => m.username === a.username) && groupEligible.has(a.username)
+        )))
         .catch(() => setGroupResults([]));
     }, 220);
     return () => clearTimeout(t);
-  }, [groupSearch, showGroupModal, groupMembers, searchAccounts]);
+  }, [groupSearch, showGroupModal, groupMembers, searchAccounts, groupEligible]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -345,7 +496,7 @@ export const ChatApp: React.FC = () => {
         <div className="z-20 flex flex-col items-center">
           <Lock className="w-16 h-16 text-cyan-500 mb-6" />
           <h1 className="text-2xl font-bold tracking-widest text-cyan-400 mb-4 uppercase">Screen locked</h1>
-          <p className="text-zinc-500 text-sm mb-8 text-center max-w-md">Idle limit exceeded. Your chats stay encrypted until you return.</p>
+          <p className="text-zinc-500 text-sm mb-8 text-center max-w-md">You've been away for a while. Your chats are safe — tap below to come back.</p>
           <button
             onClick={() => setIsIdleLocked(false)}
             className="px-8 py-3 bg-cyan-400/10 border border-cyan-400 text-cyan-400 hover:bg-cyan-400 hover:text-black transition-all uppercase tracking-widest font-bold"
@@ -462,7 +613,7 @@ export const ChatApp: React.FC = () => {
               />
               <RailButton
                 icon={<KeyRound className="w-[22px] h-[22px]" />}
-                label="Join code"
+                label="Use invite code"
                 onClick={() => setShowJoinModal(true)}
               />
               <div className="flex-1" />
@@ -505,11 +656,11 @@ export const ChatApp: React.FC = () => {
           <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-3 sm:px-4 md:px-6 lg:px-7 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
             <span className={`flex items-center gap-1.5 shrink-0 ${backendMode === 'online' ? 'text-emerald-400' : 'text-amber-400'}`}>
               <span className="w-1.5 h-1.5 rounded-full dot-live" />
-              <span className="hidden sm:inline">{backendMode === 'online' ? 'GLOBAL SYNC' : 'DEVICE-ONLY'}</span>
-              <span className="sm:hidden">{backendMode === 'online' ? 'ONLINE' : 'LOCAL'}</span>
+              <span className="hidden sm:inline">ONLINE · SYNCED</span>
+              <span className="sm:hidden">{backendMode === 'online' ? 'ONLINE' : 'OFFLINE'}</span>
             </span>
             {activeChat && (
-              <span className="text-zinc-400 truncate min-w-0 hidden md:inline">TERM: {displayChatName(activeChat)}</span>
+              <span className="text-zinc-400 truncate min-w-0 hidden md:inline">CHAT: {displayChatName(activeChat)}</span>
             )}
             {Object.keys(typingUsers).length > 0 && (
               <span className="text-amber-400 truncate hidden sm:inline flex items-center gap-1">
@@ -523,11 +674,11 @@ export const ChatApp: React.FC = () => {
             )}
             <div className="flex-1" />
             {Object.keys(onlineUsers).length > 0 && (
-              <span className="text-cyan-400/70 hidden md:inline">USR: {Object.keys(onlineUsers).length}</span>
+              <span className="text-cyan-400/70 hidden md:inline">ONLINE: {Object.keys(onlineUsers).length}</span>
             )}
-            {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">LAT: {latency}MS</span>}
-            <span className="text-zinc-500 hidden sm:inline">TERMS: {chats.length}</span>
-            <span className="text-cyan-500/90 hidden lg:inline">NODE: {deviceId.substring(0, 8)}</span>
+            {latency > 0 && <span className="text-emerald-500/80 hidden sm:inline">SPEED: {latency}ms</span>}
+            <span className="text-zinc-500 hidden sm:inline">CHATS: {chats.length}</span>
+            <span className="text-cyan-500/90 hidden lg:inline">ID: {deviceId.substring(0, 8)}</span>
             <span className="text-emerald-500/90 tabular-nums shrink-0">{liveNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
           </div>
         </div>
@@ -537,53 +688,105 @@ export const ChatApp: React.FC = () => {
 
       {showCreateModal && (
         <ModalShell onClose={() => setShowCreateModal(false)} accent="emerald">
-          <h3 className="text-white font-bold text-lg mb-1">New message</h3>
-          <p className="text-zinc-500 text-xs mb-5">Create an encrypted chat. Share the code with who you want to talk to.</p>
-          <form onSubmit={handleCreateChat} className="space-y-4">
-            <Field label="CHAT NAME">
-              <input
-                type="text"
-                value={newChatName}
-                onChange={e => setNewChatName(e.target.value)}
-                placeholder="e.g. nova"
-                className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-emerald-500/60 transition-colors"
-                autoFocus
-              />
-            </Field>
-            <Field label="ENCRYPTION KEY">
-              <div className="flex gap-2">
+          {backendMode === 'online' ? (
+            <>
+              <h3 className="text-white font-bold text-lg mb-1">New message</h3>
+              <p className="text-zinc-500 text-xs mb-5">Pick someone you follow — chats are only for people you follow.</p>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-xs text-zinc-400 shrink-0">To:</span>
                 <input
                   type="text"
-                  value={newChatPassphrase}
-                  onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
+                  value={dmTo || dmSearch}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setDmTo('');
+                    setDmSearch(v);
+                    setDmError(null);
+                  }}
+                  placeholder="Search @username…"
                   className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-emerald-500/60 transition-colors"
+                  autoFocus
                 />
                 <button
                   type="button"
-                  onClick={() => setNewChatPassphrase(generateEasyPasscode())}
-                  className="shrink-0 text-[10px] font-bold tracking-widest uppercase text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg px-3 transition-colors"
+                  onClick={() => handleDmStart()}
+                  disabled={dmBusy || !dmTo.trim()}
+                  className="btn-premium shrink-0 px-5 py-2 rounded-lg text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Gen
+                  {dmBusy ? '…' : 'Chat'}
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-600 mt-1.5">Encrypts every message. Required again after refresh — stored in your device keyring.</p>
-            </Field>
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <input type="checkbox" checked={isEphemeralChat} onChange={e => setIsEphemeralChat(e.target.checked)} className="hidden" />
-              {isEphemeralChat ? <ToggleRight className="text-red-500 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
-              <span className="text-xs text-zinc-400">Ephemeral chat <span className="text-zinc-600">(payloads vanish on disconnect)</span></span>
-            </label>
-            <button type="submit" className="btn-premium w-full py-2.5 rounded-lg mt-2">
-              Create chat
-            </button>
-          </form>
+              {dmError && (
+                <div className="mb-3 p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">{dmError}</div>
+              )}
+              <div className="max-h-72 overflow-y-auto feed-scroll -mx-1 px-1">
+                {(dmSearch.trim() ? dmResults : dmSuggested).length > 0 && (
+                  <div className="text-[9px] font-bold tracking-[0.25em] text-zinc-600 uppercase px-1 pb-1">
+                    {dmSearch.trim() ? 'Results' : 'You follow'}
+                  </div>
+                )}
+                {(dmSearch.trim() ? dmResults : dmSuggested).map(dmPickerRow)}
+                {dmSearch.trim() && dmResults.length === 0 && (
+                  <div className="text-center text-zinc-600 text-xs py-6">No people found for “{dmSearch.trim()}”.</div>
+                )}
+                {!dmSearch.trim() && dmSuggested.length === 0 && (
+                  <div className="text-center text-zinc-600 text-xs py-6 leading-relaxed">
+                    You're not following anyone yet.<br />Search a @username above and follow them first.
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-white font-bold text-lg mb-1">New local chat</h3>
+              <p className="text-zinc-500 text-xs mb-5">You're offline — this creates a practice chat on this device only. Online chats are Instagram-style: follow people, then message them.</p>
+              <form onSubmit={handleCreateChat} className="space-y-4">
+                <Field label="NAME">
+                  <input
+                    type="text"
+                    value={newChatName}
+                    onChange={e => setNewChatName(e.target.value)}
+                    placeholder="e.g. nova"
+                    className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-emerald-500/60 transition-colors"
+                    autoFocus
+                  />
+                </Field>
+                <Field label="CHAT KEY">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newChatPassphrase}
+                      onChange={e => setNewChatPassphrase(e.target.value.toUpperCase())}
+                      className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-emerald-500/60 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setNewChatPassphrase(generateEasyPasscode())}
+                      className="shrink-0 text-[10px] font-bold tracking-widest uppercase text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg px-3 transition-colors"
+                    >
+                      New
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-1.5">This key locks your messages. It stays on this device — keep it safe.</p>
+                </Field>
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input type="checkbox" checked={isEphemeralChat} onChange={e => setIsEphemeralChat(e.target.checked)} className="hidden" />
+                  {isEphemeralChat ? <ToggleRight className="text-red-500 w-6 h-6" /> : <ToggleLeft className="text-zinc-600 w-6 h-6" />}
+                  <span className="text-xs text-zinc-400">Vanishing chat <span className="text-zinc-600">(messages disappear when everyone leaves)</span></span>
+                </label>
+                <button type="submit" className="btn-premium w-full py-2.5 rounded-lg mt-2">
+                  Create chat
+                </button>
+              </form>
+            </>
+          )}
         </ModalShell>
       )}
 
       {showGroupModal && (
         <ModalShell onClose={() => setShowGroupModal(false)} accent="cyan">
           <h3 className="text-white font-bold text-lg mb-1">New group</h3>
-          <p className="text-zinc-500 text-xs mb-5">Name the group and add members — they'll be invited to the encrypted channel automatically.</p>
+          <p className="text-zinc-500 text-xs mb-5">Name the group and add people you follow — they're invited automatically.</p>
           <form onSubmit={handleCreateGroup} className="space-y-4">
             <Field label="GROUP NAME">
               <input
@@ -613,9 +816,12 @@ export const ChatApp: React.FC = () => {
                 type="text"
                 value={groupSearch}
                 onChange={e => setGroupSearch(e.target.value)}
-                placeholder="Search @usernames to add…"
+                placeholder="Search people you follow…"
                 className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-cyan-500/60 transition-colors"
               />
+              {groupSearch.trim() && groupResults.length === 0 && (
+                <p className="text-[10px] text-zinc-600 mt-1.5">No one you follow matches “{groupSearch.trim()}”. Follow them first, then add them.</p>
+              )}
               {groupSearch.trim() && groupResults.length > 0 && (
                 <div className="mt-1.5 border border-white/[0.07] rounded-lg overflow-hidden max-h-40 overflow-y-auto feed-scroll">
                   {groupResults.map(acc => (
@@ -655,14 +861,14 @@ export const ChatApp: React.FC = () => {
       {showJoinModal && (
         <ModalShell onClose={() => { setShowJoinModal(false); setJoinError(false); }} accent="cyan">
           <h3 className="text-white font-bold text-lg mb-1">Join a chat</h3>
-          <p className="text-zinc-500 text-xs mb-5">Paste the link code a friend shared with you.</p>
+          <p className="text-zinc-500 text-xs mb-5">Paste the invite code a friend shared with you.</p>
           <form onSubmit={handleJoinSubmit} className="space-y-4">
             {joinError && (
               <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
-                Invalid code or chat not found.
+                That code didn't match any chat — check it and try again.
               </div>
             )}
-            <Field label="LINK CODE">
+            <Field label="INVITE CODE">
               <input
                 type="text"
                 value={joinCode}
@@ -697,12 +903,12 @@ export const ChatApp: React.FC = () => {
 
       {showPasswordModal && (
         <ModalShell onClose={() => setShowPasswordModal(false)} accent="red">
-          <h3 className="text-white font-bold text-lg mb-1">Rotate key</h3>
+          <h3 className="text-white font-bold text-lg mb-1">Change chat key</h3>
           <p className="text-red-400 text-xs mb-5 p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg">
-            Rotating the key makes existing messages unreadable. Everyone must rejoin with the new code.
+            Changing the key hides the old messages. Share the new key so everyone can rejoin.
           </p>
           <form onSubmit={handleChangePassword} className="space-y-4">
-            <Field label="NEW PASSPHRASE">
+            <Field label="NEW CHAT KEY">
               <input
                 type="text"
                 value={passwordInput}
@@ -712,7 +918,7 @@ export const ChatApp: React.FC = () => {
               />
             </Field>
             <button type="submit" className="w-full bg-red-500 hover:bg-red-400 text-black py-2.5 rounded-lg text-xs font-bold tracking-widest uppercase transition-colors">
-              Rotate key
+              Change key
             </button>
           </form>
         </ModalShell>
@@ -727,20 +933,20 @@ export const ChatApp: React.FC = () => {
             <div className="w-14 h-14 rounded-full border border-emerald-500/40 bg-emerald-500/[0.07] flex items-center justify-center mb-3">
               <Lock className="w-6 h-6 text-emerald-400" />
             </div>
-            <h3 className="text-white font-bold text-lg">Enter passphrase</h3>
+            <h3 className="text-white font-bold text-lg">Enter the chat key</h3>
             <p className="text-zinc-500 text-xs mt-1 text-center">
-              {activeChat ? activeChat.name : 'This chat'} is end-to-end encrypted
+              Only people with the key can read {activeChat ? displayChatName(activeChat) : 'this chat'}
             </p>
           </div>
           <form onSubmit={handleUnlockSubmit} className="space-y-4">
             {lockoutUntil > clock && (
               <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
-                Too many attempts. Retry in {Math.ceil((lockoutUntil - clock) / 1000)}s.
+                Too many tries — wait {Math.ceil((lockoutUntil - clock) / 1000)}s and try again.
               </div>
             )}
             {unlockError && (
               <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
-                Wrong passphrase. {5 - failedAttempts} attempts left.
+                That's not the right key. {5 - failedAttempts} tries left.
               </div>
             )}
             <input
@@ -760,7 +966,7 @@ export const ChatApp: React.FC = () => {
               Unlock
             </button>
             <p className="text-[10px] text-zinc-600 text-center">
-              Keys for chats you created or joined live in your device keyring — never sent anywhere.
+              Keys stay on this device — they're never uploaded anywhere.
             </p>
           </form>
         </ModalShell>
@@ -789,11 +995,11 @@ const EmptyChatState: React.FC<{ onNewMessage: () => void; onNewGroup: () => voi
     <div>
       <div className="text-white font-bold text-xl tracking-wide mb-2">Your messages</div>
       <div className="text-zinc-500 text-sm max-w-xs leading-relaxed">
-        Send private, end-to-end encrypted messages.<br />No feeds. No reels. No noise.
+        Follow people, then message them privately.<br />Only you two can read your chats. No feeds. No noise.
       </div>
     </div>
     <div className="flex flex-col sm:flex-row items-center gap-3 mt-2">
-      <button onClick={onNewMessage} className="btn-premium px-6 py-2.5 rounded-lg text-xs">Send message</button>
+      <button onClick={onNewMessage} className="btn-premium px-6 py-2.5 rounded-lg text-xs">Message</button>
       <button
         onClick={onNewGroup}
         className="term-panel term-interactive px-6 py-2.5 rounded-lg text-xs text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors flex items-center gap-1.5"
@@ -804,7 +1010,7 @@ const EmptyChatState: React.FC<{ onNewMessage: () => void; onNewGroup: () => voi
         onClick={onJoin}
         className="term-panel term-interactive px-6 py-2.5 rounded-lg text-xs text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors"
       >
-        Join with code
+        Use invite code
       </button>
     </div>
     <SecurityNote compact className="w-full max-w-xs mt-1" />

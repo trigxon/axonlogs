@@ -36,7 +36,7 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
       [authScreen.includes("placeholder=\"username\""), 'AuthScreen must collect a username'],
       [authUtil.includes('validateUsername') && authScreen.includes('validateUsername'), 'AuthScreen must validate the username'],
       [appTsx.includes('AuthScreen') && appTsx.includes('account'), 'App.tsx must gate ChatApp behind the account session'],
-      [secNote.includes('Passwords are PBKDF2-hashed on-device before upload.') && secNote.includes('Messages stay end-to-end encrypted.'), 'SecurityNote must highlight both security guarantees'],
+      [secNote.includes("Your password is scrambled on your device before it's saved") && secNote.includes('Only you and the person you message can read your chats.'), 'SecurityNote must highlight both security guarantees in plain language'],
       [authScreen.includes('SecurityNote'), 'AuthScreen must show the highlighted security note'],
       [profilePanel.includes('SecurityNote'), 'ProfilePanel must show the highlighted security note'],
       [settingsPanel.includes('SecurityNote'), 'SettingsPanel must show the highlighted security note'],
