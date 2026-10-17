@@ -23,6 +23,10 @@ export interface Account {
   bio: string;
   avatar_gradient: string;
   created_at: string;
+  display_name?: string;
+  is_private?: boolean;
+  show_activity?: boolean;
+  last_seen_at?: string;
 }
 
 export interface DmInvite {
@@ -175,8 +179,9 @@ export const signupAccount = async (
       password_hash: hashPassword(password),
       bio: '',
       avatar_gradient: avatarGradient,
+      display_name: '',
     })
-    .select('id, username, bio, avatar_gradient, created_at')
+    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
     .single();
 
   if (error) {
@@ -194,7 +199,7 @@ export const loginAccount = async (
   const u = username.trim().toLowerCase();
   const { data, error } = await supabase
     .from('accounts')
-    .select('id, username, password_hash, bio, avatar_gradient, created_at')
+    .select('id, username, password_hash, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
     .eq('username', u)
     .maybeSingle();
 
@@ -221,7 +226,7 @@ export const searchAccounts = async (
   if (!q) return [];
   let req = supabase
     .from('accounts')
-    .select('id, username, bio, avatar_gradient, created_at')
+    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
     .ilike('username', `%${q}%`)
     .limit(limit);
   if (excludeUsername) req = req.neq('username', excludeUsername);
@@ -233,7 +238,7 @@ export const fetchAccount = async (supabase: any, username: string): Promise<Acc
   const u = username.trim().toLowerCase();
   const { data } = await supabase
     .from('accounts')
-    .select('id, username, bio, avatar_gradient, created_at')
+    .select('id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at')
     .eq('username', u)
     .maybeSingle();
   return (data as Account) || null;
@@ -242,7 +247,7 @@ export const fetchAccount = async (supabase: any, username: string): Promise<Acc
 export const updateAccountProfile = async (
   supabase: any,
   username: string,
-  patch: { bio?: string; avatar_gradient?: string }
+  patch: { bio?: string; avatar_gradient?: string; display_name?: string; is_private?: boolean; show_activity?: string | boolean }
 ): Promise<boolean> => {
   const u = username.trim().toLowerCase();
   const { error } = await supabase.from('accounts').update(patch).eq('username', u);
@@ -306,4 +311,209 @@ export const fetchMyDmInvites = async (supabase: any, username: string): Promise
     .order('created_at', { ascending: true })
     .limit(50);
   return (data || []) as DmInvite[];
+};
+
+/* ----------------------------- social graph -----------------------------
+ * Instagram follow model: follows rows (follower → followed) with status
+ * 'active' or 'pending' (follow request to a private account). Blocks live
+ * on accounts.blocked_usernames (per-account blocklist).
+ * ----------------------------------------------------------------------- */
+
+const ACCOUNT_COLS = 'id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at';
+
+export type FollowState = {
+  following: boolean;   // I follow them (active)
+  requested: boolean;   // I sent a follow request (pending, private account)
+  followsMe: boolean;   // they follow me (active)
+};
+
+/** Relationship between `me` and `them` in one round-trip. */
+export const fetchFollowState = async (supabase: any, me: string, them: string): Promise<FollowState> => {
+  const a = me.trim().toLowerCase();
+  const b = them.trim().toLowerCase();
+  const state: FollowState = { following: false, requested: false, followsMe: false };
+  if (!supabase || !a || !b || a === b) return state;
+  const { data } = await supabase
+    .from('follows')
+    .select('follower, followed, status')
+    .or(`and(follower.eq.${a},followed.eq.${b}),and(follower.eq.${b},followed.eq.${a})`);
+  for (const row of data || []) {
+    if (row.follower === a && row.followed === b) {
+      if (row.status === 'active') state.following = true;
+      else state.requested = true;
+    }
+    if (row.follower === b && row.followed === a && row.status === 'active') state.followsMe = true;
+  }
+  return state;
+};
+
+/**
+ * Follow a user. Private accounts get a 'pending' request instead of an
+ * instant follow. Re-following a pending request is a no-op. Returns the
+ * resulting status ('active' | 'pending').
+ */
+export const followUser = async (supabase: any, me: string, target: string, targetIsPrivate: boolean): Promise<'active' | 'pending' | 'error'> => {
+  const a = me.trim().toLowerCase();
+  const b = target.trim().toLowerCase();
+  if (!supabase || !a || !b || a === b) return 'error';
+  const status = targetIsPrivate ? 'pending' : 'active';
+  const { error } = await supabase
+    .from('follows')
+    .upsert({ follower: a, followed: b, status }, { onConflict: 'follower,followed' });
+  return error ? 'error' : status;
+};
+
+export const unfollowUser = async (supabase: any, me: string, target: string): Promise<boolean> => {
+  const a = me.trim().toLowerCase();
+  const b = target.trim().toLowerCase();
+  const { error } = await supabase.from('follows').delete().eq('follower', a).eq('followed', b);
+  return !error;
+};
+
+/** Usernames that actively follow `username` (their followers). */
+export const fetchFollowers = async (supabase: any, username: string, limit = 200): Promise<string[]> => {
+  const u = username.trim().toLowerCase();
+  const { data } = await supabase
+    .from('follows')
+    .select('follower')
+    .eq('followed', u)
+    .eq('status', 'active')
+    .limit(limit);
+  return (data || []).map((r: any) => r.follower as string);
+};
+
+/** Usernames that `username` actively follows. */
+export const fetchFollowing = async (supabase: any, username: string, limit = 200): Promise<string[]> => {
+  const u = username.trim().toLowerCase();
+  const { data } = await supabase
+    .from('follows')
+    .select('followed')
+    .eq('follower', u)
+    .eq('status', 'active')
+    .limit(limit);
+  return (data || []).map((r: any) => r.followed as string);
+};
+
+/** Pending follow requests addressed to me (private accounts). */
+export const fetchFollowRequests = async (supabase: any, username: string, limit = 100): Promise<string[]> => {
+  const u = username.trim().toLowerCase();
+  const { data } = await supabase
+    .from('follows')
+    .select('follower')
+    .eq('followed', u)
+    .eq('status', 'pending')
+    .limit(limit);
+  return (data || []).map((r: any) => r.follower as string);
+};
+
+export const acceptFollowRequest = async (supabase: any, me: string, requester: string): Promise<boolean> => {
+  const { error } = await supabase
+    .from('follows')
+    .update({ status: 'active' })
+    .eq('follower', requester.trim().toLowerCase())
+    .eq('followed', me.trim().toLowerCase());
+  return !error;
+};
+
+export const declineFollowRequest = async (supabase: any, me: string, requester: string): Promise<boolean> => {
+  const { error } = await supabase
+    .from('follows')
+    .delete()
+    .eq('follower', requester.trim().toLowerCase())
+    .eq('followed', me.trim().toLowerCase());
+  return !error;
+};
+
+/** Full profile rows for a list of usernames (followers/following lists). */
+export const fetchAccountsByUsernames = async (supabase: any, usernames: string[]): Promise<Account[]> => {
+  const list = [...new Set(usernames.map(u => u.trim().toLowerCase()))].filter(Boolean);
+  if (!supabase || list.length === 0) return [];
+  const { data } = await supabase.from('accounts').select(ACCOUNT_COLS).in('username', list);
+  return (data || []) as Account[];
+};
+
+/* ------------------------------- blocking ------------------------------- */
+
+export const blockUser = async (supabase: any, me: string, target: string): Promise<boolean> => {
+  const a = me.trim().toLowerCase();
+  const b = target.trim().toLowerCase();
+  const { data } = await supabase
+    .from('accounts')
+    .select('blocked_usernames')
+    .eq('username', a)
+    .maybeSingle();
+  const list: string[] = data?.blocked_usernames || [];
+  if (list.includes(b)) return true;
+  const { error } = await supabase
+    .from('accounts')
+    .update({ blocked_usernames: [...list, b] })
+    .eq('username', a);
+  return !error;
+};
+
+export const unblockUser = async (supabase: any, me: string, target: string): Promise<boolean> => {
+  const a = me.trim().toLowerCase();
+  const b = target.trim().toLowerCase();
+  const { data } = await supabase
+    .from('accounts')
+    .select('blocked_usernames')
+    .eq('username', a)
+    .maybeSingle();
+  const list: string[] = (data?.blocked_usernames || []).filter((x: string) => x !== b);
+  const { error } = await supabase
+    .from('accounts')
+    .update({ blocked_usernames: list })
+    .eq('username', a);
+  return !error;
+};
+
+export const fetchBlockedUsers = async (supabase: any, me: string): Promise<string[]> => {
+  const a = me.trim().toLowerCase();
+  if (!supabase || !a) return [];
+  const { data } = await supabase
+    .from('accounts')
+    .select('blocked_usernames')
+    .eq('username', a)
+    .maybeSingle();
+  return data?.blocked_usernames || [];
+};
+
+/** True when either side blocked the other (DMs and search should hide). */
+export const isBlockedEitherWay = async (supabase: any, a: string, b: string): Promise<boolean> => {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!supabase || !x || !y) return false;
+  const { data } = await supabase
+    .from('accounts')
+    .select('username, blocked_usernames')
+    .in('username', [x, y]);
+  for (const row of data || []) {
+    const list: string[] = row.blocked_usernames || [];
+    if (row.username === x && list.includes(y)) return true;
+    if (row.username === y && list.includes(x)) return true;
+  }
+  return false;
+};
+
+/* ---------------------------- activity status ---------------------------- */
+
+/** Touch my last_seen_at so "Active now" stays truthful (best-effort). */
+export const touchLastSeen = (supabase: any, username: string) => {
+  if (!supabase) return;
+  supabase
+    .from('accounts')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('username', username.trim().toLowerCase())
+    .then();
+};
+
+/** Instagram-style presence label from a peer's last_seen_at. */
+export const activityLabel = (account: Pick<Account, 'last_seen_at' | 'show_activity'> | null): string | null => {
+  if (!account || account.show_activity === false || !account.last_seen_at) return null;
+  const mins = Math.floor((Date.now() - new Date(account.last_seen_at).getTime()) / 60000);
+  if (mins < 1) return 'Active now';
+  if (mins < 60) return `Active ${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `Active ${hours}h ago`;
+  return null;
 };

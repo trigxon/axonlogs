@@ -1,15 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   ArrowLeft, Phone, Video, Info, Paperclip, SendHorizontal, Flame, X,
-  Reply, Pin, Clipboard, Edit2, RotateCcw, Trash2, Lock, LockOpen,
-  ChevronDown, Search, Check, KeyRound, Archive, Smile,
+  Reply, Pin, Clipboard, Edit2, Trash2, Lock, LockOpen,
+  ChevronDown, Search, Check, KeyRound, Archive, Smile, Undo2, CornerUpRight,
+  BellOff, Bell, Palette, Image as ImageIcon, Ban, Flag, User,
 } from 'lucide-react';
-import { useCrypto, type Chat } from '../../contexts/CryptoContext';
-import { dmDisplayName } from '../../utils/auth';
+import EmojiPicker, { Theme } from 'emoji-picker-react';
+import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
+import {
+  dmDisplayName, activityLabel, fetchAccount, blockUser, unblockUser,
+  fetchBlockedUsers, type Account,
+} from '../../utils/auth';
 import Avatar from '../profile/Avatar';
 import { VoiceRecorder } from '../chat/VoiceRecorder';
 import TypewriterText from '../ui/TypewriterText';
-import { markChatReadUpToNow } from '../../utils/chatMeta';
+import {
+  markChatReadUpToNow, CHAT_THEMES, getChatTheme, setChatTheme,
+  getNickname, setNickname, isChatMuted, setChatMuted, dmPeer,
+} from '../../utils/chatMeta';
 
 const QUICK_EMOJIS = ['❤️', '👍', '😂', '🔥', '💯', '🚀', '👀', '😮'];
 const HEART = '❤️';
@@ -48,14 +56,21 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
 }) => {
   const {
     deviceId, messages, latency, sendMessage, purgeTerminal, addSystemMessage,
-    networkStatus, deleteMessageLocally, broadcastTyping, typingUsers, onlineUsers,
+    networkStatus, broadcastTyping, typingUsers, onlineUsers,
     unlockedChatId, lockChat, settings, editMessage, toggleReaction, togglePinMessage,
-    markAsRead, resendMessage, startCall, deleteChat, archiveChat, account,
+    markAsRead, startCall, deleteChat, archiveChat, account,
+    unsendMessage, forwardMessage, chats, archivedChats,
   } = useCrypto();
 
   const myHandle = account?.username?.toLowerCase() || '';
-  // DM channels show the other person's handle (Instagram behavior)
-  const displayName = myHandle ? dmDisplayName(chat.name, myHandle) : chat.name;
+  // DM channels show the other person's handle (Instagram behavior);
+  // nicknames override the handle (Instagram nicknames feature).
+  const peer = myHandle ? dmPeer(chat.name, myHandle) : null;
+  const isDm = !!peer;
+  const isGroup = !isDm;
+  const nick = isDm ? getNickname(chat.id, peer!) : '';
+  const displayName = isDm ? (nick || (myHandle ? dmDisplayName(chat.name, myHandle) : chat.name)) : chat.name;
+  const theme = getChatTheme(chat.id);
 
   const chatLocked = unlockedChatId !== chat.id;
   const [input, setInput] = useState('');
@@ -63,11 +78,20 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [burnNext, setBurnNext] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [menuPanel, setMenuPanel] = useState<'none' | 'theme' | 'nicks' | 'media'>('none');
+  const [nickValue, setNickValue] = useState('');
+  const [muted, setMuted] = useState(() => isChatMuted(chat.id));
+  const [peerAccount, setPeerAccount] = useState<Account | null>(null);
+  const [blockedPeer, setBlockedPeer] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [chatSearch, setChatSearch] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<string | null>(null);
+  const [forwardMsgId, setForwardMsgId] = useState<string | null>(null);
+  const [forwardSearch, setForwardSearch] = useState('');
+  const [mediaOpen, setMediaOpen] = useState(false);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [animatedMsgs, setAnimatedMsgs] = useState<Set<string>>(new Set());
@@ -118,12 +142,28 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     setSearchOpen(false);
     setReplyToId(null);
     setBurnNext(false);
+    setMenuPanel('none');
+    setMediaOpen(false);
+    setMuted(isChatMuted(chat.id));
     requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ block: 'end' }));
   }, [chat.id]);
 
+  // Instagram activity status + block state for the DM peer
+  useEffect(() => {
+    if (!supabase || !isDm || !peer || !myHandle) {
+      setPeerAccount(null);
+      setBlockedPeer(false);
+      return;
+    }
+    let cancelled = false;
+    fetchAccount(supabase, peer).then(acc => { if (!cancelled) setPeerAccount(acc); }).catch(() => {});
+    fetchBlockedUsers(supabase, myHandle).then(list => { if (!cancelled) setBlockedPeer(list.includes(peer)); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [chat.id, peer, isDm, myHandle]);
+
   // Close menus on outside click / Escape
   useEffect(() => {
-    if (!contextMenu && !reactionPickerMsgId && !optionsOpen) return;
+    if (!contextMenu && !reactionPickerMsgId && !optionsOpen && !emojiPickerMsgId && !forwardMsgId && !mediaOpen) return;
     const close = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (!t.closest('[data-ctx-menu]') && !t.closest('[data-reaction-picker]') && !t.closest('[data-options-menu]')) {
@@ -137,6 +177,9 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
         setContextMenu(null);
         setReactionPickerMsgId(null);
         setOptionsOpen(false);
+        setEmojiPickerMsgId(null);
+        setForwardMsgId(null);
+        setMediaOpen(false);
       }
     };
     document.addEventListener('mousedown', close, { capture: true });
@@ -145,7 +188,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
       document.removeEventListener('mousedown', close, { capture: true });
       document.removeEventListener('keydown', onKey);
     };
-  }, [contextMenu, reactionPickerMsgId, optionsOpen]);
+  }, [contextMenu, reactionPickerMsgId, optionsOpen, emojiPickerMsgId, forwardMsgId, mediaOpen]);
 
   const jumpToLatest = () => {
     isNearBottomRef.current = true;
@@ -256,7 +299,9 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   );
   const lastOwnMsg = [...visibleMessages].reverse().find(m => m.sender_id === deviceId);
   const ownSeen = !!lastOwnMsg && (lastOwnMsg.read_by || []).length > 0;
-  const pinned = messages.filter(m => m.pinned);
+  const pinned = messages.filter(m => m.pinned && !m.unsent);
+  const groupMemberCount = new Set([deviceId, ...messages.map(m => m.sender_id).filter(s => s !== 'SYSTEM')]).size;
+  const mediaMessages = messages.filter(m => m.file_url && !m.unsent);
 
   let lastDay = '';
   let prevSender: string | null = null;
@@ -285,6 +330,10 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 <span className="text-emerald-400">typing…</span>
               ) : peerOnline ? (
                 <span className="text-emerald-400">Active now{latency > 0 && isOnline ? <span className="text-zinc-600"> · {latency}ms</span> : null}</span>
+              ) : isDm && activityLabel(peerAccount) ? (
+                <span className="text-emerald-400">{activityLabel(peerAccount)}</span>
+              ) : isGroup ? (
+                <span className="text-zinc-500">Group · {groupMemberCount} member{groupMemberCount === 1 ? '' : 's'} · AES-256 encrypted</span>
               ) : (
                 <span className="text-zinc-500">Offline · AES-256 encrypted</span>
               )}
@@ -325,10 +374,88 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 <Info className="w-[18px] h-[18px]" />
               </button>
               {optionsOpen && (
-                <div data-options-menu className="absolute right-0 top-full mt-2 w-60 z-50 term-panel rounded-xl py-1.5 shadow-2xl border border-white/10">
+                <div data-options-menu className="absolute right-0 top-full mt-2 w-64 z-50 term-panel rounded-xl py-1.5 shadow-2xl border border-white/10 max-h-[70vh] overflow-y-auto feed-scroll">
                   <div className="px-3 py-1.5 text-[9px] font-bold tracking-[0.25em] text-zinc-600 uppercase border-b border-white/[0.06] mb-1 truncate">
                     {displayName}
                   </div>
+                  {/* Instagram: mute notifications */}
+                  <MenuRow
+                    icon={muted ? <BellOff className="w-3.5 h-3.5 text-amber-400" /> : <Bell className="w-3.5 h-3.5" />}
+                    label={muted ? 'Unmute notifications' : 'Mute notifications'}
+                    onClick={() => {
+                      const next = !muted;
+                      setMuted(next);
+                      setChatMuted(chat.id, next);
+                      setOptionsOpen(false);
+                    }}
+                    trailing={muted ? <span className="text-[9px] text-amber-400 font-bold">MUTED</span> : undefined}
+                  />
+                  {/* Instagram: chat theme */}
+                  <MenuRow
+                    icon={<Palette className="w-3.5 h-3.5" />}
+                    label="Chat theme"
+                    onClick={() => setMenuPanel(p => (p === 'theme' ? 'none' : 'theme'))}
+                    trailing={<ChevronDown className={`w-3.5 h-3.5 text-zinc-600 transition-transform ${menuPanel === 'theme' ? 'rotate-180' : ''}`} />}
+                  />
+                  {menuPanel === 'theme' && (
+                    <div className="px-3 pb-2 pt-1">
+                      <div className="grid grid-cols-6 gap-2">
+                        {CHAT_THEMES.map(t => (
+                          <button
+                            key={t.name}
+                            title={t.name}
+                            onClick={() => setChatTheme(chat.id, t.name)}
+                            className={`h-7 rounded-full border transition-transform hover:scale-110 ${theme.name === t.name ? 'border-white ring-2 ring-cyan-400/60' : 'border-white/20'}`}
+                            style={{ background: t.mine }}
+                            aria-label={`Theme ${t.name}`}
+                          />
+                        ))}
+                      </div>
+                      <div className="text-[9px] text-zinc-600 mt-1.5 tracking-widest uppercase">{theme.name}</div>
+                    </div>
+                  )}
+                  {/* Instagram: nicknames (DMs) */}
+                  {isDm && (
+                    <MenuRow
+                      icon={<User className="w-3.5 h-3.5" />}
+                      label="Nickname"
+                      onClick={() => { setNickValue(nick); setMenuPanel(p => (p === 'nicks' ? 'none' : 'nicks')); }}
+                      trailing={nick ? <span className="text-[9px] text-cyan-400 font-bold truncate max-w-[80px]">{nick}</span> : undefined}
+                    />
+                  )}
+                  {menuPanel === 'nicks' && isDm && (
+                    <div className="px-3 pb-2 pt-1 flex items-center gap-1.5">
+                      <input
+                        value={nickValue}
+                        onChange={e => setNickValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            setNickname(chat.id, peer!, nickValue);
+                            setMenuPanel('none');
+                          }
+                        }}
+                        placeholder={`Nickname for @${peer}`}
+                        maxLength={24}
+                        className="flex-1 bg-black/40 border border-white/10 focus:border-cyan-400/50 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => { setNickname(chat.id, peer!, nickValue); setMenuPanel('none'); }}
+                        className="text-emerald-400 hover:text-emerald-300 p-1"
+                        title="Save nickname"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  {/* Instagram: shared media */}
+                  <MenuRow
+                    icon={<ImageIcon className="w-3.5 h-3.5" />}
+                    label="Shared media"
+                    onClick={() => { setMenuPanel('none'); setOptionsOpen(false); setMediaOpen(true); }}
+                    trailing={<span className="text-[9px] text-zinc-600">{mediaMessages.length}</span>}
+                  />
+                  <div className="border-t border-white/[0.06] my-1" />
                   <MenuRow icon={<Edit2 className="w-3.5 h-3.5" />} label="Rename" onClick={() => { setOptionsOpen(false); onRequestRename(chat.id); }} />
                   <MenuRow
                     icon={<Clipboard className="w-3.5 h-3.5" />}
@@ -349,10 +476,41 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                   <MenuRow icon={<KeyRound className="w-3.5 h-3.5" />} label="Rotate key" onClick={() => { setOptionsOpen(false); onRequestKeyRotation(chat.id); }} danger />
                   <MenuRow
                     icon={<Archive className="w-3.5 h-3.5" />}
-                    label="Archive"
-                    onClick={() => { setOptionsOpen(false); if (confirm(`Archive "${chat.name}"? You can restore it later.`)) { archiveChat(chat.id); onBack(); } }}
+                    label={isGroup ? 'Leave group' : 'Archive'}
+                    onClick={() => { setOptionsOpen(false); if (confirm(isGroup ? `Leave "${chat.name}"?` : `Archive "${chat.name}"? You can restore it later.`)) { archiveChat(chat.id); onBack(); } }}
                   />
                   <MenuRow icon={<Trash2 className="w-3.5 h-3.5" />} label="Purge messages" onClick={() => { setOptionsOpen(false); purgeTerminal(); }} danger />
+                  {isDm && (
+                    <MenuRow
+                      icon={<Flag className="w-3.5 h-3.5" />}
+                      label="Report"
+                      onClick={() => {
+                        setOptionsOpen(false);
+                        if (confirm(`Report @${peer}?`)) addSystemMessage(`@${peer} reported. Thanks for keeping Axon safe.`);
+                      }}
+                      danger
+                    />
+                  )}
+                  {isDm && (
+                    <MenuRow
+                      icon={<Ban className="w-3.5 h-3.5" />}
+                      label={blockedPeer ? `Unblock @${peer}` : `Block @${peer}`}
+                      onClick={async () => {
+                        setOptionsOpen(false);
+                        if (!supabase || !myHandle) return;
+                        if (blockedPeer) {
+                          await unblockUser(supabase, myHandle, peer!);
+                          setBlockedPeer(false);
+                          addSystemMessage(`@${peer} unblocked.`);
+                        } else if (confirm(`Block @${peer}? They won't be able to message you.`)) {
+                          await blockUser(supabase, myHandle, peer!);
+                          setBlockedPeer(true);
+                          addSystemMessage(`@${peer} blocked.`);
+                        }
+                      }}
+                      danger
+                    />
+                  )}
                   <div className="border-t border-white/[0.06] my-1" />
                   <MenuRow
                     icon={<Trash2 className="w-3.5 h-3.5" />}
@@ -497,11 +655,11 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                           </button>
                           {isSelf && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); if (confirm('Incinerate this payload permanently?')) deleteMessageLocally(msg.id); }}
+                              onClick={(e) => { e.stopPropagation(); if (confirm('Unsend for everyone?')) unsendMessage(msg.id); }}
                               className="w-6 h-6 rounded-full bg-[#0b0d15] border border-white/10 flex items-center justify-center hover:scale-110 transition-transform"
-                              title="Burn (delete)"
+                              title="Unsend for everyone"
                             >
-                              <Flame className="w-3 h-3 text-red-400" />
+                              <Undo2 className="w-3 h-3 text-red-400" />
                             </button>
                           )}
                         </div>
@@ -522,6 +680,14 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                                 {em}
                               </button>
                             ))}
+                            <span className="w-px h-4 bg-white/10 mx-0.5" />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setEmojiPickerMsgId(msg.id); setReactionPickerMsgId(null); }}
+                              className="w-6 h-6 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center hover:scale-110 transition-transform"
+                              title="More emojis"
+                            >
+                              <Smile className="w-3.5 h-3.5 text-cyan-300" />
+                            </button>
                           </div>
                         )}
 
@@ -543,33 +709,40 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                             isSelf
                               ? 'bubble-mine text-white'
                               : 'bubble-theirs text-zinc-100'
-                          } ${msg.burn_on_read ? 'ring-1 ring-red-500/40' : ''} ${msg.pinned ? 'ring-1 ring-amber-400/50' : ''}`}
+                          } ${msg.burn_on_read && !msg.unsent ? 'ring-1 ring-red-500/40' : ''} ${msg.pinned ? 'ring-1 ring-amber-400/50' : ''}`}
+                          style={isSelf && theme.name !== 'Default' && !msg.unsent ? { background: theme.mine } : undefined}
                           title={new Date(msg.created_at).toLocaleString()}
                         >
-                          {msg.burn_on_read && (
-                            <span className="inline-flex items-center gap-1 text-[8px] font-bold tracking-widest text-red-400/90 uppercase mr-1.5 align-middle">
-                              <Flame size={9} /> burn
-                            </span>
-                          )}
-                          {msg.pinned && (
-                            <Pin size={9} className="inline rotate-45 text-amber-400 mr-1 align-middle" />
-                          )}
-
-                          {msg.text?.startsWith('data:audio/') ? (
-                            <audio controls src={msg.text} className="w-full max-w-[220px] h-9" />
-                          ) : !isSelf && !animatedMsgs.has(msg.id) && Date.now() - t < 15000 ? (
-                            <TypewriterText
-                              text={msg.text}
-                              speed={10}
-                              onComplete={() => setAnimatedMsgs(prev => new Set(prev).add(msg.id))}
-                            />
+                          {msg.unsent ? (
+                            <span className="italic text-zinc-400 text-xs">Message unsent</span>
                           ) : (
-                            <span className="whitespace-pre-wrap break-words">{msg.text}</span>
+                            <>
+                              {msg.burn_on_read && (
+                                <span className="inline-flex items-center gap-1 text-[8px] font-bold tracking-widest text-red-400/90 uppercase mr-1.5 align-middle">
+                                  <Flame size={9} /> burn
+                                </span>
+                              )}
+                              {msg.pinned && (
+                                <Pin size={9} className="inline rotate-45 text-amber-400 mr-1 align-middle" />
+                              )}
+
+                              {msg.text?.startsWith('data:audio/') ? (
+                                <audio controls src={msg.text} className="w-full max-w-[220px] h-9" />
+                              ) : !isSelf && !animatedMsgs.has(msg.id) && Date.now() - t < 15000 ? (
+                                <TypewriterText
+                                  text={msg.text}
+                                  speed={10}
+                                  onComplete={() => setAnimatedMsgs(prev => new Set(prev).add(msg.id))}
+                                />
+                              ) : (
+                                <span className="whitespace-pre-wrap break-words">{msg.text}</span>
+                              )}
+
+                              {msg.edited && <span className="ml-1.5 text-[9px] text-zinc-500 italic">edited</span>}
+
+                              {renderFile(msg.file_url)}
+                            </>
                           )}
-
-                          {msg.edited && <span className="ml-1.5 text-[9px] text-zinc-500 italic">edited</span>}
-
-                          {renderFile(msg.file_url)}
 
                           {/* Instagram heart badge on bubble */}
                           {hearted && (
@@ -649,6 +822,16 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
       {chatLocked ? (
         <div className="px-4 py-3 border-t border-white/[0.06] text-center text-[10px] tracking-widest uppercase text-zinc-600 shrink-0">
           Unlock this chat to send messages
+        </div>
+      ) : blockedPeer ? (
+        <div className="px-4 py-3 border-t border-white/[0.06] flex items-center justify-center gap-3 shrink-0">
+          <span className="text-xs text-zinc-400 flex items-center gap-1.5"><Ban className="w-3.5 h-3.5 text-red-400" /> You blocked @{peer}.</span>
+          <button
+            onClick={async () => { if (supabase && myHandle) { await unblockUser(supabase, myHandle, peer!); setBlockedPeer(false); } }}
+            className="text-[10px] font-bold tracking-widest uppercase text-cyan-300 hover:text-cyan-200"
+          >
+            Unblock
+          </button>
         </div>
       ) : (
         <footer className="shrink-0 border-t border-white/[0.06] bg-[#07070d]/80">
@@ -746,21 +929,110 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 <MenuRow icon={<Smile size={13} />} label="React" onClick={() => { setReactionPickerMsgId(msg.id); setContextMenu(null); }} />
                 <MenuRow icon={<Pin size={13} />} label={msg.pinned ? 'Unpin' : 'Pin'} onClick={() => { togglePinMessage(msg.id); setContextMenu(null); }} />
                 <MenuRow icon={<Clipboard size={13} />} label="Copy text" onClick={() => { navigator.clipboard.writeText(msg.text || ''); setContextMenu(null); }} />
+                <MenuRow icon={<CornerUpRight size={13} />} label="Forward" onClick={() => { setForwardMsgId(msg.id); setContextMenu(null); }} />
                 {isSelf && (
                   <MenuRow icon={<Edit2 size={13} />} label="Edit" onClick={() => { setEditingMsgId(msg.id); setEditingText(msg.text); setContextMenu(null); }} />
                 )}
                 {isSelf && (
-                  <MenuRow icon={<RotateCcw size={13} />} label="Resend" onClick={() => { resendMessage(msg.id); setContextMenu(null); }} />
-                )}
-                {isSelf && (
                   <>
                     <div className="border-t border-white/5 my-1" />
-                    <MenuRow icon={<Trash2 size={13} />} label="Delete" danger onClick={() => { if (confirm('Incinerate this payload?')) deleteMessageLocally(msg.id); setContextMenu(null); }} />
+                    <MenuRow icon={<Undo2 size={13} />} label="Unsend" danger onClick={() => { if (confirm('Unsend for everyone?')) unsendMessage(msg.id); setContextMenu(null); }} />
                   </>
                 )}
               </>
             );
           })()}
+        </div>
+      )}
+
+      {/* ------------------- full emoji picker (reactions) ------------------- */}
+      {emojiPickerMsgId && (
+        <div
+          className="fixed inset-0 z-[170] flex items-end sm:items-center justify-center bg-black/50 p-4"
+          onClick={() => setEmojiPickerMsgId(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl"
+          >
+            <EmojiPicker
+              theme={Theme.DARK}
+              width={320}
+              height={380}
+              onEmojiClick={(ed: any) => {
+                toggleReaction(emojiPickerMsgId, ed.emoji);
+                setEmojiPickerMsgId(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ------------------- forward modal (Instagram) ------------------- */}
+      {forwardMsgId && (() => {
+        const fwdMsg = messages.find(m => m.id === forwardMsgId);
+        const allTargets = [...chats, ...archivedChats].filter(c => c.id !== chat.id);
+        const ft = forwardSearch.trim().toLowerCase();
+        const targets = allTargets.filter(c => c.name.toLowerCase().includes(ft));
+        return (
+          <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/60 p-4" onClick={() => setForwardMsgId(null)}>
+            <div className="w-full max-w-sm term-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
+                <CornerUpRight className="w-4 h-4 text-cyan-300" />
+                <span className="text-sm font-bold text-white">Forward to…</span>
+                <button className="ml-auto text-zinc-500 hover:text-white" onClick={() => setForwardMsgId(null)}><X className="w-4 h-4" /></button>
+              </div>
+              <div className="px-3 py-2">
+                <input
+                  value={forwardSearch}
+                  onChange={e => setForwardSearch(e.target.value)}
+                  placeholder="Search chats…"
+                  className="w-full bg-black/40 border border-white/10 focus:border-cyan-400/50 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-72 overflow-y-auto feed-scroll px-2 pb-2">
+                {targets.length === 0 && <div className="text-center text-zinc-600 text-xs py-6">No other chats yet.</div>}
+                {targets.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={async () => {
+                      if (fwdMsg) await forwardMessage(fwdMsg, c);
+                      setForwardMsgId(null);
+                      setForwardSearch('');
+                    }}
+                    className="w-full flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/[0.05] text-left transition-colors"
+                  >
+                    <Avatar seed={c.id} name={c.name} size={36} ring="seen" />
+                    <span className="text-xs text-zinc-200 truncate flex-1">{myHandle ? dmDisplayName(c.name, myHandle) : c.name}</span>
+                    <SendHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ------------------- shared media gallery (Instagram) ------------------- */}
+      {mediaOpen && (
+        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/60 p-4" onClick={() => setMediaOpen(false)}>
+          <div className="w-full max-w-md term-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-cyan-300" />
+              <span className="text-sm font-bold text-white">Shared media</span>
+              <span className="text-[10px] text-zinc-600 tabular-nums">{mediaMessages.length}</span>
+              <button className="ml-auto text-zinc-500 hover:text-white" onClick={() => setMediaOpen(false)}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="max-h-80 overflow-y-auto feed-scroll p-3 grid grid-cols-3 gap-2">
+              {mediaMessages.length === 0 && (
+                <div className="col-span-3 text-center text-zinc-600 text-xs py-8">No media shared yet.</div>
+              )}
+              {mediaMessages.slice().reverse().map(m => (
+                <MediaThumb key={m.id} url={m.file_url!} />
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -820,5 +1092,34 @@ const MenuRow: React.FC<{
     {trailing}
   </button>
 );
+
+/** Thumbnail for the shared-media gallery (images / video / audio / files). */
+const MediaThumb: React.FC<{ url: string }> = ({ url }) => {
+  const isImage = url.match(/\.(jpeg|jpg|gif|png|webp|avif)(\?.*)?$/i) || url.startsWith('data:image/');
+  const isVideo = url.match(/\.(mp4|webm|mov)(\?.*)?$/i) || url.startsWith('data:video/');
+  const isAudio = url.match(/\.(webm|mp3|ogg|wav|m4a)(\?.*)?$/i) || url.startsWith('data:audio/');
+  if (isImage) {
+    return <img src={url} alt="Shared" className="aspect-square w-full object-cover rounded-lg border border-white/10 cursor-pointer hover:brightness-110 transition-all" onClick={() => window.open(url, '_blank')} />;
+  }
+  if (isVideo) {
+    return <video src={url} className="aspect-square w-full object-cover rounded-lg border border-white/10 bg-black" muted />;
+  }
+  if (isAudio) {
+    return <div className="aspect-square w-full rounded-lg border border-white/10 bg-white/[0.03] flex items-center justify-center p-2"><audio controls src={url} className="w-full" /></div>;
+  }
+  let name = 'File';
+  try { name = JSON.parse(url)?.name || 'File'; } catch { /* raw url */ }
+  return (
+    <a
+      href={url.startsWith('data:') ? url : url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="aspect-square w-full rounded-lg border border-white/10 bg-white/[0.03] flex flex-col items-center justify-center gap-1 p-2 hover:border-cyan-400/40 transition-colors"
+    >
+      <Paperclip className="w-4 h-4 text-cyan-300" />
+      <span className="text-[9px] text-zinc-400 truncate w-full text-center">{name}</span>
+    </a>
+  );
+};
 
 export default ConversationPanel;

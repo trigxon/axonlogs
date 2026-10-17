@@ -13,6 +13,8 @@ import {
   generateDmPasscode,
   sendDmInvite,
   fetchMyDmInvites,
+  touchLastSeen,
+  isBlockedEitherWay,
 } from '../utils/auth';
 
 export interface Chat {
@@ -57,6 +59,7 @@ export interface Message {
   reactions?: Reaction[];
   pinned?: boolean;
   edited?: boolean;
+  unsent?: boolean;
   created_at: string;
   isDecryptionError?: boolean;
 }
@@ -78,6 +81,12 @@ export interface AppSettings {
   allowVoice: boolean;
   /** Obfuscate the terminal feed while the tab is hidden */
   stealthMode: boolean;
+  /** Instagram read receipts: share 'Seen' with the other side */
+  readReceipts: boolean;
+  /** Share my activity status (Active now / Xm ago) with others */
+  showActivity: boolean;
+  /** Private account: follow requests need approval */
+  privateAccount: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -86,6 +95,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   allowFiles: true,
   allowVoice: true,
   stealthMode: false,
+  readReceipts: true,
+  showActivity: true,
+  privateAccount: false,
 };
 
 export const BURN_DELAY_OPTIONS: { value: number; label: string }[] = [
@@ -164,6 +176,12 @@ interface CryptoContextType {
   searchAccounts: (query: string) => Promise<Account[]>;
   /** Instagram "Message @user" flow: create (or open) an encrypted DM and invite the recipient */
   startDmWithUser: (username: string) => Promise<{ ok: boolean; chat?: Chat; error?: string }>;
+  /** Instagram group DM: named encrypted channel + one invite per member */
+  createGroupChat: (name: string, memberUsernames: string[]) => Promise<{ ok: boolean; chat?: Chat; error?: string }>;
+  /** "Unsend" — remove a message for everyone (tombstone via realtime) */
+  unsendMessage: (msgId: string) => void;
+  /** Forward a message's content into another encrypted channel */
+  forwardMessage: (msg: Message, targetChat: Chat) => Promise<void>;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
@@ -444,6 +462,27 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     addLog('Account logged out');
   }, [addLog]);
 
+  // Instagram-style activity status: keep last_seen_at fresh while signed in
+  useEffect(() => {
+    const u = account?.username;
+    if (!u || backendMode !== 'online' || !supabase) return;
+    touchLastSeen(supabase, u);
+    const t = setInterval(() => touchLastSeen(supabase!, u), 4 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [account?.username, backendMode]);
+
+  // Sync privacy toggles (private account / activity visibility) to the cloud
+  // profile so OTHER users see them — Instagram account-privacy semantics.
+  useEffect(() => {
+    const u = account?.username;
+    if (!u || backendMode !== 'online' || !supabase) return;
+    supabase
+      .from('accounts')
+      .update({ is_private: settingsRef.current.privateAccount === true, show_activity: settingsRef.current.showActivity !== false })
+      .eq('username', u)
+      .then();
+  }, [account?.username, backendMode, settings.privateAccount, settings.showActivity]);
+
   /** Quietly admit an invited DM: add to state, keyring it, auto-unlock. */
   const admitDmChat = useCallback((chat: Chat) => {
     saveKnownChat(chat.id);
@@ -526,6 +565,11 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
     const me = account.username.toLowerCase();
     const dmName = dmChatName(me, target);
+
+    // Blocks are enforced like Instagram: neither side can DM the other
+    if (await isBlockedEitherWay(supabase, me, target)) {
+      return { ok: false, error: "You can't message this account." };
+    }
 
     // Reuse the existing DM channel when we already have it
     const existing = chats.find(c => c.name === dmName) || archivedChats.find(c => c.name === dmName);
@@ -974,9 +1018,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           });
           setMessages(decryptedMsgs);
 
-          // Process read receipts
+          // Process read receipts (honors the Read receipts setting)
           decryptedMsgs.forEach(msg => {
-            if (msg.sender_id !== deviceId && !msg.isDecryptionError && (!msg.read_by || !msg.read_by.includes(deviceId))) {
+            if (
+              settingsRef.current.readReceipts !== false &&
+              msg.sender_id !== deviceId && !msg.isDecryptionError && (!msg.read_by || !msg.read_by.includes(deviceId))
+            ) {
               const newReadBy = [...(msg.read_by || []), deviceId];
               supabase!.from('messages').update({ read_by: newReadBy }).eq('id', msg.id).then();
             }
@@ -1038,7 +1085,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           // Dedupe: the sender already rendered this message optimistically
           setMessages(prev => (prev.some(m => m.id === completeMsg.id) ? prev : [...prev, completeMsg]));
 
-          if (newMsg.sender_id !== deviceId && !hasTextError && !hasFileError && (!newMsg.read_by || !newMsg.read_by.includes(deviceId))) {
+          if (newMsg.sender_id !== deviceId && !hasTextError && !hasFileError && (!newMsg.read_by || !newMsg.read_by.includes(deviceId)) && settingsRef.current.readReceipts !== false) {
             const newReadBy = [...(newMsg.read_by || []), deviceId];
             supabase!.from('messages').update({ read_by: newReadBy }).eq('id', newMsg.id).then();
           }
@@ -1397,14 +1444,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   const toggleReaction = useCallback((msgId: string, emoji: string) => {
     if (!activeChat || !deviceId) return;
+    let nextReactions: Reaction[] = [];
     setMessages(prev => prev.map(m => {
       if (m.id !== msgId) return m;
       const reactions = m.reactions || [];
       const existing = reactions.findIndex(r => r.emoji === emoji && r.user_id === deviceId);
-      const next = existing >= 0
+      nextReactions = existing >= 0
         ? reactions.filter((_, i) => i !== existing)
         : [...reactions, { emoji, user_id: deviceId }];
-      return { ...m, reactions: next };
+      return { ...m, reactions: nextReactions };
     }));
     if (backendMode !== 'online' && activeChat) {
       const allMsgs = readJSON<Message[]>('axon_messages', []);
@@ -1417,18 +1465,25 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           : [...reactions, { emoji, user_id: deviceId }];
         writeJSON('axon_messages', allMsgs);
       }
+    } else if (supabase) {
+      // Instagram reactions SYNC across devices: persist + realtime UPDATE
+      supabase.from('messages').update({ reactions: nextReactions }).eq('id', msgId).then();
     }
   }, [activeChat, deviceId, backendMode]);
 
   const togglePinMessage = useCallback((msgId: string) => {
     if (!activeChat) return;
+    const nowPinned = !messages.find(m => m.id === msgId)?.pinned;
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, pinned: !m.pinned } : m));
     if (backendMode !== 'online' && activeChat) {
       const allMsgs = readJSON<Message[]>('axon_messages', []);
       const msg = allMsgs.find(m => m.id === msgId);
       if (msg) { msg.pinned = !msg.pinned; writeJSON('axon_messages', allMsgs); }
+    } else if (supabase) {
+      // Pinned state syncs like Instagram: persist + realtime UPDATE
+      supabase.from('messages').update({ pinned: nowPinned }).eq('id', msgId).then();
     }
-    addLog(`Message ${msgId.slice(0, 6)}... ${messages.find(m => m.id === msgId)?.pinned ? 'unpinned' : 'pinned'}`);
+    addLog(`Message ${msgId.slice(0, 6)}... ${nowPinned ? 'pinned' : 'unpinned'}`);
   }, [activeChat, backendMode, messages, addLog]);
 
   const markAsRead = useCallback((msgId: string) => {
@@ -1446,6 +1501,100 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (!msg) return;
     addSystemMessage(`⟳ Resent: ${msg.text.slice(0, 60)}${msg.text.length > 60 ? '…' : ''}`);
   }, [messages, addSystemMessage]);
+
+  /* ------------------- Instagram: unsend + forward + groups ------------------- */
+
+  /** Instagram "Unsend": tombstone the row — cleared for EVERYONE via realtime. */
+  const unsendMessage = useCallback((msgId: string) => {
+    if (!activeChat) return;
+    setMessages(prev => prev.map(m => (m.id === msgId
+      ? { ...m, unsent: true, text: '', file_url: null, reactions: [] }
+      : m)));
+    if (backendMode !== 'online') {
+      writeJSON('axon_messages', readJSON<Message[]>('axon_messages', []).map(m => (m.id === msgId
+        ? { ...m, unsent: true, text: '', file_url: null, reactions: [] }
+        : m)));
+    } else if (supabase) {
+      supabase.from('messages').update({ unsent: true, text: '', file_url: null, reactions: [] }).eq('id', msgId).then();
+    }
+    addLog(`Message ${msgId.slice(0, 6)}... unsent`);
+  }, [activeChat, backendMode, addLog]);
+
+  /** Forward a message's (decrypted) content into another encrypted channel. */
+  const forwardMessage = useCallback(async (msg: Message, targetChat: Chat) => {
+    const encryptedText = msg.text ? encryptText(msg.text, targetChat.share_code) : '';
+    const encryptedFile = msg.file_url ? encryptText(msg.file_url, targetChat.share_code) : null;
+    if (backendMode === 'online' && supabase) {
+      const { error } = await supabase.from('messages').insert({
+        chat_id: targetChat.id,
+        sender_id: deviceId,
+        text: encryptedText,
+        file_url: encryptedFile,
+        burn_on_read: false,
+        reply_to_id: null,
+        read_by: [],
+        created_at: new Date().toISOString(),
+      });
+      if (error) {
+        addLog(`Forward failed: ${error.message}`);
+        return;
+      }
+    } else {
+      const raw: Message = {
+        id: crypto.randomUUID(),
+        chat_id: targetChat.id,
+        sender_id: deviceId,
+        text: encryptedText,
+        file_url: encryptedFile,
+        burn_on_read: false,
+        reply_to_id: null,
+        read_by: [],
+        created_at: new Date().toISOString(),
+      };
+      writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), raw]);
+      if (activeChat?.id === targetChat.id) {
+        setMessages(prev => [...prev, toDisplayMessage(raw, targetChat.share_code)]);
+      }
+    }
+    addLog(`Message forwarded to ${targetChat.name}`);
+  }, [backendMode, deviceId, encryptText, activeChat, addLog]);
+
+  /** Instagram group DM: named encrypted channel + one invite per member. */
+  const createGroupChat = useCallback(async (
+    name: string,
+    memberUsernames: string[]
+  ): Promise<{ ok: boolean; chat?: Chat; error?: string }> => {
+    const groupName = name.trim().slice(0, 40);
+    if (!account) return { ok: false, error: 'Sign in to create group chats.' };
+    if (backendMode !== 'online' || !supabase) return { ok: false, error: 'Group chats need the cloud backend (online mode).' };
+    if (!groupName) return { ok: false, error: 'Give the group a name.' };
+
+    const me = account.username.toLowerCase();
+    const members = [...new Set(memberUsernames.map(u => u.trim().toLowerCase().replace(/^@/, '')))].filter(u => u && u !== me);
+    if (members.length === 0) return { ok: false, error: 'Add at least one member.' };
+
+    const shareCode = generateDmPasscode();
+    const { data, error } = await supabase
+      .from('chats')
+      .insert({ name: groupName, share_code: shareCode })
+      .select()
+      .single();
+    if (error || !data) {
+      console.error('Group create error:', error);
+      return { ok: false, error: 'Could not create the group. Is the backend set up?' };
+    }
+
+    // One invite per member — the existing DM delivery auto-joins everyone
+    for (const member of members) {
+      const sent = await sendDmInvite(supabase, member, data.id, data.share_code, me);
+      if (!sent) addLog(`Invite to @${member} failed — they can still find the group via search`);
+    }
+
+    admitDmChat(data as Chat);
+    setActiveChat(data as Chat);
+    addLog(`Group "${groupName}" created with ${members.length} member(s)`);
+    return { ok: true, chat: data as Chat };
+  }, [account, backendMode, admitDmChat, addLog]);
 
   /* ────────────────────────────────────────────────────────────────────
      WebRTC Calling Engine — real P2P audio/video calls.
@@ -1775,6 +1924,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         settings, updateSettings,
         myGradient, updateMyGradient,
         account, loginWithAccount, logout, searchAccounts, startDmWithUser,
+        createGroupChat, unsendMessage, forwardMessage,
         callingChat, callType, callStatus, callNotice, incomingCall, localStream, remoteStream,
         startCall, endCall, acceptIncomingCall, rejectIncomingCall, getCallRtt, messagesInView, setMessagesInView,
       }}

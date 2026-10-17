@@ -27,14 +27,19 @@ If the key (room code) is wrong, the data remains cryptographic noise. **No logs
 ## ⚡ What It Feels Like
 
 - 👤 **Accounts (username + password)** — Instagram-style sign-up / login gate. Passwords are PBKDF2-SHA256 hashed locally (60k iterations) before upload; sessions survive refresh; log out anytime from the profile page.
+- 🌐 **Social graph** — Follow / Following / Requested buttons, followers & following lists, **follow requests with Accept/Decline for private accounts**, per-account **Block/Unblock** (both ways), Report.
 - 🔎 **Search people, not just chats** — the inbox search finds registered accounts. Tap **Message** on an `@username` and an encrypted DM channel is created and delivered to them automatically (no code sharing needed).
-- 📥 **DM Inbox** — search, last-message previews, unread dots, timestamps. Sorts by recency. Shows only channels you actually created or joined.
-- 💬 **DM Conversation** — rounded bubbles (theirs left / yours in a cyan→emerald gradient), grouped messages, day dividers, "Active now" / typing indicators, **Seen** receipts.
-- ❤️ **Double-tap to heart** — the Instagram signature. Double-click/tap any message for the big heart pop + reaction badge.
-- 🙂 **Reactions & replies** — hover a message for the quick emoji bar; reply quotes jump back to the original.
+- 👥 **Group chats** — name a group, add members by @username, everyone is auto-invited to the encrypted channel. Group badge + member counts in the header.
+- 📥 **DM Inbox with Primary / Requests tabs** — DMs from people you don't follow land in **Requests** (Accept or Delete), exactly like Instagram. Unread dots, typing indicators, recency sort, archived section.
+- 💬 **DM Conversation** — rounded bubbles (theirs left / yours gradient), grouped messages, day dividers, "Active now / Active Xm ago" presence, typing indicators, **Seen** receipts.
+- ❤️ **Reactions done right** — double-tap heart burst + quick emoji bar + a **full emoji picker**; reactions sync to everyone in the chat.
+- ✂️ **Unsend & Forward** — **Unsend for everyone** (Instagram tombstone via realtime), and **Forward** any message into another encrypted chat.
+- 🎨 **Chat themes, nicknames & mute** — six per-chat bubble themes, custom **nicknames** for DM peers, and **Mute notifications** per chat (sound + desktop alerts silenced).
+- 🖼️ **Shared media gallery** — every photo, video, voice memo and file from the chat in one grid.
+- 🔒 **Instagram privacy toggles** — Read receipts on/off, Activity status on/off, **Private account** (follows need approval) — all in Settings → Privacy & Mitigation.
 - 📞 **Calls in the header** — voice & video call buttons live in the conversation header, exactly where you expect them.
-- 👤 **Profile page** — gradient avatar picker, alias, bio note, stats (chats / sent / active), quick toggles.
-- 🚀 **New message flow** — create an encrypted chat with an auto-generated `AXON-XXXX` key, or join with a link code.
+- 👤 **Profile page** — gradient avatar picker, **display name**, bio, followers/following/chats stats, follow requests, blocked accounts, quick toggles.
+- 🚀 **New message flow** — create an encrypted chat with an auto-generated `AXON-XXXX` key, join with a link code, or spin up a group.
 - 🔐 **End-to-End Encryption (AES-256):** every message and attachment is encrypted client-side using the chat key before broadcasting.
 - ⏱️ **Burn-on-read:** per-message 🔥 toggle or a global auto-destruct timer. Payloads vanish everywhere.
 - 🕶️ **Stealth Mode:** blurs the app when the tab loses focus. **Panic Protocol** (`/panic`) deploys a fake 404 overlay.

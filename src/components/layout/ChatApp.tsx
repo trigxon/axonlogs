@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import {
-  MessageCircle, PlusSquare, Settings as SettingsIcon, X, KeyRound,
+  MessageCircle, PlusSquare, Settings as SettingsIcon, X, KeyRound, Users,
   ToggleRight, ToggleLeft, Lock,
 } from 'lucide-react';
 import { useCrypto, type Chat } from '../../contexts/CryptoContext';
-import { dmDisplayName } from '../../utils/auth';
+import { dmDisplayName, type Account } from '../../utils/auth';
+import { isChatMuted } from '../../utils/chatMeta';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
 import ProfilePanel from '../profile/ProfilePanel';
@@ -41,7 +42,7 @@ const generateEasyPasscode = () => `AXON-${Math.floor(1000 + Math.random() * 900
 export const ChatApp: React.FC = () => {
   const {
     deviceId, alias, chats, activeChat, setActiveChat, messages,
-    createChat, joinChat, renameChat, changeChatPassword,
+    createChat, joinChat, renameChat, changeChatPassword, createGroupChat, searchAccounts,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
     latency, typingUsers, onlineUsers, account,
   } = useCrypto();
@@ -73,6 +74,15 @@ export const ChatApp: React.FC = () => {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState(false);
+
+  // Instagram group chat creation
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupMembers, setGroupMembers] = useState<Account[]>([]);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [groupResults, setGroupResults] = useState<Account[]>([]);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [groupBusy, setGroupBusy] = useState(false);
 
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState('');
@@ -109,8 +119,10 @@ export const ChatApp: React.FC = () => {
     if (lastCount > 0 && newCount > lastCount) {
       const latest = messages[messages.length - 1];
       if (latest && latest.sender_id !== deviceId && latest.sender_id !== 'SYSTEM') {
-        if (localStorage.getItem('axon_sound_enabled') !== 'false') playPing();
-        if (localStorage.getItem('axon_notifications_enabled') === 'true' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        // Instagram: muted chats stay silent (sound + desktop notification)
+        const muted = activeChat ? isChatMuted(activeChat.id) : false;
+        if (!muted && localStorage.getItem('axon_sound_enabled') !== 'false') playPing();
+        if (!muted && localStorage.getItem('axon_notifications_enabled') === 'true' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
           try {
             new Notification('[AXON LOGS] NEW MESSAGE', {
               body: `${latest.text?.slice(0, 120) || '[ATTACHMENT / VOICE MEMO]'}`,
@@ -124,7 +136,7 @@ export const ChatApp: React.FC = () => {
     }
     lastMsgCountRef.current = newCount;
     setRefreshKey(k => k + 1);
-  }, [messages, deviceId]);
+  }, [messages, deviceId, activeChat]);
 
   /* ---------------- idle auto-lock ---------------- */
   useEffect(() => {
@@ -179,6 +191,33 @@ export const ChatApp: React.FC = () => {
     if (dup) return;
     const success = await createChat(newChatName, newChatPassphrase, isEphemeralChat);
     if (success) setShowCreateModal(false);
+  };
+
+  /* ---------------- group creation (Instagram group DM) ---------------- */
+  useEffect(() => {
+    if (!showGroupModal || !groupSearch.trim()) { setGroupResults([]); return; }
+    const t = setTimeout(() => {
+      searchAccounts(groupSearch)
+        .then(res => setGroupResults(res.filter(a => !groupMembers.some(m => m.username === a.username))))
+        .catch(() => setGroupResults([]));
+    }, 220);
+    return () => clearTimeout(t);
+  }, [groupSearch, showGroupModal, groupMembers, searchAccounts]);
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGroupError(null);
+    setGroupBusy(true);
+    const res = await createGroupChat(groupName, groupMembers.map(m => m.username));
+    setGroupBusy(false);
+    if (res.ok) {
+      setShowGroupModal(false);
+      setGroupName('');
+      setGroupMembers([]);
+      setGroupSearch('');
+    } else {
+      setGroupError(res.error || 'Could not create the group.');
+    }
   };
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
@@ -326,6 +365,7 @@ export const ChatApp: React.FC = () => {
           onBack={() => setPane('chat')}
           onOpenSettings={() => setPane('settings')}
           onTriggerPanic={() => setPanicMode(true)}
+          refreshKey={refreshKey}
         />
       );
     }
@@ -351,7 +391,7 @@ export const ChatApp: React.FC = () => {
         />
       );
     }
-    return <EmptyChatState onNewMessage={openCreateModal} onJoin={() => setShowJoinModal(true)} />;
+    return <EmptyChatState onNewMessage={openCreateModal} onNewGroup={() => setShowGroupModal(true)} onJoin={() => setShowJoinModal(true)} />;
   })();
 
   const showChatOnMobile = mobileView === 'chat' && activeChat;
@@ -446,6 +486,7 @@ export const ChatApp: React.FC = () => {
                 onOpenChat={(chat: Chat) => { setActiveChat(chat); setPane('chat'); setMobileView('chat'); }}
                 onOpenProfile={() => { setPane('profile'); setMobileView('profile'); }}
                 onNewMessage={openCreateModal}
+                onNewGroup={() => setShowGroupModal(true)}
                 onJoinCode={() => setShowJoinModal(true)}
                 refreshKey={refreshKey}
               />
@@ -534,6 +575,78 @@ export const ChatApp: React.FC = () => {
             </label>
             <button type="submit" className="btn-premium w-full py-2.5 rounded-lg mt-2">
               Create chat
+            </button>
+          </form>
+        </ModalShell>
+      )}
+
+      {showGroupModal && (
+        <ModalShell onClose={() => setShowGroupModal(false)} accent="cyan">
+          <h3 className="text-white font-bold text-lg mb-1">New group</h3>
+          <p className="text-zinc-500 text-xs mb-5">Name the group and add members — they'll be invited to the encrypted channel automatically.</p>
+          <form onSubmit={handleCreateGroup} className="space-y-4">
+            <Field label="GROUP NAME">
+              <input
+                type="text"
+                value={groupName}
+                onChange={e => setGroupName(e.target.value)}
+                placeholder="e.g. the squad"
+                maxLength={40}
+                className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-cyan-500/60 transition-colors"
+                autoFocus
+              />
+            </Field>
+            <Field label="MEMBERS">
+              {groupMembers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {groupMembers.map(m => (
+                    <span key={m.username} className="flex items-center gap-1 text-[10px] font-bold text-cyan-200 border border-cyan-400/40 bg-cyan-400/10 rounded-full pl-2 pr-1 py-0.5">
+                      @{m.username}
+                      <button type="button" onClick={() => setGroupMembers(prev => prev.filter(x => x.username !== m.username))} className="hover:text-white">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input
+                type="text"
+                value={groupSearch}
+                onChange={e => setGroupSearch(e.target.value)}
+                placeholder="Search @usernames to add…"
+                className="w-full term-input rounded-lg p-2.5 text-white text-sm outline-none focus:border-cyan-500/60 transition-colors"
+              />
+              {groupSearch.trim() && groupResults.length > 0 && (
+                <div className="mt-1.5 border border-white/[0.07] rounded-lg overflow-hidden max-h-40 overflow-y-auto feed-scroll">
+                  {groupResults.map(acc => (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => {
+                        setGroupMembers(prev => [...prev, acc]);
+                        setGroupSearch('');
+                        setGroupResults([]);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.05] text-left transition-colors"
+                    >
+                      <Avatar seed={acc.username} name={`@${acc.username}`} size={28} gradient={acc.avatar_gradient || undefined} />
+                      <span className="text-xs text-zinc-200 flex-1 truncate">@{acc.username}</span>
+                      <Users className="w-3.5 h-3.5 text-cyan-400" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Field>
+            {groupError && (
+              <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">{groupError}</div>
+            )}
+            <button
+              type="submit"
+              disabled={groupBusy || !groupName.trim() || groupMembers.length === 0}
+              className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Users className="w-4 h-4" />
+              {groupBusy ? 'Creating…' : 'Create group'}
             </button>
           </form>
         </ModalShell>
@@ -668,7 +781,7 @@ const Loading = () => (
   </div>
 );
 
-const EmptyChatState: React.FC<{ onNewMessage: () => void; onJoin: () => void }> = ({ onNewMessage, onJoin }) => (
+const EmptyChatState: React.FC<{ onNewMessage: () => void; onNewGroup: () => void; onJoin: () => void }> = ({ onNewMessage, onNewGroup, onJoin }) => (
   <div className="h-full flex flex-col items-center justify-center gap-5 text-center px-8">
     <div className="w-24 h-24 rounded-full border-2 border-cyan-400/25 bg-cyan-400/[0.05] flex items-center justify-center glow-cyan">
       <MessageCircle className="w-10 h-10 text-cyan-300" />
@@ -681,6 +794,12 @@ const EmptyChatState: React.FC<{ onNewMessage: () => void; onJoin: () => void }>
     </div>
     <div className="flex flex-col sm:flex-row items-center gap-3 mt-2">
       <button onClick={onNewMessage} className="btn-premium px-6 py-2.5 rounded-lg text-xs">Send message</button>
+      <button
+        onClick={onNewGroup}
+        className="term-panel term-interactive px-6 py-2.5 rounded-lg text-xs text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors flex items-center gap-1.5"
+      >
+        <Users className="w-3.5 h-3.5" /> New group
+      </button>
       <button
         onClick={onJoin}
         className="term-panel term-interactive px-6 py-2.5 rounded-lg text-xs text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors"

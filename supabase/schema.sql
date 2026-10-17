@@ -30,6 +30,28 @@ create table if not exists public.messages (
 create index if not exists idx_messages_chat_id
   on public.messages (chat_id, created_at);
 
+-- Instagram-parity message columns (idempotent): reactions, pins, edits,
+-- unsent ("Unsend for everyone") + read-receipt state.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'reactions') then
+    alter table public.messages add column reactions jsonb not null default '[]';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'pinned') then
+    alter table public.messages add column pinned boolean not null default false;
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'edited') then
+    alter table public.messages add column edited boolean not null default false;
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'unsent') then
+    alter table public.messages add column unsent boolean not null default false;
+  end if;
+end $$;
+
 -- ------------------------------------------------------------
 -- 1b. Accounts (Instagram-style username + password sign-up)
 --     Passwords are PBKDF2-SHA256 hashed client-side before upload;
@@ -72,6 +94,59 @@ end $$;
 -- intentionally unrestricted (client enforces username rules only).
 
 alter table public.accounts enable row level security;
+
+-- Instagram-parity account columns (idempotent): display name, private
+-- account, per-account blocklist, activity-status visibility.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'accounts' and column_name = 'display_name') then
+    alter table public.accounts add column display_name text not null default '';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'accounts' and column_name = 'is_private') then
+    alter table public.accounts add column is_private boolean not null default false;
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'accounts' and column_name = 'blocked_usernames') then
+    alter table public.accounts add column blocked_usernames text[] not null default '{}';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'accounts' and column_name = 'show_activity') then
+    alter table public.accounts add column show_activity boolean not null default true;
+  end if;
+end $$;
+
+-- ------------------------------------------------------------
+-- 1d. Follows — Instagram's social graph (follower → followed).
+--     status = 'active' (following) or 'pending' (follow request to a
+--     private account awaiting approval). Used for followers/following
+--     lists, follow requests, and the DM message-requests gate.
+-- ------------------------------------------------------------
+
+create table if not exists public.follows (
+  id         uuid primary key default gen_random_uuid(),
+  follower   text not null,
+  followed   text not null,
+  status     text not null default 'active',
+  created_at timestamptz not null default now(),
+  constraint follows_pair unique (follower, followed)
+);
+
+create index if not exists idx_follows_follower on public.follows (follower, status);
+create index if not exists idx_follows_followed on public.follows (followed, status);
+
+alter table public.follows enable row level security;
+
+drop policy if exists "public read follows"   on public.follows;
+drop policy if exists "public write follows"  on public.follows;
+drop policy if exists "public update follows" on public.follows;
+drop policy if exists "public delete follows" on public.follows;
+
+create policy "public read follows"   on public.follows for select using (true);
+create policy "public write follows"  on public.follows for insert with check (true);
+create policy "public update follows" on public.follows for update using (true);
+create policy "public delete follows" on public.follows for delete using (true);
 
 drop policy if exists "public read accounts"    on public.accounts;
 drop policy if exists "public insert accounts"  on public.accounts;

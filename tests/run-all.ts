@@ -7,6 +7,7 @@ import { runTier4Tests } from './tier4_danger_zone_reset.test.ts';
 import { runTier5Tests } from './tier5_typewriter_cursor.test.ts';
 import { runTier6Tests } from './tier6_webrtc_calls.test.ts';
 import { runTier7Tests } from './tier7_accounts_auth.test.ts';
+import { runTier8Tests } from './tier8_instagram_features.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +50,10 @@ async function main() {
   console.log('--- Executing Tier 7: Accounts & DM Delivery Contract ---');
   const t7 = await runTier7Tests(projectRoot);
   allResults.push(...t7);
+
+  console.log('--- Executing Tier 8: Instagram Feature Parity ---');
+  const t8 = await runTier8Tests(projectRoot);
+  allResults.push(...t8);
 
   const totalDuration = Date.now() - startTime;
 

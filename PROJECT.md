@@ -54,3 +54,16 @@
 - **Mac window chrome restored:** `ChatApp` + `AuthScreen` render inside the original `term-window` with traffic-light `term-titlebar` (@handle + live clock) and tmux-style `term-statusbar` (GLOBAL SYNC / TERM / typing / USR / LAT / TERMS / NODE / clock) using the untouched index.css theme.
 - **Schema:** `supabase/schema.sql` adds `accounts` + `dm_invites` (public policies, indexes, realtime publication) — idempotent, must be re-run once in the Supabase SQL editor.
 - **Tests:** new Tier 7 (auth gate + PBKDF2, DM flow contract, story-free inbox + Mac chrome) — suite 18/18 PASS.
+
+## Milestone R2 — Full Instagram Parity (minus reels/stories/feed)
+
+- **Social graph:** `follows` table (follower/followed/status active|pending), `followUser`/`unfollowUser`/`fetchFollowState`/`fetchFollowers`/`fetchFollowing` in `auth.ts`. Follow/Following/Requested buttons on account rows; followers/following counts + list modals on Profile; follow requests (private accounts) with Accept/Decline.
+- **Blocking:** `accounts.blocked_usernames[]` + `blockUser`/`unblockUser`/`isBlockedEitherWay`; DM creation refuses blocked pairs; conversation composer swaps to an Unblock bar; blocked accounts hidden from search; Unblock lives in Profile → Blocked accounts.
+- **Group DMs:** `createGroupChat(name, members)` inserts a named encrypted channel + one `dm_invites` row per member (existing auto-join delivers). New-group modal (name + member chips + search). GROUP badge in inbox, member count in header, Leave group (archive).
+- **Message requests:** Primary/Requests tabs; a DM whose peer I don't follow (and never accepted) files under Requests with Accept/Delete (`axon_accepted_requests`).
+- **Reactions sync:** `messages.reactions` jsonb column; toggleReaction persists online and propagates via realtime UPDATE; full emoji picker (`emoji-picker-react`) behind the "+" in the quick bar.
+- **Unsend / Forward:** `messages.unsent` tombstone column + `unsendMessage` (clears text/file/reactions for everyone); `forwardMessage` re-encrypts content into the target channel; Forward modal lists known chats.
+- **Per-chat options:** 6 chat themes (`axon_chat_themes`), nicknames (`axon_chat_nicknames`), mute (`axon_chat_muted` — silences ping + desktop alerts), shared-media gallery modal.
+- **Presence & privacy:** `last_seen_at` heartbeat (4 min) + `activityLabel` ("Active now / Xm ago"); Settings toggles Read receipts / Activity status / Private account; `accounts.display_name` editable on Profile; private-account + activity flags sync to the cloud profile.
+- **Schema (idempotent):** `follows` table, `messages.reactions/pinned/edited/unsent` columns, `accounts.display_name/is_private/blocked_usernames/show_activity` columns. USER MUST RE-RUN supabase/schema.sql once in the Supabase SQL editor.
+- **Tests:** tier8 (social graph, groups/requests, reactions/unsend/forward/themes/nicknames/mute/media + runtime helper checks) — suite 22/22 PASS; build PASS; headless smoke 16/16.

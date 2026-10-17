@@ -330,6 +330,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               {settings.stealthMode ? <ToggleRight className="text-blue-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
+          {/* Instagram privacy toggles */}
+          <SettingRow title="Read Receipts" desc="Show 'Seen' when you've read messages">
+            <button
+              onClick={() => {
+                updateSettings({ readReceipts: settings.readReceipts === false });
+                addLog(settings.readReceipts === false ? 'Read receipts enabled' : 'Read receipts disabled');
+              }}
+            >
+              {settings.readReceipts === false ? <ToggleLeft className="text-zinc-700 w-8 h-8" /> : <ToggleRight className="text-blue-400 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Activity Status" desc="Let people see when you're active">
+            <button
+              onClick={() => {
+                updateSettings({ showActivity: settings.showActivity === false });
+                addLog(settings.showActivity === false ? 'Activity status shown' : 'Activity status hidden');
+              }}
+            >
+              {settings.showActivity === false ? <ToggleLeft className="text-zinc-700 w-8 h-8" /> : <ToggleRight className="text-blue-400 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Private Account" desc="Follow requests need your approval">
+            <button
+              onClick={() => {
+                updateSettings({ privateAccount: settings.privateAccount === false });
+                addLog(settings.privateAccount === false ? 'Account set to PRIVATE' : 'Account set to public');
+              }}
+            >
+              {settings.privateAccount === false ? <ToggleLeft className="text-zinc-700 w-8 h-8" /> : <ToggleRight className="text-blue-400 w-8 h-8" />}
+            </button>
+          </SettingRow>
           <SettingRow title="Decoy Vault Passphrase" desc="Trigger plausible deniability mode on unlock">
             <input
               type="text"

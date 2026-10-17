@@ -1,28 +1,35 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft, Check, Pencil, Settings, ShieldAlert, Flame,
   Eye, Download, LogOut, ChevronRight, MessageCircle, Send, Timer, AtSign,
+  UserPlus, UserCheck, Ban, Users, X,
 } from 'lucide-react';
 import { useCrypto, supabase } from '../../contexts/CryptoContext';
 import Avatar from './Avatar';
-import { AVATAR_CHOICES, getMyBio, setMyBio, readPreviewCache } from '../../utils/chatMeta';
-import { updateAccountProfile } from '../../utils/auth';
+import { AVATAR_CHOICES, getMyBio, setMyBio } from '../../utils/chatMeta';
+import {
+  updateAccountProfile, fetchFollowers, fetchFollowing, fetchFollowRequests,
+  acceptFollowRequest, declineFollowRequest, fetchAccountsByUsernames,
+  fetchBlockedUsers, unblockUser,
+} from '../../utils/auth';
 import SecurityNote from '../ui/SecurityNote';
 
 export interface ProfilePanelProps {
   onBack: () => void;
   onOpenSettings: () => void;
   onTriggerPanic: () => void;
+  /** bumped by the shell when messages/cloud state change */
+  refreshKey?: number;
 }
 
 /**
  * Instagram-style profile page in the Axon theme:
  * big avatar, alias, stats, quick toggles, security & data actions.
  */
-export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettings, onTriggerPanic }) => {
+export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettings, onTriggerPanic, refreshKey = 0 }) => {
   const {
     alias, deviceId, updateAlias, chats, settings, updateSettings,
-    backendMode, networkStatus, myGradient, updateMyGradient, account, logout,
+    networkStatus, myGradient, updateMyGradient, account, logout,
   } = useCrypto();
 
   const myHandle = account?.username?.toLowerCase() || '';
@@ -33,17 +40,91 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
   const [pickingAvatar, setPickingAvatar] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  const previewCache = readPreviewCache();
-  const totalMessages = Object.keys(previewCache).length; // chats with activity
-  const messageCount = (() => {
-    try {
-      const all = JSON.parse(localStorage.getItem('axon_messages') || '[]') as { sender_id: string }[];
-      const cloudNote = backendMode === 'online' ? ' (local backup)' : '';
-      return { n: all.filter(m => m.sender_id === deviceId).length, note: cloudNote };
-    } catch {
-      return { n: 0, note: '' };
+  // Instagram social graph state
+  const [followers, setFollowers] = useState<string[]>([]);
+  const [following, setFollowing] = useState<string[]>([]);
+  const [requests, setRequests] = useState<string[]>([]);
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const [socialTick, setSocialTick] = useState(0);
+  const [listModal, setListModal] = useState<null | 'followers' | 'following' | 'blocked'>(null);
+  const [listAccounts, setListAccounts] = useState<any[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [displayName, setDisplayName] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+
+  // Load social graph + display name
+  useEffect(() => {
+    if (!supabase || !myHandle) {
+      setFollowers([]); setFollowing([]); setRequests([]); setBlocked([]);
+      return;
     }
-  })();
+    let cancelled = false;
+    (async () => {
+      try {
+        const [f1, f2, rq, bl] = await Promise.all([
+          fetchFollowers(supabase, myHandle),
+          fetchFollowing(supabase, myHandle),
+          fetchFollowRequests(supabase, myHandle),
+          fetchBlockedUsers(supabase, myHandle),
+        ]);
+        if (!cancelled) { setFollowers(f1); setFollowing(f2); setRequests(rq); setBlocked(bl); }
+      } catch { /* best-effort */ }
+    })();
+    return () => { cancelled = true; };
+  }, [myHandle, socialTick, refreshKey]);
+
+  // Display name from the accounts table
+  useEffect(() => {
+    if (!supabase || !myHandle) return;
+    let cancelled = false;
+    supabase.from('accounts').select('display_name').eq('username', myHandle).maybeSingle()
+      .then(({ data }: any) => { if (!cancelled && data) setDisplayName(data.display_name || ''); });
+    return () => { cancelled = true; };
+  }, [myHandle, refreshKey]);
+
+  const openList = async (kind: 'followers' | 'following' | 'blocked') => {
+    setListModal(kind);
+    setListLoading(true);
+    try {
+      const usernames = kind === 'followers' ? followers : kind === 'following' ? following : blocked;
+      const accs = await fetchAccountsByUsernames(supabase, usernames);
+      setListAccounts(accs);
+    } catch {
+      setListAccounts([]);
+    }
+    setListLoading(false);
+  };
+
+  const saveName = async () => {
+    const clean = nameInput.trim().slice(0, 40);
+    setDisplayName(clean);
+    setEditingName(false);
+    if (myHandle && supabase) {
+      setSavingProfile(true);
+      await updateAccountProfile(supabase, myHandle, { display_name: clean });
+      setSavingProfile(false);
+    }
+  };
+
+  const handleAcceptRequest = async (u: string) => {
+    await acceptFollowRequest(supabase, myHandle, u);
+    setRequests(prev => prev.filter(x => x !== u));
+    setFollowers(prev => (prev.includes(u) ? prev : [...prev, u]));
+    setSocialTick(t => t + 1);
+  };
+
+  const handleDeclineRequest = async (u: string) => {
+    await declineFollowRequest(supabase, myHandle, u);
+    setRequests(prev => prev.filter(x => x !== u));
+    setSocialTick(t => t + 1);
+  };
+
+  const handleUnblock = async (u: string) => {
+    await unblockUser(supabase, myHandle, u);
+    setBlocked(prev => prev.filter(x => x !== u));
+    setSocialTick(t => t + 1);
+  };
 
   const saveAlias = () => {
     if (aliasInput.trim()) updateAlias(aliasInput.trim());
@@ -104,9 +185,13 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
 
           <div className="flex-1 min-w-0">
             <div className="grid grid-cols-3 gap-2 text-center max-w-[280px]">
+              <button onClick={() => supabase && openList('followers')} title="Followers" className="hover:opacity-80 transition-opacity disabled:opacity-40" disabled={!supabase}>
+                <Stat value={followers.length} label="followers" />
+              </button>
+              <button onClick={() => supabase && openList('following')} title="Following" className="hover:opacity-80 transition-opacity disabled:opacity-40" disabled={!supabase}>
+                <Stat value={following.length} label="following" />
+              </button>
               <Stat value={chats.length} label="chats" />
-              <Stat value={messageCount.n} label={`sent${messageCount.note}`} />
-              <Stat value={totalMessages} label="active" />
             </div>
           </div>
         </div>
@@ -131,6 +216,33 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
             <p className="text-[11px] text-zinc-600 mt-1 font-mono">
               {myHandle ? `AXON ACCOUNT · ${networkStatus}` : `NODE_${deviceId.substring(0, 8).toUpperCase()} · ${networkStatus}`}
             </p>
+          )}
+          {/* Instagram display name */}
+          {editingName ? (
+            <div className="mt-2 flex items-center gap-2 max-w-sm">
+              <input
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+                placeholder="Your name"
+                maxLength={40}
+                className="flex-1 term-input rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/60"
+                autoFocus
+              />
+              <button onClick={saveName} className="text-emerald-400 hover:text-emerald-300 p-1.5" title="Save"><Check className="w-4 h-4" /></button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setEditingName(true); setNameInput(displayName); }}
+              className="group mt-2 flex items-center gap-2 text-left"
+              title={myHandle ? 'Edit your display name' : 'Sign in to set a display name'}
+              disabled={!myHandle}
+            >
+              <span className={`text-sm ${displayName ? 'text-zinc-200' : 'text-zinc-600'}`}>
+                {displayName || 'Add a display name'}
+              </span>
+              {myHandle && <Pencil className="w-3 h-3 text-zinc-600 group-hover:text-cyan-300 transition-colors" />}
+            </button>
           )}
           {editingAlias ? (
             <div className="mt-2 flex items-center gap-2 max-w-sm">
@@ -240,6 +352,23 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           />
         </div>
 
+        {/* Follow requests (private accounts) */}
+        {requests.length > 0 && (
+          <div className="mt-4 term-panel rounded-xl border border-cyan-400/20 divide-y divide-white/[0.05] overflow-hidden">
+            <div className="px-4 py-2.5 text-[9px] font-bold tracking-[0.25em] uppercase text-cyan-300 flex items-center gap-2">
+              <UserPlus className="w-3.5 h-3.5" /> Follow requests ({requests.length})
+            </div>
+            {requests.map(u => (
+              <div key={u} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar seed={u} name={`@${u}`} size={36} />
+                <span className="flex-1 min-w-0 text-sm text-zinc-200 truncate">@{u}</span>
+                <button onClick={() => handleAcceptRequest(u)} className="text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/25 transition-colors">Accept</button>
+                <button onClick={() => handleDeclineRequest(u)} className="text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-white/10 text-zinc-400 hover:text-red-300 hover:border-red-400/30 transition-colors">Decline</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Security & data */}
         <SecurityNote compact className="mt-4" />
         <div className="mt-3 term-panel rounded-xl border border-white/[0.07] divide-y divide-white/[0.05] overflow-hidden">
@@ -256,6 +385,13 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
             label="Panic screen"
             hint="Instant fake 404 overlay (or type /panic)"
             onClick={onTriggerPanic}
+          />
+          <ActionRow
+            icon={<Users className="w-4 h-4 text-zinc-400" />}
+            label="Blocked accounts"
+            hint={blocked.length > 0 ? `${blocked.length} blocked` : 'Nobody is blocked'}
+            onClick={() => supabase && openList('blocked')}
+            trailing={<ChevronRight className="w-4 h-4 text-zinc-600" />}
           />
           {myHandle && (
             <ActionRow
@@ -279,6 +415,46 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
           {savingProfile ? 'syncing…' : 'axon logs · chat only · no feeds no noise'}
         </div>
       </div>
+
+      {/* Followers / Following / Blocked list modal */}
+      {listModal && (
+        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/60 p-4" onClick={() => setListModal(null)}>
+          <div className="w-full max-w-sm term-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
+              {listModal === 'followers' ? <UserPlus className="w-4 h-4 text-cyan-300" /> : listModal === 'following' ? <UserCheck className="w-4 h-4 text-cyan-300" /> : <Ban className="w-4 h-4 text-red-400" />}
+              <span className="text-sm font-bold text-white capitalize">
+                {listModal === 'blocked' ? 'Blocked accounts' : listModal}
+              </span>
+              <button className="ml-auto text-zinc-500 hover:text-white" onClick={() => setListModal(null)}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="max-h-80 overflow-y-auto feed-scroll px-2 py-2">
+              {listLoading && <div className="text-center text-zinc-600 text-xs py-6">Loading…</div>}
+              {!listLoading && listAccounts.length === 0 && (
+                <div className="text-center text-zinc-600 text-xs py-6">
+                  {listModal === 'blocked' ? 'Nobody is blocked.' : `No ${listModal} yet.`}
+                </div>
+              )}
+              {!listLoading && listAccounts.map(acc => (
+                <div key={acc.username} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/[0.035] transition-colors">
+                  <Avatar seed={acc.username} name={`@${acc.username}`} size={40} gradient={acc.avatar_gradient || undefined} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white font-semibold truncate">@{acc.username}</div>
+                    {acc.display_name ? <div className="text-[10px] text-zinc-600 truncate">{acc.display_name}</div> : null}
+                  </div>
+                  {listModal === 'blocked' && (
+                    <button
+                      onClick={() => handleUnblock(acc.username)}
+                      className="shrink-0 text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-lg border border-white/10 text-zinc-300 hover:border-emerald-400/40 hover:text-emerald-300 transition-colors"
+                    >
+                      Unblock
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

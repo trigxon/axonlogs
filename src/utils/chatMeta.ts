@@ -257,3 +257,133 @@ export const readKnownChatIds = (): string[] => {
 
 export const isKnownChatId = (chatId: string): boolean =>
   readKnownChatIds().includes(chatId);
+
+/* ------------------ Per-chat Instagram options ------------------ */
+/* Chat themes, nicknames, mute — all device-local (localStorage).   */
+
+export interface ChatTheme {
+  name: string;
+  /** bubble background for MY messages (CSS background) */
+  mine: string;
+  /** accent for header/links/cta in this chat */
+  accent: string;
+}
+
+export const CHAT_THEMES: ChatTheme[] = [
+  { name: 'Default', mine: 'linear-gradient(135deg, #22d3ee 0%, #10b981 100%)', accent: '#22d3ee' },
+  { name: 'Sunset', mine: 'linear-gradient(135deg, #fb7185 0%, #f59e0b 100%)', accent: '#fb7185' },
+  { name: 'Violet', mine: 'linear-gradient(135deg, #a78bfa 0%, #6d28d9 100%)', accent: '#a78bfa' },
+  { name: 'Ocean', mine: 'linear-gradient(135deg, #38bdf8 0%, #0369a1 100%)', accent: '#38bdf8' },
+  { name: 'Forest', mine: 'linear-gradient(135deg, #4ade80 0%, #166534 100%)', accent: '#4ade80' },
+  { name: 'Graphite', mine: 'linear-gradient(135deg, #94a3b8 0%, #334155 100%)', accent: '#94a3b8' },
+];
+
+const THEME_KEY = 'axon_chat_themes';
+
+export const getChatTheme = (chatId: string): ChatTheme => {
+  try {
+    const map = JSON.parse(localStorage.getItem(THEME_KEY) || '{}');
+    return CHAT_THEMES.find(t => t.name === map[chatId]) || CHAT_THEMES[0];
+  } catch {
+    return CHAT_THEMES[0];
+  }
+};
+
+export const setChatTheme = (chatId: string, themeName: string) => {
+  try {
+    const map = JSON.parse(localStorage.getItem(THEME_KEY) || '{}');
+    map[chatId] = themeName;
+    localStorage.setItem(THEME_KEY, JSON.stringify(map));
+  } catch { /* ignore */ }
+};
+
+/* ------------------------- Nicknames ----------------------------- */
+
+const NICKS_KEY = 'axon_chat_nicknames';
+
+export const readNicknames = (chatId: string): Record<string, string> => {
+  try {
+    const all = JSON.parse(localStorage.getItem(NICKS_KEY) || '{}');
+    return all[chatId] || {};
+  } catch {
+    return {};
+  }
+};
+
+export const setNickname = (chatId: string, username: string, nick: string) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(NICKS_KEY) || '{}');
+    all[chatId] = all[chatId] || {};
+    const clean = nick.trim().slice(0, 24);
+    if (clean) all[chatId][username.toLowerCase()] = clean;
+    else delete all[chatId][username.toLowerCase()];
+    localStorage.setItem(NICKS_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+};
+
+export const getNickname = (chatId: string, username: string): string =>
+  readNicknames(chatId)[username.toLowerCase()] || '';
+
+/* --------------------------- Mute -------------------------------- */
+
+const MUTE_KEY = 'axon_chat_muted';
+
+export const isChatMuted = (chatId: string): boolean => {
+  try {
+    return !!JSON.parse(localStorage.getItem(MUTE_KEY) || '{}')[chatId];
+  } catch {
+    return false;
+  }
+};
+
+export const setChatMuted = (chatId: string, muted: boolean) => {
+  try {
+    const map = JSON.parse(localStorage.getItem(MUTE_KEY) || '{}');
+    if (muted) map[chatId] = true;
+    else delete map[chatId];
+    localStorage.setItem(MUTE_KEY, JSON.stringify(map));
+  } catch { /* ignore */ }
+};
+
+/* --------------------- Message requests -------------------------- */
+
+const ACCEPTED_REQUESTS_KEY = 'axon_accepted_requests';
+
+/**
+ * DM chats whose other party I don't follow land in Requests (Instagram
+ * behavior). Once accepted, the chat id is remembered so it stays Primary.
+ */
+export const readAcceptedRequests = (): string[] => {
+  try {
+    return JSON.parse(localStorage.getItem(ACCEPTED_REQUESTS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+};
+
+export const markRequestAccepted = (chatId: string) => {
+  try {
+    const list = readAcceptedRequests();
+    if (!list.includes(chatId)) {
+      list.push(chatId);
+      localStorage.setItem(ACCEPTED_REQUESTS_KEY, JSON.stringify(list));
+    }
+  } catch { /* ignore */ }
+};
+
+/* -------------------------- Groups ------------------------------- */
+
+/** DM channels are `@a·@b`; everything else the user named is a group. */
+export const isGroupChat = (chatName: string): boolean => !isDmName(chatName);
+
+const isDmName = (name: string): boolean => /^@[\w.]+·@[\w.]+$/.test(name);
+
+/** Other party's username in a 1:1 DM (null for groups). */
+export const dmPeer = (chatName: string, myUsername: string): string | null => {
+  const m = chatName.match(/^@([\w.]+)·@([\w.]+)$/);
+  if (!m) return null;
+  const me = myUsername.toLowerCase();
+  if (m[1] === me) return m[2];
+  if (m[2] === me) return m[1];
+  return m[1];
+};
