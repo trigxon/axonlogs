@@ -21,6 +21,13 @@ import {
   joinChatByCode,
   logoutAccount,
 } from '../utils/auth';
+import {
+  queueForRetry,
+  removeFromOutbox,
+  readOutbox,
+  outboxForChat,
+  classifyFlushError,
+} from '../utils/outbox';
 
 export interface Chat {
   id: string;
@@ -65,6 +72,10 @@ export interface Message {
   pinned?: boolean;
   edited?: boolean;
   unsent?: boolean;
+  /** Phase D idempotency key — stable across retries; unique per (chat_id, client_tag) */
+  client_tag?: string | null;
+  /** Phase D delivery lifecycle: pending (in flight) → sent (server ack) → failed (queued). "Seen" derives from read_by. */
+  status?: 'pending' | 'sent' | 'failed';
   created_at: string;
   isDecryptionError?: boolean;
 }
@@ -119,6 +130,10 @@ interface CryptoContextType {
   chats: Chat[];
   activeChat: Chat | null;
   messages: Message[];
+  /** Phase D keyset pagination over message history */
+  hasMoreMessages: boolean;
+  loadingOlder: boolean;
+  loadOlderMessages: () => Promise<void>;
   latency: number;
   setActiveChat: (chat: Chat) => void;
   createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
@@ -128,7 +143,7 @@ interface CryptoContextType {
   toggleReaction: (msgId: string, emoji: string) => void;
   togglePinMessage: (msgId: string) => void;
   markAsRead: (msgId: string) => void;
-  resendMessage: (msgId: string) => void;
+  resendMessage: (msgId: string) => Promise<void>;
   purgeTerminal: () => void;
   addSystemMessage: (text: string) => void;
   deleteMessageLocally: (id: string) => void;
@@ -249,6 +264,9 @@ const toDisplayMessage = (msg: Message, key: string): Message => {
 // Local Storage) and on each row's data-code attribute in the DOM.
 const generateCode = () => `AXON-${Math.floor(1000 + Math.random() * 9000)}`;
 
+/** Phase D: page size for keyset-paginated message history */
+const MESSAGE_PAGE_SIZE = 30;
+
 /* Simulated remote node (local sandbox mode only). Gives the offline preview a
  * second node so incoming transmissions, typing indicators, alerts and
  * burn-on-read auto-destruct can all be demonstrated without Supabase. */
@@ -350,6 +368,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const [archivedChats, setArchivedChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  // Phase D: history pagination + delivery state
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const oldestCursorRef = useRef<string | null>(null);
   const [latency, setLatency] = useState(0);
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
   const [networkStatus, setNetworkStatus] = useState<string>('CONNECTING...');
@@ -1029,29 +1051,34 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
       setMessages([]);
+      oldestCursorRef.current = null;
+      setHasMoreMessages(false);
 
       const fetchMessages = async () => {
+        // Phase D keyset pagination: newest page only — older history loads
+        // on demand via loadOlderMessages() instead of unbounded full scans.
         const { data } = await supabase!
           .from('messages')
           .select('*')
           .eq('chat_id', activeChat.id)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: false })
+          .limit(MESSAGE_PAGE_SIZE);
 
         if (data) {
-          const decryptedMsgs = data.map(msg => {
-            const decryptedText = msg.text ? decryptText(msg.text, activeChat.share_code) : '';
-            const decryptedFileUrl = msg.file_url ? decryptText(msg.file_url, activeChat.share_code) : null;
-            const hasTextError = msg.text ? !decryptedText : false;
-            const hasFileError = msg.file_url ? !decryptedFileUrl : false;
-            return {
-              ...msg,
-              text: hasTextError ? '[DECRYPTION FAILED - INVALID KEY]' : decryptedText,
-              file_url: hasFileError ? null : decryptedFileUrl,
-              isDecryptionError: hasTextError || hasFileError,
-              read_by: msg.read_by || [],
-            };
-          });
-          setMessages(decryptedMsgs);
+          const page = (data.slice().reverse()) as Message[];
+          oldestCursorRef.current = page.length ? page[0].created_at : null;
+          setHasMoreMessages(data.length === MESSAGE_PAGE_SIZE);
+          const decryptedMsgs = page.map(msg => toDisplayMessage(msg, activeChat.share_code));
+
+          // Offline recovery (Phase D): re-attach this chat's queued but
+          // undelivered payloads so failed sends survive full page reloads.
+          const queued = outboxForChat(activeChat.id).filter(e => !decryptedMsgs.some(m => m.id === e.id));
+          const queuedMsgs: Message[] = queued.map(e => ({
+            ...toDisplayMessage(e.payload as Message, e.share_code),
+            client_tag: e.client_tag,
+            status: 'failed' as const,
+          }));
+          setMessages([...decryptedMsgs, ...queuedMsgs]);
 
           // Process read receipts (honors the Read receipts setting)
           decryptedMsgs.forEach(msg => {
@@ -1284,6 +1311,122 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [backendMode, simBotActive, activeChat?.id, encryptText, scheduleDestruct, addLog]);
 
+  /* ------------------- Phase D: history pagination + durable outbox ------------------- */
+
+  const loadOlderMessages = useCallback(async () => {
+    if (backendMode !== 'online' || !supabase || !activeChat) return;
+    if (loadingOlder || !hasMoreMessages || !oldestCursorRef.current) return;
+    setLoadingOlder(true);
+    try {
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('chat_id', activeChat.id)
+        .lt('created_at', oldestCursorRef.current)
+        .order('created_at', { ascending: false })
+        .limit(MESSAGE_PAGE_SIZE);
+      if (data && data.length) {
+        const page = (data.slice().reverse()) as Message[];
+        oldestCursorRef.current = page[0].created_at;
+        setHasMoreMessages(data.length === MESSAGE_PAGE_SIZE);
+        const decrypted = page.map(m => toDisplayMessage(m, activeChat.share_code));
+        setMessages(prev => {
+          const existing = new Set(prev.map(m => m.id));
+          return [...decrypted.filter(m => !existing.has(m.id)), ...prev];
+        });
+        // Older history still honors read receipts + burn semantics
+        decrypted.forEach(msg => {
+          if (
+            settingsRef.current.readReceipts !== false &&
+            msg.sender_id !== deviceId && !msg.isDecryptionError && !(msg.read_by || []).includes(deviceId)
+          ) {
+            const newReadBy = [...(msg.read_by || []), deviceId];
+            supabase!.from('messages').update({ read_by: newReadBy }).eq('id', msg.id).then();
+          }
+        });
+        page.forEach(raw => {
+          if (raw.burn_on_read && raw.sender_id !== deviceId) scheduleCloudDestruct(raw);
+        });
+      } else {
+        setHasMoreMessages(false);
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [backendMode, supabase, activeChat, loadingOlder, hasMoreMessages, deviceId]);
+
+  const flushingRef = useRef(false);
+
+  /**
+   * Phase D insert with graceful degradation: on a legacy (pre-Phase D) schema
+   * the client_tag column does not exist yet → PostgREST answers PGRST204 /
+   * 42703. Retry the SAME payload without the tag so sends keep working on
+   * both schema generations (dedupe degrades to best-effort until the owner
+   * re-runs schema.sql, then idempotency activates automatically).
+   */
+  const insertMessageSafe = useCallback(async (payload: Record<string, any>) => {
+    if (!supabase) return { error: { message: 'no backend', code: 'NO_BACKEND' } as any };
+    const first = await supabase.from('messages').insert(payload);
+    if (!first.error) return { error: null };
+    const code = (first.error as any).code;
+    const msg = first.error.message || '';
+    if (code === 'PGRST204' || code === '42703' || /client_tag/i.test(msg)) {
+      const { client_tag: _omitted, ...rest } = payload;
+      const second = await supabase.from('messages').insert(rest);
+      return { error: second.error };
+    }
+    return { error: first.error };
+  }, [supabase]);
+
+  const flushOutbox = useCallback(async () => {
+    if (backendMode !== 'online' || !supabase || flushingRef.current) return;
+    const outbox = readOutbox();
+    if (outbox.length === 0) return;
+    flushingRef.current = true;
+    let delivered = 0, deduped = 0, failed = 0;
+    const flushedIds = new Set<string>();
+    for (const entry of outbox) {
+      try {
+        const { error } = await insertMessageSafe({ ...entry.payload, client_tag: entry.client_tag });
+        if (!error) {
+          delivered++;
+          flushedIds.add(entry.id);
+          removeFromOutbox(entry.client_tag);
+          continue;
+        }
+        const kind = classifyFlushError((error as any).code, error.message);
+        if (kind === 'duplicate') {
+          // The first attempt DID land — idempotent success, never a twin.
+          deduped++;
+          flushedIds.add(entry.id);
+          removeFromOutbox(entry.client_tag);
+          continue;
+        }
+        failed++; // retryable → stays queued
+      } catch {
+        failed++;
+      }
+    }
+    if (flushedIds.size > 0) {
+      setMessages(prev => prev.map(m => (m.id && flushedIds.has(m.id) ? { ...m, status: 'sent' } : m)));
+      addLog(`[OUTBOX: delivered ${delivered}${deduped ? ` · deduped ${deduped}` : ''}${failed ? ` · ${failed} still queued` : ''}]`);
+    }
+    flushingRef.current = false;
+  }, [backendMode, supabase, addLog, insertMessageSafe]);
+
+  // Flush the outbox when connectivity returns, after boot, and periodically
+  useEffect(() => {
+    if (backendMode !== 'online') return;
+    const onOnline = () => { flushOutbox(); };
+    window.addEventListener('online', onOnline);
+    flushOutbox();
+    const t = window.setTimeout(() => flushOutbox(), 4000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearTimeout(t);
+    };
+  }, [backendMode, flushOutbox]);
+
   const sendMessage = async (
     text: string,
     file?: File | null,
@@ -1362,40 +1505,11 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       } else {
         const msgId = crypto.randomUUID();
         const now = new Date().toISOString();
-        const { error } = await supabase.from('messages').insert({
-          id: msgId,
-          chat_id: targetChat.id,
-          sender_id: deviceId,
-          text: encryptedText,
-          file_url: fileUrl,
-          burn_on_read: burnOnRead,
-          reply_to_id: replyToId,
-          read_by: [],
-          created_at: now,
-        });
-
-        if (error) {
-          // Cloud delivery failed (missing table / RLS / offline) - keep the payload
-          // locally so the message STILL sends instead of silently vanishing.
-          console.error('Send message error:', error);
-          const raw: Message = {
-            id: msgId,
-            chat_id: targetChat.id,
-            sender_id: deviceId,
-            text: encryptedText,
-            file_url: fileUrl,
-            burn_on_read: burnOnRead,
-            reply_to_id: replyToId,
-            read_by: [],
-            created_at: now,
-          };
-          setMessages(prev => [...prev, toDisplayMessage(raw, targetChat.share_code)]);
-          writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), raw]);
-          addLog(`[MSG: Cloud delivery failed (${error.message}). Payload saved locally.]`);
-          return;
-        }
-
-        // Optimistic render - the realtime echo is deduped by id
+        // Phase D: optimistic PENDING row rendered BEFORE the network hop.
+        // The stable client_tag makes every retry idempotent — the unique
+        // (chat_id, client_tag) index turns an already-landed retry into a
+        // 23505 dedupe instead of a duplicate message.
+        const clientTag = crypto.randomUUID();
         setMessages(prev => {
           if (prev.some(m => m.id === msgId)) return prev;
           return [...prev, {
@@ -1404,12 +1518,60 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             sender_id: deviceId,
             text,
             file_url: fileUrl ? decryptText(fileUrl, targetChat.share_code) : null,
-            burn_on_read: true,
+            burn_on_read: burnOnRead,
             reply_to_id: replyToId,
             read_by: [],
             created_at: now,
+            client_tag: clientTag,
+            status: 'pending',
           }];
         });
+
+        const payload = {
+          id: msgId,
+          chat_id: targetChat.id,
+          sender_id: deviceId,
+          text: encryptedText,
+          file_url: fileUrl,
+          burn_on_read: burnOnRead,
+          reply_to_id: replyToId ?? null,
+          read_by: [] as string[],
+          created_at: now,
+          client_tag: clientTag,
+        };
+        const { error } = await insertMessageSafe(payload);
+
+        if (error) {
+          // Cloud delivery failed (offline / RLS / network): mark FAILED and
+          // queue in the durable outbox under the SAME client_tag for an
+          // idempotent retry (tap-to-retry in the UI, auto-flush on reconnect).
+          console.error('Send message error:', error);
+          setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'failed' } : m)));
+          queueForRetry({
+            client_tag: clientTag,
+            id: msgId,
+            chat_id: targetChat.id,
+            share_code: targetChat.share_code,
+            payload: {
+              id: msgId,
+              chat_id: targetChat.id,
+              sender_id: deviceId,
+              text: encryptedText,
+              file_url: fileUrl,
+              burn_on_read: burnOnRead,
+              reply_to_id: replyToId ?? null,
+              read_by: [],
+              created_at: now,
+            },
+            queued_at: now,
+          });
+          writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), { ...payload } as Message]);
+          addLog(`[MSG: Cloud delivery failed (${error.message}). Queued in outbox — retry available.]`);
+          return;
+        }
+
+        // Server ack → SENT. The realtime echo is deduped by id.
+        setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'sent' } : m)));
       }
 
       addLog(`Sent payload to ${targetChat.share_code}`);
@@ -1539,11 +1701,60 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     }));
   }, [activeChat, deviceId]);
 
-  const resendMessage = useCallback((msgId: string) => {
+  const resendMessage = useCallback(async (msgId: string) => {
     const msg = messages.find(m => m.id === msgId);
     if (!msg) return;
-    addSystemMessage(`⟳ Resent: ${msg.text.slice(0, 60)}${msg.text.length > 60 ? '…' : ''}`);
-  }, [messages, addSystemMessage]);
+    if (backendMode !== 'online' || !supabase || !activeChat) {
+      // Local mode has no cloud to retry against — the row already lives in
+      // localStorage; just clear the failed marker.
+      setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'sent' } : m)));
+      return;
+    }
+    // Idempotent retry (Phase D): SAME client_tag → the unique (chat_id,
+    // client_tag) index de-duplicates an already-delivered attempt (23505),
+    // so a retry can never create a second copy of the message.
+    const clientTag = msg.client_tag || crypto.randomUUID();
+    setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'pending' } : m)));
+    const { error } = await insertMessageSafe({
+      id: msg.id,
+      chat_id: msg.chat_id,
+      sender_id: msg.sender_id,
+      text: encryptText(msg.text, activeChat.share_code),
+      file_url: msg.file_url ? encryptText(msg.file_url, activeChat.share_code) : null,
+      burn_on_read: msg.burn_on_read,
+      reply_to_id: msg.reply_to_id ?? null,
+      read_by: [],
+      created_at: msg.created_at,
+      client_tag: clientTag,
+    });
+    const kind = error ? classifyFlushError((error as any).code, error.message) : 'duplicate';
+    if (!error || kind === 'duplicate') {
+      setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'sent' } : m)));
+      removeFromOutbox(clientTag);
+      addLog(error ? '[MSG: retry deduped — payload was already delivered]' : '[MSG: retry delivered]');
+    } else {
+      setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'failed' } : m)));
+      queueForRetry({
+        client_tag: clientTag,
+        id: msg.id,
+        chat_id: msg.chat_id,
+        share_code: activeChat.share_code,
+        payload: {
+          id: msg.id,
+          chat_id: msg.chat_id,
+          sender_id: msg.sender_id,
+          text: encryptText(msg.text, activeChat.share_code),
+          file_url: msg.file_url ? encryptText(msg.file_url, activeChat.share_code) : null,
+          burn_on_read: msg.burn_on_read,
+          reply_to_id: msg.reply_to_id ?? null,
+          read_by: [],
+          created_at: msg.created_at,
+        },
+        queued_at: new Date().toISOString(),
+      });
+      addLog(`[MSG: retry failed (${error.message}). Still queued.]`);
+    }
+  }, [messages, backendMode, supabase, activeChat, encryptText, addLog, insertMessageSafe]);
 
   /* ------------------- Instagram: unsend + forward + groups ------------------- */
 
@@ -1970,7 +2181,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   return (
     <CryptoContext.Provider
       value={{
-        deviceId, alias, chats, archivedChats, activeChat, messages, latency,
+        deviceId, alias, chats, archivedChats, activeChat, messages, hasMoreMessages, loadingOlder, loadOlderMessages, latency,
         setActiveChat, createChat, joinChat, sendMessage, purgeTerminal,
         addSystemMessage, deleteMessageLocally, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage,
         updateAlias, systemLogs,

@@ -872,3 +872,24 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ============================================================
+-- 7. Messaging hardening (Phase D) — idempotent, retry-safe sends
+-- ============================================================
+-- messages.client_tag: a client-generated idempotency key. A resend re-uses
+-- the SAME tag; the unique partial index below turns the second insert into
+-- a 23505 conflict, so "Resend"/offline-flush can NEVER duplicate a message.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'client_tag') then
+    alter table public.messages add column client_tag uuid;
+  end if;
+end $$;
+
+create unique index if not exists idx_messages_chat_client_tag
+  on public.messages (chat_id, client_tag)
+  where client_tag is not null;
+
+comment on column public.messages.client_tag is
+  'Client idempotency key (Phase D): same tag across retries; (chat_id, client_tag) is unique.';

@@ -51,7 +51,8 @@ Legend: ✅ done & tested · 🟡 partial · ❌ planned (phase) · 🚫 deliber
 | Social graph | follow/unfollow, private accounts + pending requests, accept/decline, block, activity status | ✅ |
 | | remove follower, restrict, close friends, data export (cloud) | ❌ Phase G |
 | Messaging | 1:1 + group DMs, Primary/Requests tabs, media/voice/file attachments, replies, reactions+picker, pins, edit, unsend for everyone, forward, read receipts, typing, presence, mute, themes, nicknames, search, archive, vanish (burn) mode | ✅ |
-| | pagination of history, delivery states, link previews, server-enforced follow gate for existing chats | 🟡 Phase D/E |
+| | pagination of history, delivery states (pending/sent/seen), idempotent retry + offline outbox | ✅ Phase D |
+| | link previews, server-side delivered acks beyond read_by | 🟡 Phase E |
 | E2EE | per-chat AES-256, burn-on-read, device keyring, brute-force lockout, decoy vault, panic wipe, idle lock | ✅ engine |
 | | true key establishment/rotation/wrapping (S3), multi-device, independent review | ❌ Phase E |
 | Calls | voice + video WebRTC, accept/decline/cancel, mute/camera toggles, incoming-call screen, history | ✅ engine |
@@ -134,6 +135,37 @@ Stories and notifications are plaintext-by-design (RLS-guarded) — matching Ins
 ### 6.5 Deployment state & the one remaining user action
 
 - Production `axonlogs.vercel.app` serves this build (deploy 7152959234 success; live chunks verified: `index-CTQI6_7L.js` carries all shell/story/notification markers, lazy `SettingsPanel-C119Beph.js` carries the account-lifecycle strings).
-- **The live database still runs the Phase-B schema**: it has the recursive policy (S8) and lacks SECTION 6 (stories/notifications/calls/avatars buckets). Until the owner re-runs `supabase/schema.sql` once in the SQL editor, signup/DM degrade gracefully to local mode and the new features return empty-but-healthy UI.
-- **ACTION (owner, ~1 min): Supabase Dashboard → SQL Editor → paste `supabase/schema.sql` → Run.** It is idempotent. After it runs: reload the site — stories, notifications, profiles, search and the locked-down RLS all activate together.
+- **VERIFIED 2026-10-19 (this session): the owner re-ran `schema.sql`** — REST probes with the anon key return 200 for `notifications` / `chat_participants` / `stories` (SECTION 5+6 tables exist) and **401 for `accounts`**, proving the S1/S2 lockdown is LIVE. No owner action remains for Phases B–C.
 - TURN relay for calls remains unprovisioned (owner cost decision, documented in §3).
+
+---
+
+## 7. Phase D — messaging hardening (pagination · delivery states · idempotent retry · offline recovery)
+
+Date: 2026-10-19 · HEAD: (this release) · Build: PASS (tsc + vite) · Tests: **92/92 PASS** (84 + 8 new Tier 11) · Schema harness: fresh-DB + idempotency + SECTION 7 artifacts verified on standalone PostgreSQL 18.6
+
+### 7.1 What shipped
+
+| Capability | Implementation | Where |
+|---|---|---|
+| Keyset-paginated history | `fetchMessages` loads only the newest page (30, `order created_at desc + limit`); `loadOlderMessages()` keyset-paginates with a `created_at` cursor (never OFFSET); cursor + `hasMoreMessages` reset on chat switch; read-receipt + burn semantics applied to older pages too; UI "Load earlier messages" control with scroll-height-delta compensation so the viewport stays anchored | `CryptoContext.tsx`, `ConversationPanel.tsx` |
+| Delivery states | Optimistic row renders **pending** BEFORE the network hop; server ack flips to **sent**; any other device appending `read_by` yields **Seen** (existing last-message line now shows Sending…/Sent/Seen) | `CryptoContext.tsx`, `ConversationPanel.tsx` |
+| Idempotent sends | Every insert carries a client-generated `client_tag` uuid; **unique partial index `(chat_id, client_tag) WHERE client_tag IS NOT NULL`** turns an already-landed retry into a `23505` conflict that is treated as idempotent success — a resend can never create a duplicate row | `supabase/schema.sql` §7, `CryptoContext.tsx` |
+| REAL retry (fake removed) | The old `resendMessage` only printed a "⟳ Resent" system log — a decorative control (master-prompt violation). It is now an async re-insert under the SAME `client_tag`; `Failed · Tap to retry` renders under failed own messages | `CryptoContext.tsx`, `ConversationPanel.tsx` |
+| Durable outbox | Failed sends queue in `localStorage['axon_outbox']` (ciphertext payload + stable tag, storage-injectable module); flushed on `online` event, on boot, and 4s after boot; `23505`→delivered, `42501`/network→keep queued, FK-class→drop; queue is deduped by tag so retry storms cannot pile up | `src/utils/outbox.ts`, `CryptoContext.tsx` |
+| Offline recovery across reloads | On chat open, queued-but-undelivered payloads re-attach to the feed as failed rows; after flush they flip to sent live | `CryptoContext.tsx` |
+| Both-schema-generation safety | `insertMessageSafe` detects `PGRST204`/`42703` (legacy DB without the new column) and retries the insert WITHOUT `client_tag` — sends keep working before the owner re-runs schema.sql; idempotency activates automatically afterwards | `CryptoContext.tsx` |
+
+### 7.2 Verification actually run
+
+- `npm run build` — PASS. `npm test` — **92/92** (new Tier 11: schema contract, pagination contracts, idempotent-send contract, fake-resend removal guard, outbox runtime behavior executed in Node with an injected storage stand-in, UI affordances, graceful-degradation contract).
+- Standalone-PG harness (`scripts/validate-schema.sh` path): fresh-DB run + idempotent re-run both PASS; direct psql probes confirm `messages.client_tag` and `idx_messages_chat_client_tag` exist post-run.
+- Live DB state verified via authenticated REST probes (see §6.5) — SECTION 5/6 live, lockdown active.
+
+### 7.3 Owner action (optional, non-blocking)
+
+Re-run `supabase/schema.sql` once more in the SQL editor to activate Phase D (`client_tag` + unique index). **Not urgent**: until then the client degrades gracefully (§7.1 last row) and every feature keeps working.
+
+### 7.4 Remaining known gaps (unchanged)
+
+TURN relay (S7/Phase F), link previews + delivered-vs-read server acks beyond `read_by` (Phase E), S3 key-wrapping / S4 encrypted attachments (Phase E), message-edit/audit tables (S6), reports/moderation tables (Phase G), web-push (Phase F).

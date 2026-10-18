@@ -63,6 +63,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     unlockedChatId, lockChat, settings, editMessage, toggleReaction, togglePinMessage,
     markAsRead, startCall, deleteChat, archiveChat, restoreChat, account,
     unsendMessage, forwardMessage, chats, archivedChats,
+    hasMoreMessages, loadingOlder, loadOlderMessages, resendMessage,
   } = useCrypto();
 
   const myHandle = account?.username?.toLowerCase() || '';
@@ -303,6 +304,18 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   );
   const lastOwnMsg = [...visibleMessages].reverse().find(m => m.sender_id === deviceId);
   const ownSeen = !!lastOwnMsg && (lastOwnMsg.read_by || []).length > 0;
+
+  // Phase D: load an older history page while keeping the viewport anchored
+  // to the same messages (scroll-height delta compensation after prepend).
+  const handleLoadOlder = async () => {
+    const el = feedRef.current;
+    const before = el ? { h: el.scrollHeight, t: el.scrollTop } : null;
+    await loadOlderMessages();
+    requestAnimationFrame(() => {
+      const el2 = feedRef.current;
+      if (el2 && before) el2.scrollTop = el2.scrollHeight - before.h + before.t;
+    });
+  };
   const pinned = messages.filter(m => m.pinned && !m.unsent);
   const groupMemberCount = new Set([deviceId, ...messages.map(m => m.sender_id).filter(s => s !== 'SYSTEM')]).size;
   const mediaMessages = messages.filter(m => m.file_url && !m.unsent);
@@ -592,6 +605,19 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             </div>
           ) : (
             <>
+              {/* Phase D: keyset-paginated history — load older on demand */}
+              {hasMoreMessages && (
+                <div className="flex justify-center pb-3 shrink-0">
+                  <button
+                    onClick={handleLoadOlder}
+                    disabled={loadingOlder}
+                    className="px-3 py-1.5 rounded-full term-panel border border-white/10 text-[10px] font-bold tracking-widest uppercase text-zinc-400 hover:text-cyan-300 hover:border-cyan-400/40 transition-colors disabled:opacity-50"
+                  >
+                    {loadingOlder ? 'Loading…' : 'Load earlier messages'}
+                  </button>
+                </div>
+              )}
+
               {pinned.length > 0 && (
                 <div className="mb-3 p-2.5 bg-amber-500/[0.06] border border-amber-500/20 rounded-xl shrink-0">
                   <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-widest text-amber-400/80 uppercase mb-1">
@@ -791,10 +817,21 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                           </div>
                         )}
 
+                        {/* Phase D delivery status: failed → idempotent tap-to-retry */}
+                        {isSelf && msg.status === 'failed' && (
+                          <button
+                            onClick={() => resendMessage(msg.id)}
+                            className="text-[10px] mt-1 text-right text-red-400 hover:text-red-300 font-bold tracking-wide transition-colors"
+                            title="Tap to retry — the same idempotency key is reused, so no duplicate can be created"
+                          >
+                            Failed · Tap to retry
+                          </button>
+                        )}
+
                         {/* seen / meta line under my last message */}
-                        {isSelf && lastOwnMsg?.id === msg.id && (
+                        {isSelf && lastOwnMsg?.id === msg.id && msg.status !== 'failed' && (
                           <div className={`text-[10px] mt-1 ${isSelf ? 'text-right' : ''} ${ownSeen ? 'text-cyan-400' : 'text-zinc-600'}`}>
-                            {ownSeen ? 'Seen' : 'Sent'} · {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            {msg.status === 'pending' ? 'Sending…' : ownSeen ? 'Seen' : 'Sent'} · {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                           </div>
                         )}
                       </div>

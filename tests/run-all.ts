@@ -10,6 +10,7 @@ import { runTier7Tests } from './tier7_accounts_auth.test.ts';
 import { runTier8Tests } from './tier8_instagram_features.test.ts';
 import { runTier9Tests } from './tier9_security_auth.test.ts';
 import { runTier10Tests } from './tier10_full_clone.test.ts';
+import { runTier11Tests } from './tier11_messaging_hardening.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,6 +65,9 @@ async function main() {
   console.log('--- Executing Tier 10: Full Clone Expansion (stories/notifications/profiles/search) ---');
   const t10 = await runTier10Tests(projectRoot);
   allResults.push(...t10);
+
+  const t11 = await runTier11Tests(projectRoot);
+  allResults.push(...t11);
 
   const totalDuration = Date.now() - startTime;
 
