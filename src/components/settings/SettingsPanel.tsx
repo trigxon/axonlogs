@@ -8,6 +8,7 @@ import {
   ToggleRight,
   ToggleLeft,
   UserCheck,
+  KeyRound,
   Check,
   X,
   ChevronRight,
@@ -22,6 +23,9 @@ import {
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCrypto, BURN_DELAY_OPTIONS } from '../../contexts/CryptoContext';
 import SecurityNote from '../ui/SecurityNote';
+import { supabase } from '../../contexts/CryptoContext';
+import { getNotifPrefs, setNotifPrefs, type NotifPrefs } from '../../utils/notifications';
+import { fetchAccount, fetchFollowers, fetchFollowing, fetchBlockedUsers } from '../../utils/auth';
 import {
   exportAppData,
   exportPdfData,
@@ -38,7 +42,7 @@ export interface SettingsPanelProps {
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   const { textSize, cardPadding, borderRadius, setTextSize, setCardPadding, setBorderRadius } = useTheme();
-  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings, simBotActive, toggleSimBot } = useCrypto();
+  const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings, simBotActive, toggleSimBot, logout, account } = useCrypto();
 
   const [aliasInput, setAliasInput] = useState(alias);
   const [decoyPassphrase, setDecoyPassphrase] = useState(() => localStorage.getItem('axon_decoy_pass') || 'DECOY123');
@@ -46,6 +50,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
 
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+  const [notifPrefs, setNotifPrefsState] = useState<NotifPrefs>(() => getNotifPrefs());
   const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('axon_sound_enabled') !== 'false');
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('axon_notifications_enabled') === 'true');
 
@@ -149,6 +160,120 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     } else {
       showStatus('success', 'Everything is already synced');
     }
+  };
+
+  /* ---------------- account lifecycle (Supabase Auth) ---------------- */
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || backendMode !== 'online') {
+      showStatus('error', 'You need the cloud connection to change your password.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showStatus('error', 'Choose a password with at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showStatus('error', "The two passwords don't match.");
+      return;
+    }
+    setChangingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setChangingPassword(false);
+    if (error) {
+      showStatus('error', error.message || 'Could not change the password.');
+      return;
+    }
+    setNewPassword('');
+    setConfirmPassword('');
+    addLog('Account password changed');
+    showStatus('success', 'Password updated');
+  };
+
+  const handleLogoutEverywhere = async () => {
+    if (!supabase) return;
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } catch {
+      /* even a local sign-out keeps the account safe */
+    }
+    logout();
+  };
+
+  const handleExportAccountData = async () => {
+    if (!supabase || !account) {
+      showStatus('error', 'Connect to the cloud first.');
+      return;
+    }
+    setExportingData(true);
+    try {
+      const u = account.username;
+      const [profile, followers, following, blockedList] = await Promise.all([
+        fetchAccount(supabase, u),
+        fetchFollowers(supabase, u),
+        fetchFollowing(supabase, u),
+        fetchBlockedUsers(supabase, u),
+      ]);
+      const payload = {
+        exported_at: new Date().toISOString(),
+        product: 'Axon Logs',
+        profile,
+        followers,
+        following,
+        blocked: blockedList,
+        notification_preferences: getNotifPrefs(),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `axonlogs-account-${u}-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showStatus('success', 'Account data downloaded');
+    } catch (err: any) {
+      showStatus('error', `Export failed: ${err.message}`);
+    } finally {
+      setExportingData(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!supabase || !account || deleteConfirmText.trim().toUpperCase() !== 'DELETE') return;
+    const u = account.username;
+    try {
+      // Best-effort content cleanup within RLS: my stories + highlights + my
+      // message rows stay ( chats are shared ); profile gets anonymized.
+      await supabase.from('stories').delete().eq('username', u);
+      await supabase.from('highlights').delete().eq('username', u);
+      await supabase.from('follows').delete().eq('follower', u);
+      await supabase.from('follows').delete().eq('followed', u);
+      await supabase.from('close_friends').delete().eq('owner', u);
+      await supabase.from('notifications').delete().eq('username', u);
+      await supabase
+        .from('accounts')
+        .update({
+          bio: 'This account has been deleted.',
+          display_name: 'Deleted account',
+          avatar_url: '',
+          avatar_gradient: '',
+          show_activity: false,
+          is_private: true,
+        })
+        .eq('username', u);
+      try { await supabase.auth.signOut({ scope: 'global' }); } catch { /* noop */ }
+      logout();
+    } catch (err: any) {
+      showStatus('error', err?.message || 'Deletion failed — try again.');
+    }
+  };
+
+  const toggleNotifPref = (key: keyof NotifPrefs) => {
+    const next = { ...notifPrefs, [key]: !notifPrefs[key] };
+    setNotifPrefsState(next);
+    setNotifPrefs(next);
+    addLog(`Notification preference: ${key} ${next[key] ? 'on' : 'off'}`);
   };
 
   const handleConfirmReset = () => {
@@ -317,6 +442,54 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           </SettingRow>
         </SectionCard>
 
+        {/* ACCOUNT (Supabase Auth lifecycle) */}
+        <SectionCard icon={KeyRound} title="Account" accent="bg-emerald-500">
+          <SettingRow title="Signed in as" desc="Your account username">
+            <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-emerald-400 font-mono text-[10px] rounded-md select-all">
+              @{account?.username || alias || '—'}
+            </div>
+          </SettingRow>
+          <div className="px-5 pb-4">
+            <form onSubmit={handleChangePassword} className="space-y-2">
+              <label className="block text-[9px] font-bold tracking-[0.25em] text-zinc-500 uppercase">Change password</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="New password (6+ characters)"
+                  autoComplete="new-password"
+                  className="bg-[#050505] border border-zinc-800 focus:border-emerald-500 px-3 py-2 text-white text-xs outline-none rounded-md transition-colors"
+                />
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat the new password"
+                  autoComplete="new-password"
+                  className="bg-[#050505] border border-zinc-800 focus:border-emerald-500 px-3 py-2 text-white text-xs outline-none rounded-md transition-colors"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={changingPassword || !newPassword || !confirmPassword}
+                className="w-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 py-2 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors disabled:opacity-40"
+              >
+                {changingPassword ? 'Updating…' : 'Update password'}
+              </button>
+            </form>
+          </div>
+          <SettingRow title="Log out everywhere" desc="Sign this account out on every device it's logged into" isButton onClick={handleLogoutEverywhere}>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </SettingRow>
+          <SettingRow title={exportingData ? "Preparing your file…" : "Download my account data"} desc="Profile, followers, following and blocked accounts as a JSON file" isButton onClick={handleExportAccountData}>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </SettingRow>
+          <SettingRow title="Delete account" desc="Anonymize the profile and wipe its content — this can't be undone" isButton onClick={() => { setDeleteConfirmText(''); setShowDeleteAccountModal(true); }}>
+            <ChevronRight className="w-4 h-4 text-red-500/50" />
+          </SettingRow>
+        </SectionCard>
+
         {/* PRIVACY & SAFETY */}
         <SectionCard icon={ShieldAlert} title="Privacy & safety" accent="bg-blue-500">
           <SettingRow title="Stealth mode" desc="Blur your chats while the tab is hidden">
@@ -454,6 +627,26 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               {notificationsEnabled ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
+          <SettingRow title="New followers" desc="Follows, follow requests and accepted requests">
+            <button onClick={() => toggleNotifPref('follows')}>
+              {notifPrefs.follows ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Chat requests" desc="When someone wants to message you">
+            <button onClick={() => toggleNotifPref('messages')}>
+              {notifPrefs.messages ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Story activity" desc="Reactions and replies to your stories">
+            <button onClick={() => toggleNotifPref('stories')}>
+              {notifPrefs.stories ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
+          <SettingRow title="Calls" desc="Incoming and missed call alerts">
+            <button onClick={() => toggleNotifPref('calls')}>
+              {notifPrefs.calls ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
+            </button>
+          </SettingRow>
         </SectionCard>
 
         {/* LOOK & FEEL */}
@@ -526,6 +719,48 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               </button>
               <button onClick={handleConfirmReset} className="px-4 py-2 bg-red-500 hover:bg-red-400 text-black text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
                 Erase everything
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE ACCOUNT MODAL */}
+      {showDeleteAccountModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="glass-deep border-red-500/50 w-full max-w-md p-6 rounded-xl shadow-2xl relative space-y-4">
+            <button onClick={() => setShowDeleteAccountModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3 text-red-500">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <h3 className="text-sm font-bold tracking-widest uppercase">Delete your account?</h3>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Your stories, highlights, follows and notifications are erased. Your profile becomes
+              “Deleted account” and can't be used again. Your username will stay reserved —
+              full removal of the login record needs the site owner's dashboard.
+            </p>
+            <div className="p-3 bg-red-950/30 border border-red-500/30 rounded-lg text-[10px] text-red-400 font-mono tracking-widest">
+              This can't be undone.
+            </div>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              placeholder="Type DELETE to confirm"
+              className="w-full bg-[#050505] border border-zinc-800 focus:border-red-500 px-3 py-2 text-white text-xs outline-none rounded-md uppercase tracking-widest"
+            />
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button onClick={() => setShowDeleteAccountModal(false)} className="px-4 py-2 text-zinc-300 hover:text-white text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+                className="px-4 py-2 bg-red-500 hover:bg-red-400 disabled:opacity-40 disabled:cursor-not-allowed text-black text-[10px] font-bold tracking-widest uppercase rounded-lg transition-colors"
+              >
+                Delete forever
               </button>
             </div>
           </div>

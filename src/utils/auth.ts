@@ -32,6 +32,7 @@ export interface Account {
   username: string;
   bio: string;
   avatar_gradient: string;
+  avatar_url?: string;
   created_at: string;
   display_name?: string;
   is_private?: boolean;
@@ -244,7 +245,7 @@ const isColumnError = (error: any): boolean => {
   );
 };
 
-const FULL_COLS = 'id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at';
+const FULL_COLS = 'id, username, bio, avatar_gradient, created_at, display_name, is_private, show_activity, last_seen_at, avatar_url';
 const MIN_COLS = 'id, username, bio, avatar_gradient, created_at, last_seen_at';
 
 const accountCols = (withHash: boolean): string => {
@@ -575,7 +576,7 @@ export const fetchAccount = async (supabase: any, username: string): Promise<Acc
 export const updateAccountProfile = async (
   supabase: any,
   username: string,
-  patch: { bio?: string; avatar_gradient?: string; display_name?: string; is_private?: boolean; show_activity?: string | boolean }
+  patch: { bio?: string; avatar_gradient?: string; display_name?: string; is_private?: boolean; show_activity?: string | boolean; avatar_url?: string }
 ): Promise<boolean> => {
   const u = username.trim().toLowerCase();
   const applyPatch = (p: typeof patch) => supabase.from('accounts').update(p).eq('username', u);
@@ -591,7 +592,78 @@ export const updateAccountProfile = async (
   return !error;
 };
 
-/* ----------------------------- DM invites ------------------------------ */
+/* ----------------------------- avatar media ----------------------------- */
+
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Client-side downscale so profile photos stay small and uniform. */
+const fileToAvatarBlob = (file: File): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const size = 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error('canvas unavailable'));
+        return;
+      }
+      // cover-crop to a square
+      const side = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(b => (b ? resolve(b) : reject(new Error('encode failed'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Not a readable image.'));
+    };
+    img.src = url;
+  });
+
+/**
+ * Upload a profile photo to the public `avatars` bucket under
+ * avatars/{username}/avatar.jpg (upsert) and point accounts.avatar_url
+ * at it with a cache-busting version. Returns the public URL.
+ */
+export const uploadAvatar = async (
+  supabase: any,
+  username: string,
+  file: File
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> => {
+  if (!supabase) return { ok: false, error: 'No database connection.' };
+  if (!file.type.startsWith('image/')) return { ok: false, error: 'Pick an image file for your profile photo.' };
+  if (file.size > AVATAR_MAX_BYTES) return { ok: false, error: 'That image is too large — keep it under 5MB.' };
+  const u = username.trim().toLowerCase();
+  let blob: Blob;
+  try {
+    blob = await fileToAvatarBlob(file);
+  } catch {
+    return { ok: false, error: 'That image could not be read. Try another photo.' };
+  }
+  const path = `${u}/avatar.jpg`;
+  const { error: upErr } = await supabase.storage
+    .from('avatars')
+    .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+  if (upErr) return { ok: false, error: upErr.message || 'Upload failed.' };
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+  const bust = data?.publicUrl ? `${data.publicUrl}?v=${Date.now()}` : '';
+  const ok = await updateAccountProfile(supabase, u, { avatar_url: bust });
+  if (!ok) return { ok: false, error: 'Photo uploaded, but the profile update failed.' };
+  return { ok: true, url: bust };
+};
+
+/** Remove the profile photo (bucket object + profile pointer). */
+export const removeAvatar = async (supabase: any, username: string): Promise<boolean> => {
+  if (!supabase) return false;
+  const u = username.trim().toLowerCase();
+  await supabase.storage.from('avatars').remove([`${u}/avatar.jpg`]);
+  return updateAccountProfile(supabase, u, { avatar_url: '' });
+};
 
 /** Deterministic DM channel name: `@a·@b` with both handles sorted. */
 export const dmChatName = (a: string, b: string): string => {
@@ -769,6 +841,16 @@ export const declineFollowRequest = async (supabase: any, me: string, requester:
     .from('follows')
     .delete()
     .eq('follower', requester.trim().toLowerCase())
+    .eq('followed', me.trim().toLowerCase());
+  return !error;
+};
+
+/** Instagram "Remove follower": they follow me; I end it from my side. */
+export const removeFollower = async (supabase: any, me: string, follower: string): Promise<boolean> => {
+  const { error } = await supabase
+    .from('follows')
+    .delete()
+    .eq('follower', follower.trim().toLowerCase())
     .eq('followed', me.trim().toLowerCase());
   return !error;
 };

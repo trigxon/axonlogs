@@ -115,6 +115,10 @@ begin
                  where table_name = 'accounts' and column_name = 'show_activity') then
     alter table public.accounts add column show_activity boolean not null default true;
   end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'accounts' and column_name = 'avatar_url') then
+    alter table public.accounts add column avatar_url text not null default '';
+  end if;
 end $$;
 
 -- ------------------------------------------------------------
@@ -311,7 +315,7 @@ grant execute on function public.my_username() to anon, authenticated;
 drop view if exists public.profiles;
 create view public.profiles as
   select id, username, bio, avatar_gradient, display_name,
-         is_private, show_activity, last_seen_at, created_at
+         is_private, show_activity, last_seen_at, created_at, avatar_url
   from public.accounts;
 
 grant select on public.profiles to anon, authenticated;
@@ -609,3 +613,504 @@ create policy "members delete messages" on public.messages
 --   using (auth_uid = auth.uid())
 --   with check (auth_uid = auth.uid());
 -- ------------------------------------------------------------
+
+-- ============================================================
+--
+-- SECTION 6 — STORIES, NOTIFICATIONS, CALLS, CLOSE FRIENDS
+--             (full Instagram feature backend)
+--
+-- All idempotent. Visibility is enforced HERE, in Postgres:
+--   • a client timer can never reveal an expired story (RLS filters
+--     expires_at server-side);
+--   • close-friends stories are only readable by the owner's list;
+--   • blocked users are excluded everywhere.
+--
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 6.1 Close friends — per-owner list of members allowed to see
+--     'close_friends' audience stories.
+-- ------------------------------------------------------------
+create table if not exists public.close_friends (
+  owner  text not null,
+  member text not null,
+  created_at timestamptz not null default now(),
+  primary key (owner, member)
+);
+
+alter table public.close_friends enable row level security;
+
+drop policy if exists "close friends self manage" on public.close_friends;
+create policy "close friends self manage" on public.close_friends
+  for all to authenticated
+  using (owner = public.my_username())
+  with check (owner = public.my_username());
+
+drop policy if exists "close friends readable" on public.close_friends;
+create policy "close friends readable" on public.close_friends
+  for select to authenticated using (true);
+
+-- ------------------------------------------------------------
+-- 6.2 Relationship helpers (security definer — no recursive RLS)
+-- ------------------------------------------------------------
+create or replace function public.is_following(p_follower text, p_followed text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.follows
+    where follower = lower(p_follower) and followed = lower(p_followed) and status = 'active'
+  );
+$$;
+
+create or replace function public.is_close_friend(p_owner text, p_candidate text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.close_friends
+    where owner = lower(p_owner) and member = lower(p_candidate)
+  );
+$$;
+
+-- Can p_viewer see a story owned by p_owner with the given audience?
+-- Rules (Instagram model):
+--   owner always sees their own;
+--   'close_friends' → owner's close-friends list only;
+--   'followers'     → active followers, plus ANY signed-in user when the
+--                     owner's account is public (profile visitors);
+--   blocked (either direction) sees nothing.
+create or replace function public.can_view_story(p_owner text, p_audience text, p_viewer text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select
+    lower(p_owner) = lower(p_viewer)
+    or (
+      not public.is_blocked_either_way(p_owner, p_viewer)
+      and (
+        (p_audience = 'close_friends' and public.is_close_friend(p_owner, p_viewer))
+        or
+        (p_audience <> 'close_friends' and (
+          public.is_following(p_viewer, p_owner)
+          or exists (
+            select 1 from public.accounts a
+            where a.username = lower(p_owner) and a.is_private = false
+          )
+        ))
+      )
+    );
+$$;
+
+grant execute on function public.is_following(text, text) to authenticated;
+grant execute on function public.is_close_friend(text, text) to authenticated;
+grant execute on function public.can_view_story(text, text, text) to authenticated;
+
+-- ------------------------------------------------------------
+-- 6.3 Stories — 24h photo/video posts with audience control.
+--     EXPIRY IS SERVER-ENFORCED: the SELECT policy hides anything
+--     past expires_at regardless of what the client clock says.
+-- ------------------------------------------------------------
+create table if not exists public.stories (
+  id          uuid primary key default gen_random_uuid(),
+  username    text not null,
+  media_path  text not null,
+  media_type  text not null default 'image' check (media_type in ('image', 'video')),
+  caption     text not null default '',
+  overlays    jsonb not null default '[]',
+  audience    text not null default 'followers' check (audience in ('followers', 'close_friends')),
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null default (now() + interval '24 hours')
+);
+
+create index if not exists idx_stories_username on public.stories (username, created_at desc);
+create index if not exists idx_stories_expires on public.stories (expires_at);
+
+alter table public.stories enable row level security;
+
+drop policy if exists "story owners post" on public.stories;
+create policy "story owners post" on public.stories
+  for insert to authenticated
+  with check (username = public.my_username());
+
+drop policy if exists "story visibility" on public.stories;
+create policy "story visibility" on public.stories
+  for select to authenticated
+  using (
+    public.can_view_story(username, audience, public.my_username())
+    and (
+      expires_at > now()
+      -- expired stories stay readable inside highlights they were saved to
+      or exists (
+        select 1 from public.highlight_stories hs
+        join public.highlights h on h.id = hs.highlight_id
+        where hs.story_id = stories.id and h.username = public.my_username()
+      )
+    )
+  );
+
+drop policy if exists "story owners manage" on public.stories;
+create policy "story owners manage" on public.stories
+  for delete to authenticated
+  using (username = public.my_username());
+
+drop policy if exists "story owners update" on public.stories;
+create policy "story owners update" on public.stories
+  for update to authenticated
+  using (username = public.my_username())
+  with check (username = public.my_username());
+
+-- ------------------------------------------------------------
+-- 6.4 Story views + quick reactions (one row per viewer per story).
+--     The OWNER can see WHO watched; viewers only see their own row.
+-- ------------------------------------------------------------
+create table if not exists public.story_views (
+  id        uuid primary key default gen_random_uuid(),
+  story_id  uuid not null references public.stories(id) on delete cascade,
+  viewer    text not null,
+  reaction  text,
+  viewed_at timestamptz not null default now(),
+  constraint story_views_pair unique (story_id, viewer)
+);
+
+create index if not exists idx_story_views_story on public.story_views (story_id);
+
+alter table public.story_views enable row level security;
+
+drop policy if exists "story viewers insert" on public.story_views;
+create policy "story viewers insert" on public.story_views
+  for insert to authenticated
+  with check (
+    viewer = public.my_username()
+    and exists (
+      select 1 from public.stories s
+      where s.id = story_id
+        and public.can_view_story(s.username, s.audience, public.my_username())
+    )
+  );
+
+drop policy if exists "story owner sees viewers" on public.story_views;
+create policy "story owner sees viewers" on public.story_views
+  for select to authenticated
+  using (
+    viewer = public.my_username()
+    or exists (
+      select 1 from public.stories s
+      where s.id = story_id and s.username = public.my_username()
+    )
+  );
+
+drop policy if exists "story viewer reacts" on public.story_views;
+create policy "story viewer reacts" on public.story_views
+  for update to authenticated
+  using (viewer = public.my_username())
+  with check (viewer = public.my_username());
+
+drop policy if exists "story viewer unviews" on public.story_views;
+create policy "story viewer unviews" on public.story_views
+  for delete to authenticated
+  using (viewer = public.my_username());
+
+-- ------------------------------------------------------------
+-- 6.5 Highlights — archived stories pinned to the profile.
+--     Visible under the same rules as the owner's profile.
+-- ------------------------------------------------------------
+create table if not exists public.highlights (
+  id         uuid primary key default gen_random_uuid(),
+  username   text not null,
+  title      text not null default '',
+  cover_path text not null default '',
+  sort_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.highlights enable row level security;
+
+drop policy if exists "highlight owners create" on public.highlights;
+create policy "highlight owners create" on public.highlights
+  for insert to authenticated
+  with check (username = public.my_username());
+
+drop policy if exists "highlight visibility" on public.highlights;
+create policy "highlight visibility" on public.highlights
+  for select to authenticated
+  using (
+    username = public.my_username()
+    or (
+      not public.is_blocked_either_way(username, public.my_username())
+      and (
+        public.is_following(public.my_username(), username)
+        or exists (
+          select 1 from public.accounts a
+          where a.username = username and a.is_private = false
+        )
+      )
+    )
+  );
+
+drop policy if exists "highlight owners manage" on public.highlights;
+create policy "highlight owners manage" on public.highlights
+  for delete to authenticated
+  using (username = public.my_username());
+
+drop policy if exists "highlight owners update" on public.highlights;
+create policy "highlight owners update" on public.highlights
+  for update to authenticated
+  using (username = public.my_username())
+  with check (username = public.my_username());
+
+create table if not exists public.highlight_stories (
+  highlight_id uuid not null references public.highlights(id) on delete cascade,
+  story_id     uuid not null references public.stories(id) on delete cascade,
+  position     int not null default 0,
+  primary key (highlight_id, story_id)
+);
+
+alter table public.highlight_stories enable row level security;
+
+drop policy if exists "highlight stories readable" on public.highlight_stories;
+create policy "highlight stories readable" on public.highlight_stories
+  for select to authenticated
+  using (
+    exists (
+      select 1 from public.highlights h
+      where h.id = highlight_id
+        and (
+          h.username = public.my_username()
+          or not public.is_blocked_either_way(h.username, public.my_username())
+        )
+    )
+  );
+
+drop policy if exists "highlight stories manage" on public.highlight_stories;
+create policy "highlight stories manage" on public.highlight_stories
+  for all to authenticated
+  using (
+    exists (
+      select 1 from public.highlights h
+      where h.id = highlight_id and h.username = public.my_username()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.highlights h
+      where h.id = highlight_id and h.username = public.my_username()
+    )
+  );
+
+-- ------------------------------------------------------------
+-- 6.6 Notifications — one row per event, delivered to `username`.
+--     Created by DB triggers (social graph) and by signed-in actors
+--     for story events. RLS: you only ever see YOUR rows.
+-- ------------------------------------------------------------
+create table if not exists public.notifications (
+  id         uuid primary key default gen_random_uuid(),
+  username   text not null,
+  actor      text not null default '',
+  type       text not null,
+  payload    jsonb not null default '{}',
+  read_at    timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_notifications_user on public.notifications (username, created_at desc);
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "own notifications read" on public.notifications;
+create policy "own notifications read" on public.notifications
+  for select to authenticated
+  using (username = public.my_username());
+
+drop policy if exists "own notifications mark read" on public.notifications;
+create policy "own notifications mark read" on public.notifications
+  for update to authenticated
+  using (username = public.my_username())
+  with check (username = public.my_username());
+
+drop policy if exists "own notifications delete" on public.notifications;
+create policy "own notifications delete" on public.notifications
+  for delete to authenticated
+  using (username = public.my_username());
+
+drop policy if exists "actors create notifications" on public.notifications;
+create policy "actors create notifications" on public.notifications
+  for insert to authenticated
+  with check (actor = public.my_username());
+
+-- Trigger: follow / follow request / follow accepted
+create or replace function public.notify_on_follow()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if NEW.follower = NEW.followed then
+    return NEW;
+  end if;
+  if TG_OP = 'INSERT' then
+    insert into public.notifications (username, actor, type, payload)
+    values (
+      NEW.followed, NEW.follower,
+      case when NEW.status = 'active' then 'follow' else 'follow_request' end,
+      jsonb_build_object('status', NEW.status)
+    );
+  elsif TG_OP = 'UPDATE' and OLD.status = 'pending' and NEW.status = 'active' then
+    insert into public.notifications (username, actor, type, payload)
+    values (NEW.follower, NEW.followed, 'follow_accept', '{}'::jsonb);
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_follows_notify on public.follows;
+create trigger trg_follows_notify
+  after insert or update of status on public.follows
+  for each row execute function public.notify_on_follow();
+
+-- Trigger: message request (DM invite → notification)
+create or replace function public.notify_on_dm_invite()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if NEW.from_username = NEW.to_username then
+    return NEW;
+  end if;
+  insert into public.notifications (username, actor, type, payload)
+  values (NEW.to_username, NEW.from_username, 'message_request', jsonb_build_object('chat_id', NEW.chat_id));
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_dm_invites_notify on public.dm_invites;
+create trigger trg_dm_invites_notify
+  after insert on public.dm_invites
+  for each row execute function public.notify_on_dm_invite();
+
+-- ------------------------------------------------------------
+-- 6.7 Call history — every WebRTC call is recorded for the DM
+--     thread and the missed-call notification. Signaling itself
+--     stays on Supabase Realtime broadcast channels.
+-- ------------------------------------------------------------
+create table if not exists public.calls (
+  id          uuid primary key default gen_random_uuid(),
+  chat_id     uuid not null,
+  caller      text not null,
+  callee      text not null default '',
+  type        text not null default 'audio' check (type in ('audio', 'video')),
+  status      text not null default 'ringing' check (status in ('ringing', 'answered', 'declined', 'missed', 'ended', 'cancelled')),
+  started_at  timestamptz not null default now(),
+  answered_at timestamptz,
+  ended_at    timestamptz
+);
+
+create index if not exists idx_calls_chat on public.calls (chat_id, started_at desc);
+
+alter table public.calls enable row level security;
+
+drop policy if exists "call parties read" on public.calls;
+create policy "call parties read" on public.calls
+  for select to authenticated
+  using (caller = public.my_username() or callee = public.my_username());
+
+drop policy if exists "caller records call" on public.calls;
+create policy "caller records call" on public.calls
+  for insert to authenticated
+  with check (caller = public.my_username());
+
+drop policy if exists "call parties update" on public.calls;
+create policy "call parties update" on public.calls
+  for update to authenticated
+  using (caller = public.my_username() or callee = public.my_username())
+  with check (caller = public.my_username() or callee = public.my_username());
+
+-- Trigger: incoming-call notification to the callee
+create or replace function public.notify_on_call()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if NEW.caller = NEW.callee or NEW.callee = '' then
+    return NEW;
+  end if;
+  insert into public.notifications (username, actor, type, payload)
+  values (NEW.callee, NEW.caller, 'call', jsonb_build_object('call_id', NEW.id, 'call_type', NEW.type, 'chat_id', NEW.chat_id));
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_calls_notify on public.calls;
+create trigger trg_calls_notify
+  after insert on public.calls
+  for each row execute function public.notify_on_call();
+
+-- ------------------------------------------------------------
+-- 6.8 Storage — avatars (public) + story media (private, RLS-guarded)
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do update set public = true;
+
+insert into storage.buckets (id, name, public)
+values ('story_media', 'story_media', false)
+on conflict (id) do nothing;
+
+drop policy if exists "avatar files public read" on storage.objects;
+create policy "avatar files public read" on storage.objects
+  for select using (bucket_id = 'avatars');
+
+drop policy if exists "avatar files owner write" on storage.objects;
+create policy "avatar files owner write" on storage.objects
+  for all to authenticated
+  using (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = public.my_username()
+  )
+  with check (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = public.my_username()
+  );
+
+-- Story media: path convention story_media/{username}/{audience}/{file}.
+-- Direct reads (and signed-URL creation) run this RLS check.
+drop policy if exists "story media visibility" on storage.objects;
+create policy "story media visibility" on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'story_media'
+    and public.can_view_story(
+      (storage.foldername(name))[1],
+      (storage.foldername(name))[2],
+      public.my_username()
+    )
+  );
+
+drop policy if exists "story media owner upload" on storage.objects;
+create policy "story media owner upload" on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'story_media'
+    and (storage.foldername(name))[1] = public.my_username()
+  );
+
+drop policy if exists "story media owner manage" on storage.objects;
+create policy "story media owner manage" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'story_media'
+    and (storage.foldername(name))[1] = public.my_username()
+  );
+
+-- ------------------------------------------------------------
+-- 6.9 Realtime — new tables join the publication so live updates
+--     (notifications, story reactions, incoming calls) arrive
+--     without polling. RLS applies to realtime delivery too.
+-- ------------------------------------------------------------
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['stories', 'story_views', 'notifications', 'calls', 'follows', 'highlights', 'close_friends']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;

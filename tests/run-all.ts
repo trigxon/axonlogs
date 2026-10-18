@@ -9,6 +9,7 @@ import { runTier6Tests } from './tier6_webrtc_calls.test.ts';
 import { runTier7Tests } from './tier7_accounts_auth.test.ts';
 import { runTier8Tests } from './tier8_instagram_features.test.ts';
 import { runTier9Tests } from './tier9_security_auth.test.ts';
+import { runTier10Tests } from './tier10_full_clone.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,6 +60,10 @@ async function main() {
   console.log('--- Executing Tier 9: Security Baseline (Supabase Auth + RLS) ---');
   const t9 = await runTier9Tests(projectRoot);
   allResults.push(...t9);
+
+  console.log('--- Executing Tier 10: Full Clone Expansion (stories/notifications/profiles/search) ---');
+  const t10 = await runTier10Tests(projectRoot);
+  allResults.push(...t10);
 
   const totalDuration = Date.now() - startTime;
 

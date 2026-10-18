@@ -123,7 +123,7 @@ interface CryptoContextType {
   setActiveChat: (chat: Chat) => void;
   createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
-  sendMessage: (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean) => Promise<void>;
+  sendMessage: (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean, chatOverride?: Chat) => Promise<void>;
   editMessage: (msgId: string, newText: string) => void;
   toggleReaction: (msgId: string, emoji: string) => void;
   togglePinMessage: (msgId: string) => void;
@@ -1284,13 +1284,21 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [backendMode, simBotActive, activeChat?.id, encryptText, scheduleDestruct, addLog]);
 
-  const sendMessage = async (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean) => {
-    if (!activeChat || !deviceId) return;
+  const sendMessage = async (
+    text: string,
+    file?: File | null,
+    replyToId?: string | null,
+    burnOverride?: boolean,
+    /** story replies / deep links: send into a chat that is not (yet) the active one */
+    chatOverride?: Chat
+  ) => {
+    const targetChat = chatOverride || activeChat;
+    if (!targetChat || !deviceId) return;
     const burnOnRead = burnOverride ?? settingsRef.current.burnOnRead;
 
     if (backendMode === 'online') {
       if (!supabase) return;
-      const encryptedText = encryptText(text, activeChat.share_code);
+      const encryptedText = encryptText(text, targetChat.share_code);
       let fileUrl = null;
 
       if (settingsRef.current.allowFiles && file) {
@@ -1307,13 +1315,13 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             .from('chat_files')
             .getPublicUrl(uploadData.path);
 
-          fileUrl = encryptText(publicUrl, activeChat.share_code);
+          fileUrl = encryptText(publicUrl, targetChat.share_code);
         } else {
           // Cloud storage unavailable (e.g. bucket not created yet): embed the
           // attachment as an encrypted payload so files ALWAYS transmit.
           const dataUrl = await fileToDataUrl(file);
           if (dataUrl) {
-            fileUrl = encryptText(dataUrl, activeChat.share_code);
+            fileUrl = encryptText(dataUrl, targetChat.share_code);
             addLog(`[UPLOAD: Cloud storage unavailable (${uploadError?.message || 'unknown error'}). Attachment embedded as encrypted payload.]`);
           } else {
             addLog('[UPLOAD: Failed to read attachment. No payload attached.]');
@@ -1321,10 +1329,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         }
       }
 
-      if (activeChat.share_code.startsWith('EPH-')) {
+      if (targetChat.share_code.startsWith('EPH-')) {
         const ephPayload = {
           id: crypto.randomUUID(),
-          chat_id: activeChat.id,
+          chat_id: targetChat.id,
           sender_id: deviceId,
           text: encryptedText,
           file_url: fileUrl,
@@ -1339,8 +1347,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             payload: ephPayload,
           });
 
-          const decryptedText = text ? decryptText(encryptedText, activeChat.share_code) : '';
-          const decryptedFileUrl = fileUrl ? decryptText(fileUrl, activeChat.share_code) : null;
+          const decryptedText = text ? decryptText(encryptedText, targetChat.share_code) : '';
+          const decryptedFileUrl = fileUrl ? decryptText(fileUrl, targetChat.share_code) : null;
           setMessages(prev => [...prev, {
             ...ephPayload,
             text: decryptedText,
@@ -1356,7 +1364,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         const now = new Date().toISOString();
         const { error } = await supabase.from('messages').insert({
           id: msgId,
-          chat_id: activeChat.id,
+          chat_id: targetChat.id,
           sender_id: deviceId,
           text: encryptedText,
           file_url: fileUrl,
@@ -1372,7 +1380,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           console.error('Send message error:', error);
           const raw: Message = {
             id: msgId,
-            chat_id: activeChat.id,
+            chat_id: targetChat.id,
             sender_id: deviceId,
             text: encryptedText,
             file_url: fileUrl,
@@ -1381,7 +1389,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             read_by: [],
             created_at: now,
           };
-          setMessages(prev => [...prev, toDisplayMessage(raw, activeChat.share_code)]);
+          setMessages(prev => [...prev, toDisplayMessage(raw, targetChat.share_code)]);
           writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), raw]);
           addLog(`[MSG: Cloud delivery failed (${error.message}). Payload saved locally.]`);
           return;
@@ -1392,10 +1400,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           if (prev.some(m => m.id === msgId)) return prev;
           return [...prev, {
             id: msgId,
-            chat_id: activeChat.id,
+            chat_id: targetChat.id,
             sender_id: deviceId,
             text,
-            file_url: fileUrl ? decryptText(fileUrl, activeChat.share_code) : null,
+            file_url: fileUrl ? decryptText(fileUrl, targetChat.share_code) : null,
             burn_on_read: true,
             reply_to_id: replyToId,
             read_by: [],
@@ -1404,22 +1412,22 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         });
       }
 
-      addLog(`Sent payload to ${activeChat.share_code}`);
+      addLog(`Sent payload to ${targetChat.share_code}`);
       return;
     }
 
     // LOCAL MODE
-    const encryptedText = encryptText(text, activeChat.share_code);
+    const encryptedText = encryptText(text, targetChat.share_code);
     let fileUrl: string | null = null;
 
     if (settingsRef.current.allowFiles && file) {
       const dataUrl = await fileToDataUrl(file);
-      if (dataUrl) fileUrl = encryptText(dataUrl, activeChat.share_code);
+      if (dataUrl) fileUrl = encryptText(dataUrl, targetChat.share_code);
     }
 
     const raw: Message = {
       id: crypto.randomUUID(),
-      chat_id: activeChat.id,
+      chat_id: targetChat.id,
       sender_id: deviceId,
       text: encryptedText,
       file_url: fileUrl,
@@ -1429,10 +1437,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       created_at: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, toDisplayMessage(raw, activeChat.share_code)]);
+    setMessages(prev => [...prev, toDisplayMessage(raw, targetChat.share_code)]);
     writeJSON('axon_messages', [...readJSON<Message[]>('axon_messages', []), raw]);
     scheduleDestruct(raw);
-    addLog(`Sent payload to ${activeChat.share_code}`);
+    addLog(`Sent payload to ${targetChat.share_code}`);
   };
 
   const purgeTerminal = useCallback(() => {

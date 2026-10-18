@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageCircle, PlusSquare, Settings as SettingsIcon, X, KeyRound, Users,
-  ToggleRight, ToggleLeft, Lock,
+  ToggleRight, ToggleLeft, Lock, Search, Heart, Compass,
 } from 'lucide-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
 import {
@@ -9,16 +10,24 @@ import {
   fetchFollowing, fetchAccountsByUsernames, type Account, type FollowState,
 } from '../../utils/auth';
 import { isChatMuted } from '../../utils/chatMeta';
+import { fetchUnreadCount } from '../../utils/notifications';
+import type { StoryTrayEntry } from '../../utils/stories';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
 import ProfilePanel from '../profile/ProfilePanel';
 import Avatar from '../profile/Avatar';
 import CallOverlay, { IncomingCallScreen } from '../calling/CallOverlay';
 import SecurityNote from '../ui/SecurityNote';
+import StoriesRail from '../stories/StoriesRail';
+import StoryViewer from '../stories/StoryViewer';
+import CreateStory from '../stories/CreateStory';
+import NotificationsPanel from '../notifications/NotificationsPanel';
+import ExplorePanel from '../search/ExplorePanel';
+import UserProfilePage from '../profile/UserProfilePage';
 
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
 
-type Pane = 'chat' | 'profile' | 'settings';
+type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'create' | 'user' | 'notfound';
 
 let audioCtx: AudioContext | null = null;
 const playPing = () => {
@@ -46,15 +55,101 @@ export const ChatApp: React.FC = () => {
   const {
     deviceId, alias, chats, activeChat, setActiveChat, messages,
     createChat, joinChat, renameChat, changeChatPassword, createGroupChat, searchAccounts,
-    startDmWithUser,
+    startDmWithUser, sendMessage,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
     latency, typingUsers, onlineUsers, account,
   } = useCrypto();
 
-  /* ---------------- navigation state ---------------- */
-  const [mobileView, setMobileView] = useState<'inbox' | 'chat' | 'profile' | 'settings'>('inbox');
-  const [pane, setPane] = useState<Pane>('chat');
+  /* ---------------- navigation (URL-routed) ---------------- */
+  const location = useLocation();
+  const navigate = useNavigate();
+  const paneFromPath = (): Pane => {
+    const p = location.pathname;
+    if (p === '/' || p.startsWith('/direct')) return 'chat';
+    if (p.startsWith('/explore')) return 'explore';
+    if (p.startsWith('/notifications')) return 'notifications';
+    if (p.startsWith('/create')) return 'create';
+    if (p === '/profile' || p.startsWith('/profile/')) {
+      const rest = p.slice('/profile'.length).replace(/^\/+/, '');
+      return rest ? 'user' : 'profile';
+    }
+    if (p.startsWith('/settings')) return 'settings';
+    return 'notfound';
+  };
+  const [pane, setPane] = useState<Pane>(paneFromPath);
+  const [mobileView, setMobileView] = useState<'inbox' | 'chat' | Pane>('inbox');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // URL is the source of truth: rail/nav taps navigate, back/forward work,
+  // and deep links (/profile/someone, /direct/t/<chat-id>) open directly.
+  useEffect(() => {
+    const p = paneFromPath();
+    setPane(p);
+    if (p === 'chat') {
+      const m = location.pathname.match(/^\/direct\/t\/([\w-]+)/);
+      if (m) {
+        const target = chats.find(c => c.id === m[1]);
+        if (target) {
+          setActiveChat(target);
+          setMobileView('chat');
+        }
+      } else {
+        setMobileView(mv => (mv === 'chat' && activeChat ? 'chat' : 'inbox'));
+      }
+    } else {
+      setMobileView(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, chats.length]);
+
+  const go = (to: string) => navigate(to);
+  const openProfileAt = (username?: string) => navigate(username ? `/profile/${encodeURIComponent(username)}` : '/profile');
+
+  /* ---------------- story viewer (global overlay) ---------------- */
+  const [viewer, setViewer] = useState<{ entries: StoryTrayEntry[]; index: number } | null>(null);
+  const openTray = (entries: StoryTrayEntry[], index: number) => setViewer({ entries, index });
+
+  /** Story reply → find-or-create the DM and send straight into it. */
+  const handleStoryReply = async (username: string, text: string): Promise<boolean> => {
+    const res = await startDmWithUser(`@${username.replace(/^@/, '')}`);
+    if (!res.ok || !res.chat) return false;
+    const chat = res.chat;
+    setActiveChat(chat);
+    setMobileView('chat');
+    go(`/direct/t/${chat.id}`);
+    await sendMessage(text, null, null, false, chat);
+    return true;
+  };
+
+  /* ---------------- unread notifications badge ---------------- */
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
+  useEffect(() => {
+    if (backendMode !== 'online' || !supabase || !account) {
+      setUnreadNotifs(0);
+      return;
+    }
+    let alive = true;
+    const load = () =>
+      fetchUnreadCount(supabase, account.username)
+        .then(c => { if (alive) setUnreadNotifs(c); })
+        .catch(() => undefined);
+    load();
+    const t = setInterval(load, 45000);
+    let channel: any = null;
+    try {
+      channel = supabase
+        .channel(`notif-${account.username}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `username=eq.${account.username}` }, () => load())
+        .subscribe();
+    } catch {
+      /* realtime unavailable — polling covers it */
+    }
+    return () => {
+      alive = false;
+      clearInterval(t);
+      try { if (channel) supabase?.removeChannel(channel); } catch { /* noop */ }
+    };
+  }, [backendMode, account?.username]);
 
   /* ---------------- security screens ---------------- */
   const [panicMode, setPanicMode] = useState(false);
@@ -509,12 +604,23 @@ export const ChatApp: React.FC = () => {
   }
 
   /* ---------------- desktop right pane content ---------------- */
+  const routeUsername = decodeURIComponent(
+    (location.pathname.replace(/^\/profile\//, '') || '').replace(/\/(followers|following)$/, '')
+  );
+  const handleExploreMessage = async (username: string) => {
+    const res = await startDmWithUser(`@${username.replace(/^@/, '')}`);
+    if (res.ok && res.chat) {
+      setActiveChat(res.chat);
+      go('/direct');
+    }
+    return res;
+  };
   const rightPane = (() => {
     if (pane === 'profile') {
       return (
         <ProfilePanel
-          onBack={() => setPane('chat')}
-          onOpenSettings={() => setPane('settings')}
+          onBack={() => go('/direct')}
+          onOpenSettings={() => go('/settings')}
           onTriggerPanic={() => setPanicMode(true)}
           refreshKey={refreshKey}
         />
@@ -523,29 +629,65 @@ export const ChatApp: React.FC = () => {
     if (pane === 'settings') {
       return (
         <Suspense fallback={<Loading />}>
-          <SettingsPanel onBack={() => setPane('profile')} />
+          <SettingsPanel onBack={() => go('/profile')} />
         </Suspense>
       );
+    }
+    if (pane === 'explore') {
+      return <ExplorePanel onBack={() => go('/direct')} onOpenProfile={u => openProfileAt(u)} onMessage={handleExploreMessage} />;
+    }
+    if (pane === 'notifications') {
+      return (
+        <NotificationsPanel
+          onBack={() => go('/direct')}
+          onOpenProfile={u => openProfileAt(u)}
+          onOpenMessages={() => go('/direct')}
+          onOpenCreateStory={() => go('/create')}
+          onAllRead={() => setUnreadNotifs(0)}
+        />
+      );
+    }
+    if (pane === 'create') {
+      return <CreateStory onBack={() => go('/direct')} onDone={() => go('/direct')} />;
+    }
+    if (pane === 'user') {
+      const uname = routeUsername.trim().toLowerCase();
+      if (!uname) return <NotFoundPane onHome={() => go('/direct')} />;
+      return (
+        <UserProfilePage
+          key={uname}
+          username={uname}
+          isMe={uname === (account?.username || '')}
+          onBack={() => go('/direct')}
+          onOpenSettings={() => go('/settings')}
+          onOpenStory={(stories, i) => openTray([{ username: uname, stories, unseen: false }], i)}
+          onMessage={handleExploreMessage}
+        />
+      );
+    }
+    if (pane === 'notfound') {
+      return <NotFoundPane onHome={() => go('/direct')} />;
     }
     if (activeChat) {
       return (
         <ConversationPanel
           key={activeChat.id}
           chat={activeChat}
-          onBack={() => { setMobileView('inbox'); setPane('chat'); }}
+          onBack={() => { setMobileView('inbox'); go('/direct'); }}
           onRequestRename={(id) => {
             const c = chats.find(x => x.id === id);
             if (c) { setTargetChatId(id); setRenameInput(c.name); setShowRenameModal(true); }
           }}
           onRequestKeyRotation={(id) => { setTargetChatId(id); setPasswordInput(''); setShowPasswordModal(true); }}
           onTriggerPanic={() => setPanicMode(true)}
+          onOpenProfile={u => openProfileAt(u)}
         />
       );
     }
     return <EmptyChatState onNewMessage={openCreateModal} onNewGroup={() => setShowGroupModal(true)} onJoin={() => setShowJoinModal(true)} />;
   })();
 
-  const showChatOnMobile = mobileView === 'chat' && activeChat;
+  const mobileFull = mobileView !== 'inbox' && (mobileView !== 'chat' || !!activeChat);
 
   // Chat rows / status bar show the other person's handle on DM channels
   const displayChatName = (chat: Chat) =>
@@ -596,18 +738,48 @@ export const ChatApp: React.FC = () => {
             {/* DESKTOP LEFT RAIL (Instagram-web style) */}
             <nav className="hidden md:flex flex-col items-center gap-1 w-[68px] shrink-0 border-r border-white/[0.05] bg-[#07070d]/60 py-4 z-20">
               <div className="mb-4">
-                <div className="w-10 h-10 rounded-xl ring-gradient flex items-center justify-center">
-                  <MessageCircle className="w-5 h-5 text-cyan-300" />
-                </div>
+                <button
+                  type="button"
+                  aria-label="Axon Logs home"
+                  onClick={() => go('/direct')}
+                  className="w-10 h-10 rounded-xl ring-gradient flex items-center justify-center hover:brightness-125 transition-all"
+                >
+                  <Compass className="w-5 h-5 text-cyan-300" />
+                </button>
               </div>
               <RailButton
                 icon={<MessageCircle className="w-[22px] h-[22px]" />}
                 label="Chats"
                 active={pane === 'chat'}
-                onClick={() => { setPane('chat'); setMobileView('inbox'); }}
+                onClick={() => go('/direct')}
+              />
+              <RailButton
+                icon={<Search className="w-[22px] h-[22px]" />}
+                label="Search"
+                active={pane === 'explore'}
+                onClick={() => go('/explore')}
               />
               <RailButton
                 icon={<PlusSquare className="w-[22px] h-[22px]" />}
+                label="New story"
+                active={pane === 'create'}
+                onClick={() => go('/create')}
+              />
+              <div className="relative">
+                <RailButton
+                  icon={<Heart className="w-[22px] h-[22px]" />}
+                  label="Notifications"
+                  active={pane === 'notifications'}
+                  onClick={() => go('/notifications')}
+                />
+                {unreadNotifs > 0 && pane !== 'notifications' && (
+                  <span className="absolute top-0.5 right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center pointer-events-none">
+                    {unreadNotifs > 9 ? '9+' : unreadNotifs}
+                  </span>
+                )}
+              </div>
+              <RailButton
+                icon={<MessageCircle className="w-[22px] h-[22px]" />}
                 label="New message"
                 onClick={openCreateModal}
               />
@@ -618,39 +790,87 @@ export const ChatApp: React.FC = () => {
               />
               <div className="flex-1" />
               <RailButton
-                icon={<Avatar seed={deviceId} name={alias || '?'} size={26} gradient={myGradient} />}
+                icon={<Avatar seed={deviceId} name={alias || '?'} size={26} gradient={myGradient} src={(account as any)?.avatar_url || undefined} />}
                 label="Profile"
-                active={pane === 'profile'}
-                onClick={() => setPane('profile')}
+                active={pane === 'profile' || pane === 'user'}
+                onClick={() => openProfileAt()}
               />
               <RailButton
                 icon={<SettingsIcon className="w-[22px] h-[22px]" />}
                 label="Settings"
                 active={pane === 'settings'}
-                onClick={() => setPane('settings')}
+                onClick={() => go('/settings')}
               />
             </nav>
 
             {/* INBOX (middle column on desktop, full screen on mobile) */}
-            <div className={`w-full md:w-[340px] lg:w-[380px] shrink-0 min-h-0 ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'hidden md:block' : 'block'}`}>
-              <InboxPanel
-                onOpenChat={(chat: Chat) => { setActiveChat(chat); setPane('chat'); setMobileView('chat'); }}
-                onOpenProfile={() => { setPane('profile'); setMobileView('profile'); }}
-                onNewMessage={openCreateModal}
-                onNewGroup={() => setShowGroupModal(true)}
-                onJoinCode={() => setShowJoinModal(true)}
+            <div className={`w-full md:w-[340px] lg:w-[380px] shrink-0 min-h-0 flex flex-col ${mobileFull ? 'hidden md:flex' : 'flex'}`}>
+              <StoriesRail
+                onOpenTray={openTray}
+                onCreate={() => go('/create')}
                 refreshKey={refreshKey}
               />
+              <div className="flex-1 min-h-0">
+                <InboxPanel
+                  onOpenChat={(chat: Chat) => { setActiveChat(chat); setMobileView('chat'); go(`/direct/t/${chat.id}`); }}
+                  onOpenProfile={() => openProfileAt()}
+                  onNewMessage={openCreateModal}
+                  onNewGroup={() => setShowGroupModal(true)}
+                  onJoinCode={() => setShowJoinModal(true)}
+                  refreshKey={refreshKey}
+                />
+              </div>
             </div>
 
-            {/* RIGHT PANE (conversation / profile / settings) */}
+            {/* RIGHT PANE (conversation / profile / settings / explore ...) */}
             <main className={`flex-1 min-w-0 min-h-0 hidden md:block`}>
               {rightPane}
             </main>
-            <div className={`flex-1 min-w-0 min-h-0 md:hidden ${showChatOnMobile || mobileView === 'profile' || mobileView === 'settings' ? 'block' : 'hidden'}`}>
+            <div className={`flex-1 min-w-0 min-h-0 md:hidden ${mobileFull ? 'block' : 'hidden'}`}>
               {rightPane}
             </div>
           </div>
+
+          {/* ── MOBILE BOTTOM NAV (Instagram-style) ── */}
+          <nav className="md:hidden shrink-0 border-t border-white/[0.07] bg-[#07070d]/90 flex items-center justify-around px-2 py-2 z-30">
+            <NavBtn
+              icon={<MessageCircle className="w-[22px] h-[22px]" />}
+              label="Chats"
+              active={pane === 'chat'}
+              onClick={() => go('/direct')}
+            />
+            <NavBtn
+              icon={<Search className="w-[22px] h-[22px]" />}
+              label="Search"
+              active={pane === 'explore'}
+              onClick={() => go('/explore')}
+            />
+            <NavBtn
+              icon={<PlusSquare className="w-[22px] h-[22px]" />}
+              label="Create"
+              active={pane === 'create'}
+              onClick={() => go('/create')}
+            />
+            <div className="relative">
+              <NavBtn
+                icon={<Heart className="w-[22px] h-[22px]" />}
+                label="Activity"
+                active={pane === 'notifications'}
+                onClick={() => go('/notifications')}
+              />
+              {unreadNotifs > 0 && pane !== 'notifications' && (
+                <span className="absolute -top-1 right-0 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center pointer-events-none">
+                  {unreadNotifs > 9 ? '9+' : unreadNotifs}
+                </span>
+              )}
+            </div>
+            <NavBtn
+              icon={<Avatar seed={deviceId} name={alias || '?'} size={22} gradient={myGradient} src={(account as any)?.avatar_url || undefined} />}
+              label="Profile"
+              active={pane === 'profile' || pane === 'user'}
+              onClick={() => openProfileAt()}
+            />
+          </nav>
 
           {/* ── STATUS BAR (tmux-style, restored) ── */}
           <div className="term-statusbar shrink-0 border-t border-white/[0.07] flex items-center gap-2 sm:gap-3 md:gap-4 px-3 sm:px-4 md:px-6 lg:px-7 text-[8px] sm:text-[9px] md:text-[10px] font-bold tracking-widest uppercase select-none min-h-[28px] md:min-h-[32px]">
@@ -972,6 +1192,18 @@ export const ChatApp: React.FC = () => {
         </ModalShell>
       )}
 
+      {/* story viewer (global overlay) */}
+      {viewer && (
+        <StoryViewer
+          entries={viewer.entries}
+          startIndex={viewer.index}
+          myUsername={account?.username || ''}
+          onClose={() => setViewer(null)}
+          onOpenProfile={u => { setViewer(null); openProfileAt(u); }}
+          onReply={handleStoryReply}
+        />
+      )}
+
       {/* call overlays */}
       <CallOverlay />
       <IncomingCallScreen />
@@ -1061,6 +1293,39 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
   <div>
     <label className="block text-[9px] font-bold tracking-[0.25em] text-zinc-500 uppercase mb-1.5">{label}</label>
     {children}
+  </div>
+);
+
+/** Mobile bottom-nav button (Instagram-style, icon + tiny label). */
+const NavBtn: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}> = ({ icon, label, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-label={label}
+    className={`w-12 h-11 rounded-xl flex items-center justify-center transition-all ${
+      active ? 'text-cyan-300 bg-cyan-400/10' : 'text-zinc-400 active:scale-95'
+    }`}
+  >
+    {icon}
+  </button>
+);
+
+/** In-app 404 — real route, reachable from bad deep links. */
+const NotFoundPane: React.FC<{ onHome: () => void }> = ({ onHome }) => (
+  <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-8">
+    <div className="font-display text-6xl font-bold text-gradient">404</div>
+    <div className="text-white font-bold tracking-wide">This page isn't here</div>
+    <p className="text-zinc-500 text-sm max-w-xs leading-relaxed">
+      The link may be broken, or the page may have been removed.
+    </p>
+    <button onClick={onHome} className="btn-premium px-6 py-2.5 rounded-lg text-xs mt-2">
+      Back to your messages
+    </button>
   </div>
 );
 

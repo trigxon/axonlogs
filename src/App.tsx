@@ -1,3 +1,4 @@
+import { BrowserRouter } from 'react-router-dom';
 import { CryptoProvider, useCrypto } from './contexts/CryptoContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import ChatApp from './components/layout/ChatApp';
@@ -12,7 +13,9 @@ function App() {
   return (
     <ThemeProvider>
       <CryptoProvider>
-        <Gate />
+        <BrowserRouter>
+          <Gate />
+        </BrowserRouter>
       </CryptoProvider>
     </ThemeProvider>
   );

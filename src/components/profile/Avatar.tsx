@@ -8,6 +8,8 @@ export interface AvatarProps {
   online?: boolean;      // presence dot
   ring?: 'none' | 'story' | 'seen' | 'locked'; // Instagram-style ring
   gradient?: string;     // override gradient (own avatar choice)
+  /** uploaded profile photo URL — falls back to gradient + initials */
+  src?: string | null;
   onClick?: () => void;
   className?: string;
 }
@@ -23,9 +25,13 @@ export const Avatar: React.FC<AvatarProps> = ({
   online = false,
   ring = 'none',
   gradient,
+  src,
   onClick,
   className = '',
 }) => {
+  const [imgBroken, setImgBroken] = React.useState(false);
+  React.useEffect(() => setImgBroken(false), [src]);
+  const showImg = !!src && !imgBroken;
   const ringPad = ring !== 'none' ? 3 : 0;
   const outer = size + ringPad * 2 + (ring !== 'none' ? 4 : 0);
 
@@ -40,21 +46,31 @@ export const Avatar: React.FC<AvatarProps> = ({
 
   const inner = (
     <div
-      className="flex items-center justify-center shrink-0 select-none"
+      className="flex items-center justify-center shrink-0 select-none overflow-hidden"
       style={{
         width: size,
         height: size,
         borderRadius: '9999px',
-        background: gradient || avatarGradient(seed),
+        background: showImg ? '#0b0d14' : (gradient || avatarGradient(seed)),
         boxShadow: ring === 'seen' ? '0 0 0 2px rgba(34,211,238,0.35)' : undefined,
       }}
     >
-      <span
-        className="font-bold text-black/85 tracking-wider"
-        style={{ fontSize: Math.max(10, size * 0.34) }}
-      >
-        {initialsOf(name)}
-      </span>
+      {showImg ? (
+        <img
+          src={src || undefined}
+          alt={name}
+          draggable={false}
+          onError={() => setImgBroken(true)}
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <span
+          className="font-bold text-black/85 tracking-wider"
+          style={{ fontSize: Math.max(10, size * 0.34) }}
+        >
+          {initialsOf(name)}
+        </span>
+      )}
     </div>
   );
 

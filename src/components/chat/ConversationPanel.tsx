@@ -28,6 +28,8 @@ export interface ConversationPanelProps {
   onRequestRename: (chatId: string) => void;
   onRequestKeyRotation: (chatId: string) => void;
   onTriggerPanic: () => void;
+  /** deep-link to a user's profile page (optional) */
+  onOpenProfile?: (username: string) => void;
 }
 
 const DayDivider: React.FC<{ day: string }> = ({ day }) => {
@@ -53,6 +55,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   onRequestRename,
   onRequestKeyRotation,
   onTriggerPanic,
+  onOpenProfile,
 }) => {
   const {
     deviceId, messages, latency, sendMessage, purgeTerminal, addSystemMessage,
@@ -317,7 +320,11 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             <ArrowLeft className="w-5 h-5" />
           </button>
           <Avatar seed={displayName} name={displayName} size={40} online={!chatLocked && peerOnline} onClick={onBack} className="hidden sm:inline-flex md:inline-flex" />
-          <div className="flex-1 min-w-0 cursor-pointer" onClick={onBack} title="Conversation info">
+          <div
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => { if (onOpenProfile && peer && !isGroup) onOpenProfile(peer); }}
+            title={peer && !isGroup ? "View profile" : "Conversation info"}
+          >
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-white truncate">{displayName}</span>
               {chat.share_code.startsWith('EPH-') && (
