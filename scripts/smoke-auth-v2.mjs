@@ -103,9 +103,9 @@ try {
     // silent failures, and skip the session-dependent steps below.
     text = await page.evaluate(() => document.body.innerText);
     const externallyBlocked =
-      /temporarily blocked|asks for email confirmation|rate limit|locked down/i.test(text);
+      /temporarily blocked|asks for email confirmation|rate limit|locked down|too many accounts|wait a few minutes/i.test(text);
     if (externallyBlocked) {
-      const reason = (text.match(/[^\n]*(?:temporarily blocked|asks for email confirmation|rate limit|locked down)[^\n]*/i) || ['auth provider blocked signup'])[0].trim();
+      const reason = (text.match(/[^\n]*(?:temporarily blocked|asks for email confirmation|rate limit|locked down|[Tt]oo many accounts|wait a few minutes)[^\n]*/i) || ['auth provider blocked signup'])[0].trim();
       console.log(`  ⚠ SKIP: signup blocked by project auth config — "${reason.slice(0, 90)}"`);
       console.log('  ⚠ SKIP: session reload / profile / logout / login round-trip (need a session)');
       console.log(`\nResult: ${passed} passed, ${failed} failed, 4 skipped (owner action documented in AUDIT.md §8)`);
