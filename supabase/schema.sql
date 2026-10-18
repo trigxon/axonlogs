@@ -307,6 +307,21 @@ $$;
 
 grant execute on function public.my_username() to anon, authenticated;
 
+-- NOTE: chat_participants is created HERE, before the language-sql
+-- helpers below, because PostgreSQL validates a SQL function body at
+-- CREATE time — a forward reference aborts a fresh database with
+-- `42P01: relation "public.chat_participants" does not exist`.
+-- Its RLS policies and backfill live in §5.4 below.
+create table if not exists public.chat_participants (
+  chat_id   uuid not null references public.chats(id) on delete cascade,
+  username  text not null,
+  joined_at timestamptz not null default now(),
+  primary key (chat_id, username)
+);
+
+create index if not exists idx_chat_participants_username
+  on public.chat_participants (username);
+
 -- Membership helper — SECURITY DEFINER so policies can ask "am I in this
 -- chat?" WITHOUT querying chat_participants from inside another RLS
 -- policy. A policy that reads its own table recurses forever
@@ -385,17 +400,9 @@ grant select on public.legacy_login to anon, authenticated;
 -- 5.4 Chat membership — messages/chats are visible only to their
 --     members. Membership rows are written at chat creation and when
 --     joining by code (proof = knowing the share code).
+--     (The table + index are created in §5.2 — order is load-bearing
+--     for the SQL-language helpers; only RLS lives here.)
 -- ------------------------------------------------------------
-create table if not exists public.chat_participants (
-  chat_id   uuid not null references public.chats(id) on delete cascade,
-  username  text not null,
-  joined_at timestamptz not null default now(),
-  primary key (chat_id, username)
-);
-
-create index if not exists idx_chat_participants_username
-  on public.chat_participants (username);
-
 alter table public.chat_participants enable row level security;
 
 drop policy if exists "members read participants"  on public.chat_participants;
@@ -740,21 +747,11 @@ create policy "story owners post" on public.stories
   for insert to authenticated
   with check (username = public.my_username());
 
-drop policy if exists "story visibility" on public.stories;
-create policy "story visibility" on public.stories
-  for select to authenticated
-  using (
-    public.can_view_story(username, audience, public.my_username())
-    and (
-      expires_at > now()
-      -- expired stories stay readable inside highlights they were saved to
-      or exists (
-        select 1 from public.highlight_stories hs
-        join public.highlights h on h.id = hs.highlight_id
-        where hs.story_id = stories.id and h.username = public.my_username()
-      )
-    )
-  );
+-- NOTE: the SELECT policy ("story visibility") is created in §6.5b
+-- below, AFTER highlight_stories exists. Its USING clause reads that
+-- table and PostgreSQL validates the expression at CREATE POLICY
+-- time — creating it here aborts a fresh database with
+-- `42P01: relation "public.highlight_stories" does not exist`.
 
 drop policy if exists "story owners manage" on public.stories;
 create policy "story owners manage" on public.stories
@@ -902,6 +899,29 @@ create policy "highlight stories manage" on public.highlight_stories
     exists (
       select 1 from public.highlights h
       where h.id = highlight_id and h.username = public.my_username()
+    )
+  );
+
+-- ------------------------------------------------------------
+-- 6.5b Story SELECT policy — placed here, not in §6.3, because its
+--     USING clause reads highlight_stories/highlights (created in
+--     §6.5). CREATE POLICY validates the expression immediately,
+--     so forward references abort a fresh database with 42P01.
+--     Order in this file is load-bearing.
+-- ------------------------------------------------------------
+drop policy if exists "story visibility" on public.stories;
+create policy "story visibility" on public.stories
+  for select to authenticated
+  using (
+    public.can_view_story(username, audience, public.my_username())
+    and (
+      expires_at > now()
+      -- expired stories stay readable inside highlights they were saved to
+      or exists (
+        select 1 from public.highlight_stories hs
+        join public.highlights h on h.id = hs.highlight_id
+        where hs.story_id = stories.id and h.username = public.my_username()
+      )
     )
   );
 
@@ -1116,7 +1136,11 @@ declare
 begin
   foreach t in array array['stories', 'story_views', 'notifications', 'calls', 'follows', 'highlights', 'close_friends']
   loop
-    if not exists (
+    -- Guard on table existence too: a missing table must warn, never
+    -- abort the whole schema run (real-world 42P01 regression guard).
+    if to_regclass(format('public.%I', t)) is null then
+      raise warning 'realtime: table public.% does not exist — skipped', t;
+    elsif not exists (
       select 1 from pg_publication_tables
       where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
     ) then
