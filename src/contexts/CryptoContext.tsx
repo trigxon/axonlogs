@@ -17,6 +17,9 @@ import {
   isBlockedEitherWay,
   fetchFollowState,
   fetchFollowing,
+  insertChatParticipants,
+  joinChatByCode,
+  logoutAccount,
 } from '../utils/auth';
 
 export interface Chat {
@@ -461,6 +464,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const logout = useCallback(() => {
     clearStoredSession();
     setAccount(null);
+    // End the Supabase Auth session too (best-effort on v1 setups)
+    void logoutAccount(supabase);
     addLog('Account logged out');
   }, [addLog]);
 
@@ -610,6 +615,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       addLog(`DM invite to @${target} failed — channel kept`);
     }
 
+    // Member-scoped RLS (schema v2) admits both sides via membership rows
+    await insertChatParticipants(supabase, data.id, [me, target]);
+
     admitDmChat(data as Chat);
     setActiveChat(data as Chat);
     addLog(`Direct message to @${target} started`);
@@ -757,6 +765,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       }
       known.push(data.id);
       const msgs = localMsgs.filter(m => m.chat_id === lc.id);
+      // Member-scoped RLS (schema v2): creator needs a membership row
+      if (account) await insertChatParticipants(supabase!, data.id, [account.username]);
       for (const m of msgs) {
         await supabase!.from('messages').insert({
           chat_id: data.id,
@@ -836,6 +846,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         setChats(prev => [data, ...prev]);
         setActiveChat(data);
         addLog(`Created channel ${data.name} [KEY SAVED TO DEVICE KEYRING]`);
+        // Member-scoped RLS (schema v2): the creator needs a membership row
+        if (account) await insertChatParticipants(supabase, data.id, [account.username]);
         return true;
       }
       return false;
@@ -855,15 +867,24 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const joinChat = async (code: string) => {
     if (backendMode === 'online') {
       if (!supabase) return false;
-      const { data, error } = await supabase.from('chats').select('*').eq('share_code', code).single();
-      if (error) {
-        console.error("Join chat error:", error);
-        // PGRST116 = no matching row (invalid code). Anything else = backend down -> degrade.
-        if ((error as any).code !== 'PGRST116') {
-          setBackendMode('local');
-          setNetworkStatus('LOCAL');
-          addLog('Supabase backend unavailable - degraded to LOCAL MODE');
+      // v2: join via RPC (knowing the code = proof of membership, and the
+      // membership row is written server-side). v1: direct lookup.
+      let data: any = null;
+      const rpc = await joinChatByCode(supabase, code).catch(() => ({ chat: null, rpcMissing: true }));
+      if (rpc.rpcMissing) {
+        const direct = await supabase.from('chats').select('*').eq('share_code', code).single();
+        data = direct.data;
+        if (direct.error) {
+          console.error('Join chat error:', direct.error);
+          // PGRST116 = no matching row (invalid code). Anything else = backend down -> degrade.
+          if ((direct.error as any).code !== 'PGRST116') {
+            setBackendMode('local');
+            setNetworkStatus('LOCAL');
+            addLog('Supabase backend unavailable - degraded to LOCAL MODE');
+          }
         }
+      } else {
+        data = rpc.chat;
       }
       if (data) {
         saveKnownChat(data.id);
@@ -1613,6 +1634,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const sent = await sendDmInvite(supabase, member, data.id, data.share_code, me);
       if (!sent) addLog(`Invite to @${member} failed — they can still find the group via search`);
     }
+
+    // Member-scoped RLS (schema v2) admits everyone via membership rows
+    await insertChatParticipants(supabase, data.id, [me, ...members]);
 
     admitDmChat(data as Chat);
     setActiveChat(data as Chat);

@@ -10,7 +10,7 @@ import { AVATAR_CHOICES, getMyBio, setMyBio } from '../../utils/chatMeta';
 import {
   updateAccountProfile, fetchFollowers, fetchFollowing, fetchFollowRequests,
   acceptFollowRequest, declineFollowRequest, fetchAccountsByUsernames,
-  fetchBlockedUsers, unblockUser,
+  fetchBlockedUsers, unblockUser, fetchDisplayName,
 } from '../../utils/auth';
 import SecurityNote from '../ui/SecurityNote';
 
@@ -74,12 +74,13 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({ onBack, onOpenSettin
     return () => { cancelled = true; };
   }, [myHandle, socialTick, refreshKey]);
 
-  // Display name from the accounts table
+  // Display name from the profile (profiles view on v2, accounts on v1)
   useEffect(() => {
     if (!supabase || !myHandle) return;
     let cancelled = false;
-    supabase.from('accounts').select('display_name').eq('username', myHandle).maybeSingle()
-      .then(({ data }: any) => { if (!cancelled && data) setDisplayName(data.display_name || ''); });
+    fetchDisplayName(supabase, myHandle)
+      .then((name) => { if (!cancelled && name !== null) setDisplayName(name || ''); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [myHandle, refreshKey]);
 
