@@ -3,8 +3,8 @@
  *
  * Rows live in public.notifications (RLS: you only see YOUR rows).
  * Social events (follow / follow request / follow accepted / message
- * request / incoming call) are created by DB triggers; story events
- * are created by the acting user's client (story_reaction, story_reply).
+ * request / incoming call) are created by DB triggers; DM receipts are
+ * handled by the chat engine itself, not this feed.
  * ------------------------------------------------------------------ */
 
 export interface NotificationItem {
@@ -16,8 +16,6 @@ export interface NotificationItem {
     | 'follow_request'
     | 'follow_accept'
     | 'message_request'
-    | 'story_reaction'
-    | 'story_reply'
     | 'call';
   payload: Record<string, any>;
   read_at: string | null;
@@ -28,7 +26,6 @@ export interface NotificationItem {
 export interface NotifPrefs {
   follows: boolean;      // new followers + accepted requests
   messages: boolean;     // message requests
-  stories: boolean;      // story reactions + replies
   calls: boolean;        // incoming / missed calls
   sound: boolean;
   desktop: boolean;
@@ -39,7 +36,6 @@ const PREFS_KEY = 'axon_notif_prefs';
 export const DEFAULT_NOTIF_PREFS: NotifPrefs = {
   follows: true,
   messages: true,
-  stories: true,
   calls: true,
   sound: true,
   desktop: false,
@@ -67,7 +63,6 @@ export const setNotifPrefs = (prefs: NotifPrefs) => {
 export const prefsAllow = (prefs: NotifPrefs, type: NotificationItem['type']): boolean => {
   if (type === 'follow' || type === 'follow_request' || type === 'follow_accept') return prefs.follows;
   if (type === 'message_request') return prefs.messages;
-  if (type === 'story_reaction' || type === 'story_reply') return prefs.stories;
   if (type === 'call') return prefs.calls;
   return true;
 };
@@ -134,10 +129,6 @@ export const notificationText = (n: NotificationItem): string => {
       return 'accepted your follow request';
     case 'message_request':
       return 'sent you a chat request';
-    case 'story_reaction':
-      return `reacted ${n.payload?.emoji || '❤️'} to your story`;
-    case 'story_reply':
-      return 'replied to your story';
     case 'call':
       return 'called you';
     default:

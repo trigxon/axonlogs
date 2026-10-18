@@ -4,9 +4,10 @@ import { pathToFileURL } from 'node:url';
 import type { TestResult } from './tier1_build_and_navigation.test.ts';
 
 /**
- * Tier 10: Full Instagram-clone expansion — stories, notifications,
- * routed shell, profiles, search, account lifecycle. Structural +
- * runtime contracts, same style as tiers 7-9.
+ * Tier 10: Full Instagram-clone expansion — notifications, routed shell,
+ * profiles, search, account lifecycle — PLUS the product's exclusion
+ * contracts: stories (and their tables/components/routes) must NOT exist.
+ * Structural + runtime contracts, same style as tiers 7-9.
  */
 export async function runTier10Tests(projectRoot: string): Promise<TestResult[]> {
   const results: TestResult[] = [];
@@ -41,10 +42,10 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes('useLocation') && read('src', 'components', 'layout', 'ChatApp.tsx').includes('useNavigate'), 'ChatApp must drive panes from the router'],
   ]);
 
-  check('Tier 10.1: ChatApp routes cover explore / notifications / create / profile / settings / 404', [
+  check('Tier 10.1: ChatApp routes cover explore / notifications / profile / settings / 404 (NO /create)', [
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes("p.startsWith('/explore')"), 'missing /explore route'],
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes("p.startsWith('/notifications')"), 'missing /notifications route'],
-    [read('src', 'components', 'layout', 'ChatApp.tsx').includes("p.startsWith('/create')"), 'missing /create route'],
+    [!read('src', 'components', 'layout', 'ChatApp.tsx').includes("p.startsWith('/create')"), '/create (story composer) route must be gone'],
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes("/profile/"), 'missing /profile/:username route'],
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes('NotFoundPane'), 'missing in-app 404 pane'],
     [read('src', 'components', 'layout', 'ChatApp.tsx').includes('MOBILE BOTTOM NAV'), 'missing mobile bottom navigation'],
@@ -78,34 +79,25 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
   ]);
 
 
-  check('Tier 10.2: schema v2 stories table + server-enforced expiry + audience RLS', [
-    [schema.includes('create table if not exists public.stories'), 'stories table missing'],
-    [schema.includes("default (now() + interval '24 hours')"), 'stories must default to a 24h server-side expiry'],
-    [schema.includes('can_view_story(username, audience, public.my_username())'), 'stories SELECT must go through can_view_story'],
-    [schema.includes('expires_at > now()'), 'expired stories must be filtered server-side (RLS), not by client timers'],
-    [schema.includes("username = public.my_username()"), 'story writes must be identity-scoped'],
+  // The teardown section (6.8b) legitimately MENTIONS the removed objects in
+  // drop statements — exclusion is asserted on everything BEFORE it.
+  const schemaPre = schema.split('6.8b Stories teardown')[0];
+  check('Tier 10.2: EXCLUSION — stories must not exist anywhere in the schema (spec: no stories)', [
+    [!schemaPre.includes('create table if not exists public.stories'), 'stories table must not be created'],
+    [!schemaPre.includes('create table if not exists public.story_views'), 'story_views table must not be created'],
+    [!schemaPre.includes('create table if not exists public.highlights'), 'highlights table must not be created'],
+    [!schemaPre.includes('create table if not exists public.highlight_stories'), 'highlight_stories table must not be created'],
+    [!schemaPre.includes('create table if not exists public.close_friends'), 'close_friends table must not be created'],
+    [!schemaPre.includes('can_view_story'), 'can_view_story helper must be gone'],
+    [!schemaPre.includes("values ('story_media'"), 'story_media bucket must not be provisioned'],
   ]);
 
-  check('Tier 10.2: schema v2 can_view_story enforces close friends + blocks', [
-    [schema.includes("p_audience = 'close_friends' and public.is_close_friend(p_owner, p_viewer)"), 'close-friends audience must check the close_friends table'],
-    [schema.includes('not public.is_blocked_either_way(p_owner, p_viewer)'), 'blocked users must never see stories'],
-    [schema.includes('public.is_following(p_viewer, p_owner)'), 'followers audience must check the social graph'],
-  ]);
-
-  check('Tier 10.2: schema v2 story views + highlights + close friends tables', [
-    [schema.includes('create table if not exists public.story_views'), 'story_views table missing'],
-    [schema.includes('constraint story_views_pair unique (story_id, viewer)'), 'one view row per viewer per story'],
-    [schema.includes('create table if not exists public.highlights'), 'highlights table missing'],
-    [schema.includes('create table if not exists public.highlight_stories'), 'highlight_stories table missing'],
-    [schema.includes('create table if not exists public.close_friends'), 'close_friends table missing'],
-    [schema.includes("exists (\n        select 1 from public.highlight_stories hs"), 'expired stories must stay readable inside highlights'],
-  ]);
-
-  check('Tier 10.2: schema v2 private story_media bucket + avatar bucket', [
-    [schema.includes("values ('story_media', 'story_media', false)"), 'story_media bucket must be PRIVATE'],
-    [schema.includes("values ('avatars', 'avatars', true)"), 'avatars bucket missing'],
-    [schema.includes("public.can_view_story(\n      (storage.foldername(name))[1]"), 'story_media read policy must derive visibility from the path'],
-    [schema.includes("(storage.foldername(name))[1] = public.my_username()"), 'story_media/avatar writes must be owner-scoped by path'],
+  check('Tier 10.2: idempotent teardown removes story objects from databases that had them', [
+    [schema.includes('drop table if exists public.highlight_stories cascade'), 'teardown drops highlight_stories'],
+    [schema.includes("drop table if exists public.stories cascade"), 'teardown drops stories'],
+    [schema.includes("drop function if exists public.can_view_story(text, text, text)"), 'teardown drops can_view_story'],
+    [schema.includes("delete from storage.buckets where id = 'story_media'"), 'teardown removes the story_media bucket'],
+    [schema.includes('Stories are deliberately NOT part of Axon Logs'), 'teardown section must document the exclusion'],
   ]);
 
   /* ---------------- 10.3 notifications backend ---------------- */
@@ -123,49 +115,32 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
     [schema.includes('create table if not exists public.calls'), 'calls table missing'],
     [schema.includes('using (caller = public.my_username() or callee = public.my_username())'), 'call rows visible to both parties only'],
     [schema.includes('trg_calls_notify'), 'incoming calls must notify the callee'],
-    [/array\['stories', 'story_views', 'notifications', 'calls'/.test(schema), 'new tables must join the realtime publication'],
+    [/array\['notifications', 'calls', 'follows'\]/.test(schema), 'non-story tables join the realtime publication'],
+    [!schema.includes("'story_views'") && !schema.includes("'stories'"), 'story tables must not join the publication'],
   ]);
 
   /* ---------------- 10.4 stories client runtime ---------------- */
 
-  try {
-    const stories: any = await import(pathToFileURL(path.join(projectRoot, 'src', 'utils', 'stories.ts')).href);
-    const fakeFile = (type: string, size: number) => ({ type, size }) as any;
-    const badType = stories.validateStoryFile(fakeFile('application/pdf', 100));
-    const tooBig = stories.validateStoryFile(fakeFile('image/jpeg', stories.MAX_STORY_BYTES + 1));
-    const good = stories.validateStoryFile(fakeFile('image/jpeg', 1024));
-    const goodVideo = stories.validateStoryFile(fakeFile('video/mp4', 1024));
-    const expired = stories.isStoryExpired({ expires_at: new Date(Date.now() - 1000).toISOString() });
-    const fresh = stories.isStoryExpired({ expires_at: new Date(Date.now() + 3600000).toISOString() });
-    const ageRecent = stories.storyAgeLabel(new Date(Date.now() - 30 * 60000).toISOString());
-    check('Tier 10.4: story validation + expiry helpers (runtime)', [
-      [typeof badType === 'string' && /isn't supported/.test(badType), 'PDF must be rejected as unsupported'],
-      [typeof tooBig === 'string' && /too large/.test(tooBig), '>10MB must be rejected'],
-      [good === null && goodVideo === null, 'JPG + MP4 must pass'],
-      [expired === true && fresh === false, 'expiry helper must compare server timestamps'],
-      [/^(\d+m ago|\d+h|1d\+)$/.test(ageRecent), 'age label renders a compact form'],
-    ]);
-  } catch (err: any) {
-    push('Tier 10.4: story validation + expiry helpers (runtime)', false, String(err?.message || err));
-  }
-
-  check('Tier 10.4: stories service layer guards inputs', [
-    [read('src', 'utils', 'stories.ts').includes('MAX_STORY_BYTES = 10 * 1024 * 1024'), '10MB story ceiling'],
-    [read('src', 'utils', 'stories.ts').includes('ALLOWED_STORY_TYPES'), 'explicit story type allowlist'],
-    [read('src', 'utils', 'stories.ts').includes("story_media/${u}/${audience}/"), 'upload path must embed owner + audience for the storage policy'],
-    [read('src', 'utils', 'stories.ts').includes('createSignedUrl'), 'private story media must be read through signed URLs'],
-    [read('src', 'utils', 'stories.ts').includes("onConflict: 'story_id,viewer'"), 'story views upsert one row per viewer'],
+  check('Tier 10.4: EXCLUSION — stories client layer must not exist', [
+    [!exists('src', 'utils', 'stories.ts'), 'src/utils/stories.ts must be deleted'],
+    [!exists('src', 'components', 'stories', 'StoriesRail.tsx'), 'StoriesRail must be deleted'],
+    [!exists('src', 'components', 'stories', 'StoryViewer.tsx'), 'StoryViewer must be deleted'],
+    [!exists('src', 'components', 'stories', 'CreateStory.tsx'), 'CreateStory must be deleted'],
+    [!read('src', 'components', 'layout', 'ChatApp.tsx').includes('StoriesRail'), 'shell must not render a story tray'],
+    [!read('src', 'components', 'layout', 'ChatApp.tsx').includes('StoryViewer'), 'shell must not mount a story viewer'],
+    [!read('src', 'components', 'layout', 'ChatApp.tsx').includes('CreateStory'), 'shell must not mount the story composer'],
+    [!read('src', 'utils', 'notifications.ts').includes('story'), 'notification feed must not carry story events'],
   ]);
 
   try {
     const notif: any = await import(pathToFileURL(path.join(projectRoot, 'src', 'utils', 'notifications.ts')).href);
-    const allowed = notif.prefsAllow(notif.getNotifPrefs(), 'story_reaction');
-    const blockedPref = notif.prefsAllow({ ...notif.DEFAULT_NOTIF_PREFS, stories: false }, 'story_reaction');
+    const allowed = notif.prefsAllow(notif.getNotifPrefs(), 'follow');
+    const blockedPref = notif.prefsAllow({ ...notif.DEFAULT_NOTIF_PREFS, follows: false }, 'follow');
     const text = notif.notificationText({ id: 'x', username: 'a', actor: 'bob', type: 'follow_request', payload: {}, read_at: null, created_at: new Date().toISOString() });
     const age = notif.notificationAge(new Date(Date.now() - 5 * 60000).toISOString());
     check('Tier 10.4: notification prefs + labels (runtime)', [
-      [allowed === true, 'default prefs allow story activity'],
-      [blockedPref === false, 'stories:false must gate story_reaction'],
+      [allowed === true, 'default prefs allow follow activity'],
+      [blockedPref === false, 'follows:false must gate follow events'],
       [text === 'requested to follow you', 'notificationText renders plain language'],
       [age === '5m', 'notificationAge is compact'],
     ]);
@@ -175,15 +150,12 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
 
   /* ---------------- 10.5 story UI ---------------- */
 
-  check('Tier 10.5: story tray + viewer + composer components exist and wire RLS-backed data', [
-    [exists('src', 'components', 'stories', 'StoriesRail.tsx'), 'StoriesRail missing'],
-    [exists('src', 'components', 'stories', 'StoryViewer.tsx'), 'StoryViewer missing'],
-    [exists('src', 'components', 'stories', 'CreateStory.tsx'), 'CreateStory missing'],
-    [read('src', 'components', 'stories', 'StoriesRail.tsx').includes('fetchStoryTray'), 'tray must load through the stories service'],
-    [read('src', 'components', 'stories', 'StoryViewer.tsx').includes('markStoryViewed'), 'viewer must record views server-side'],
-    [read('src', 'components', 'stories', 'StoryViewer.tsx').includes('fetchStoryViewers'), 'owner must see who watched'],
-    [read('src', 'components', 'stories', 'CreateStory.tsx').includes("'close_friends'"), 'composer must offer the Close Friends audience'],
-    [read('src', 'components', 'layout', 'ChatApp.tsx').includes('handleStoryReply'), 'story replies must send a real DM'],
+  check('Tier 10.5: profile page renders story-free (avatar, lists, block, remove-follower only)', [
+    [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('data-testid="user-profile"'), 'profile page intact'],
+    [!read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('fetchUserStories'), 'profile must not load stories'],
+    [!read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('fetchHighlights'), 'profile must not load highlights'],
+    [!read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('toggleCloseFriend'), 'profile must not manage close friends'],
+    [!read('src', 'components', 'layout', 'ChatApp.tsx').includes("go('/create')"), 'no navigation entry may target the story composer'],
   ]);
 
   /* ---------------- 10.6 notifications UI + prefs ---------------- */
@@ -214,7 +186,6 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
     [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('uploadAvatar') && read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('removeAvatar'), 'profile photo upload + removal'],
     [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('updateAccountProfile'), 'edit profile must persist'],
     [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('removeFollower'), 'follower removal'],
-    [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('toggleCloseFriend'), 'close-friends management'],
     [read('src', 'components', 'profile', 'UserProfilePage.tsx').includes('This account is private'), 'private-account lock screen'],
     [read('src', 'utils', 'auth.ts').includes('fileToAvatarBlob'), 'avatars must be client-downscaled before upload'],
   ]);
@@ -234,11 +205,13 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
     [read('src', 'components', 'settings', 'SettingsPanel.tsx').includes('handleExportAccountData'), 'account data export'],
     [read('src', 'components', 'settings', 'SettingsPanel.tsx').includes('handleDeleteAccount'), 'account deletion flow'],
     [read('src', 'components', 'settings', 'SettingsPanel.tsx').includes("bio: 'This account has been deleted.'"), 'deletion must anonymize the profile'],
+    [!read('src', 'components', 'settings', 'SettingsPanel.tsx').includes(".from('stories')"), 'deletion must not reference the removed stories table'],
+    [!read('src', 'components', 'settings', 'SettingsPanel.tsx').includes("toggleNotifPref('stories')"), 'settings must not expose a story pref'],
   ]);
 
   /* ---------------- 10.9 engine hardening ---------------- */
 
-  check('Tier 10.9: message engine accepts a chat override for story replies', [
+  check('Tier 10.9: message engine accepts a target-chat override (deterministic sends)', [
     [read('src', 'contexts', 'CryptoContext.tsx').includes('chatOverride?: Chat'), 'sendMessage must accept a target chat'],
     [read('src', 'contexts', 'CryptoContext.tsx').includes('const targetChat = chatOverride || activeChat;'), 'override must take precedence over the active chat'],
     [read('src', 'components', 'chat', 'ConversationPanel.tsx').includes('onOpenProfile'), 'chat header must deep-link to profiles'],

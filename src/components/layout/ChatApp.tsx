@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  MessageCircle, PlusSquare, Settings as SettingsIcon, X, KeyRound, Users,
+  MessageCircle, Settings as SettingsIcon, X, KeyRound, Users,
   ToggleRight, ToggleLeft, Lock, Search, Heart, Compass,
 } from 'lucide-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
@@ -11,23 +11,19 @@ import {
 } from '../../utils/auth';
 import { isChatMuted } from '../../utils/chatMeta';
 import { fetchUnreadCount } from '../../utils/notifications';
-import type { StoryTrayEntry } from '../../utils/stories';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
 import ProfilePanel from '../profile/ProfilePanel';
 import Avatar from '../profile/Avatar';
 import CallOverlay, { IncomingCallScreen } from '../calling/CallOverlay';
 import SecurityNote from '../ui/SecurityNote';
-import StoriesRail from '../stories/StoriesRail';
-import StoryViewer from '../stories/StoryViewer';
-import CreateStory from '../stories/CreateStory';
 import NotificationsPanel from '../notifications/NotificationsPanel';
 import ExplorePanel from '../search/ExplorePanel';
 import UserProfilePage from '../profile/UserProfilePage';
 
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
 
-type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'create' | 'user' | 'notfound';
+type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'user' | 'notfound';
 
 let audioCtx: AudioContext | null = null;
 const playPing = () => {
@@ -55,7 +51,7 @@ export const ChatApp: React.FC = () => {
   const {
     deviceId, alias, chats, activeChat, setActiveChat, messages,
     createChat, joinChat, renameChat, changeChatPassword, createGroupChat, searchAccounts,
-    startDmWithUser, sendMessage,
+    startDmWithUser,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
     latency, typingUsers, onlineUsers, account,
   } = useCrypto();
@@ -68,7 +64,6 @@ export const ChatApp: React.FC = () => {
     if (p === '/' || p.startsWith('/direct')) return 'chat';
     if (p.startsWith('/explore')) return 'explore';
     if (p.startsWith('/notifications')) return 'notifications';
-    if (p.startsWith('/create')) return 'create';
     if (p === '/profile' || p.startsWith('/profile/')) {
       const rest = p.slice('/profile'.length).replace(/^\/+/, '');
       return rest ? 'user' : 'profile';
@@ -104,22 +99,6 @@ export const ChatApp: React.FC = () => {
 
   const go = (to: string) => navigate(to);
   const openProfileAt = (username?: string) => navigate(username ? `/profile/${encodeURIComponent(username)}` : '/profile');
-
-  /* ---------------- story viewer (global overlay) ---------------- */
-  const [viewer, setViewer] = useState<{ entries: StoryTrayEntry[]; index: number } | null>(null);
-  const openTray = (entries: StoryTrayEntry[], index: number) => setViewer({ entries, index });
-
-  /** Story reply → find-or-create the DM and send straight into it. */
-  const handleStoryReply = async (username: string, text: string): Promise<boolean> => {
-    const res = await startDmWithUser(`@${username.replace(/^@/, '')}`);
-    if (!res.ok || !res.chat) return false;
-    const chat = res.chat;
-    setActiveChat(chat);
-    setMobileView('chat');
-    go(`/direct/t/${chat.id}`);
-    await sendMessage(text, null, null, false, chat);
-    return true;
-  };
 
   /* ---------------- unread notifications badge ---------------- */
   const [unreadNotifs, setUnreadNotifs] = useState(0);
@@ -642,13 +621,9 @@ export const ChatApp: React.FC = () => {
           onBack={() => go('/direct')}
           onOpenProfile={u => openProfileAt(u)}
           onOpenMessages={() => go('/direct')}
-          onOpenCreateStory={() => go('/create')}
           onAllRead={() => setUnreadNotifs(0)}
         />
       );
-    }
-    if (pane === 'create') {
-      return <CreateStory onBack={() => go('/direct')} onDone={() => go('/direct')} />;
     }
     if (pane === 'user') {
       const uname = routeUsername.trim().toLowerCase();
@@ -660,7 +635,6 @@ export const ChatApp: React.FC = () => {
           isMe={uname === (account?.username || '')}
           onBack={() => go('/direct')}
           onOpenSettings={() => go('/settings')}
-          onOpenStory={(stories, i) => openTray([{ username: uname, stories, unseen: false }], i)}
           onMessage={handleExploreMessage}
         />
       );
@@ -759,12 +733,6 @@ export const ChatApp: React.FC = () => {
                 active={pane === 'explore'}
                 onClick={() => go('/explore')}
               />
-              <RailButton
-                icon={<PlusSquare className="w-[22px] h-[22px]" />}
-                label="New story"
-                active={pane === 'create'}
-                onClick={() => go('/create')}
-              />
               <div className="relative">
                 <RailButton
                   icon={<Heart className="w-[22px] h-[22px]" />}
@@ -805,11 +773,6 @@ export const ChatApp: React.FC = () => {
 
             {/* INBOX (middle column on desktop, full screen on mobile) */}
             <div className={`w-full md:w-[340px] lg:w-[380px] shrink-0 min-h-0 flex flex-col ${mobileFull ? 'hidden md:flex' : 'flex'}`}>
-              <StoriesRail
-                onOpenTray={openTray}
-                onCreate={() => go('/create')}
-                refreshKey={refreshKey}
-              />
               <div className="flex-1 min-h-0">
                 <InboxPanel
                   onOpenChat={(chat: Chat) => { setActiveChat(chat); setMobileView('chat'); go(`/direct/t/${chat.id}`); }}
@@ -844,12 +807,6 @@ export const ChatApp: React.FC = () => {
               label="Search"
               active={pane === 'explore'}
               onClick={() => go('/explore')}
-            />
-            <NavBtn
-              icon={<PlusSquare className="w-[22px] h-[22px]" />}
-              label="Create"
-              active={pane === 'create'}
-              onClick={() => go('/create')}
             />
             <div className="relative">
               <NavBtn
@@ -1190,18 +1147,6 @@ export const ChatApp: React.FC = () => {
             </p>
           </form>
         </ModalShell>
-      )}
-
-      {/* story viewer (global overlay) */}
-      {viewer && (
-        <StoryViewer
-          entries={viewer.entries}
-          startIndex={viewer.index}
-          myUsername={account?.username || ''}
-          onClose={() => setViewer(null)}
-          onOpenProfile={u => { setViewer(null); openProfileAt(u); }}
-          onReply={handleStoryReply}
-        />
       )}
 
       {/* call overlays */}

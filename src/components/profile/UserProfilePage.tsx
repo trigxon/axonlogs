@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Settings, Grid3X3, Lock, MessageCircle, UserCheck, UserX, MoreHorizontal,
-  Camera, Trash2, Ban, UserMinus, Loader2, Play, X, ChevronRight, Users,
+  ArrowLeft, Settings, Lock, MessageCircle, UserCheck, UserX, MoreHorizontal,
+  Camera, Trash2, Ban, UserMinus, Loader2, X, Users,
 } from 'lucide-react';
 import { supabase } from '../../contexts/CryptoContext';
 import {
@@ -12,11 +12,6 @@ import {
   updateAccountProfile, uploadAvatar, removeAvatar,
   type Account, type FollowState,
 } from '../../utils/auth';
-import {
-  fetchUserStories, fetchHighlights, createHighlight, deleteHighlight,
-  setCloseFriend, fetchCloseFriends, storyMediaUrl,
-  type Story, type Highlight,
-} from '../../utils/stories';
 import Avatar from './Avatar';
 import SecurityNote from '../ui/SecurityNote';
 
@@ -25,8 +20,6 @@ export interface UserProfilePageProps {
   isMe: boolean;
   onBack: () => void;
   onOpenSettings: () => void;
-  /** open the story viewer with these stories starting at index */
-  onOpenStory: (stories: Story[], index: number) => void;
   onMessage: (username: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -44,15 +37,14 @@ const GRADIENT_CHOICES = [
 /**
  * Full Instagram-style profile page (Axon theme), routed at /profile/:username:
  * avatar (uploaded photo or gradient), stats with follower/following lists,
- * follow / request / message actions, block, remove-follower, close-friends,
- * active stories + highlights. Everything persists through RLS-guarded tables.
+ * follow / request / message actions, block, remove-follower. Everything
+ * persists through RLS-guarded tables.
  */
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   username,
   isMe,
   onBack,
   onOpenSettings,
-  onOpenStory,
   onMessage,
 }) => {
   const [account, setAccount] = useState<Account | null>(null);
@@ -62,9 +54,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [followers, setFollowers] = useState<string[]>([]);
   const [following, setFollowing] = useState<string[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
-  const [stories, setStories] = useState<Story[]>([]);
-  const [highlights, setHighlights] = useState<Highlight[]>([]);
-  const [closeFriends, setCloseFriends] = useState<string[]>([]);
   const [blocked, setBlocked] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [listModal, setListModal] = useState<'followers' | 'following' | null>(null);
@@ -114,17 +103,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       setEditName(acc.display_name || '');
       setEditBio(acc.bio || '');
       setEditGradient(acc.avatar_gradient || '');
-      const [fs, fol, fwing, hs] = await Promise.all([
+      const [fs, fol, fwing] = await Promise.all([
         fetchFollowState(supabase, me || username, username),
         fetchFollowers(supabase, username),
         fetchFollowing(supabase, username),
-        fetchUserStories(supabase, username),
       ]);
       setFollowState(fs);
       setFollowers(fol);
       setFollowing(fwing);
-      setStories(hs.filter(s => !s.expires_at || new Date(s.expires_at).getTime() > Date.now() || isMe));
-      setHighlights(await fetchHighlights(supabase, username));
       if (isMe) {
         const reqs = await fetchFollowRequests(supabase, username);
         setPendingCount(reqs.length);
@@ -134,8 +120,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         // did I block them? (my_blocklist RPC → fetchBlockedUsers covers v2+v1)
         setBlocked((await fetchBlockedUsers(supabase, me)).includes(username.trim().toLowerCase()));
       }
-      // my Close Friends list (drives the "Add to Close Friends" toggle + list chips)
-      if (me) setCloseFriends(await fetchCloseFriends(supabase, me));
     } catch {
       setNotFound(true);
     } finally {
@@ -241,14 +225,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     flash(`Removed @${uname}`);
   };
 
-  const toggleCloseFriend = async (uname: string) => {
-    if (!supabase || !account) return;
-    const add = !closeFriends.includes(uname);
-    await setCloseFriend(supabase, account.username, uname, add);
-    setCloseFriends(prev => (add ? [...prev, uname] : prev.filter(x => x !== uname)));
-    flash(add ? `@${uname} added to Close Friends` : `@${uname} removed from Close Friends`);
-  };
-
   const listToggleFollow = async (acc: Account) => {
     if (!supabase || !me) return;
     const current = (listFollowMap[acc.username]) || { following: false, requested: false, followsMe: false };
@@ -300,7 +276,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const displayName = account.display_name?.trim() || `@${account.username}`;
-  const storyRing = stories.length > 0 ? 'story' : 'none';
 
   return (
     <div className="h-full flex flex-col bg-[#07070d]/80 relative" data-testid="user-profile">
@@ -342,15 +317,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         <div className="flex items-center gap-5 sm:gap-8 px-4 sm:px-6 py-6">
           <button
             type="button"
-            onClick={() => (isMe ? avatarInputRef.current?.click() : stories.length > 0 && onOpenStory(stories, 0))}
+            onClick={() => isMe && avatarInputRef.current?.click()}
             className="relative shrink-0"
-            title={isMe ? 'Change profile photo' : stories.length > 0 ? 'View story' : undefined}
+            title={isMe ? 'Change profile photo' : undefined}
           >
             <Avatar
               seed={account.username}
               name={displayName}
               size={80}
-              ring={storyRing}
+              ring="none"
               src={account.avatar_url || undefined}
               gradient={account.avatar_gradient || undefined}
             />
@@ -391,10 +366,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
             {/* stats */}
             <div className="flex items-center gap-5 sm:gap-7 mt-3 text-sm">
-              <button onClick={() => (stories.length > 0 || highlights.length > 0) && (stories.length > 0 ? onOpenStory(stories, 0) : highlights[0]?.stories && onOpenStory(highlights[0].stories, 0))} className="text-center hover:text-white transition-colors">
-                <span className="block text-white font-bold">{stories.length + highlights.reduce((n, h) => n + (h.stories?.length || 0), 0)}</span>
-                <span className="block text-[10px] text-zinc-500 uppercase tracking-wider">Stories</span>
-              </button>
               <button onClick={() => openList('followers')} className="text-center hover:text-white transition-colors">
                 <span className="block text-white font-bold">{followers.length}</span>
                 <span className="block text-[10px] text-zinc-500 uppercase tracking-wider">Followers</span>
@@ -461,19 +432,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 <MessageCircle className="w-3.5 h-3.5" />
                 {busy === 'message' ? '…' : 'Message'}
               </button>
-              {followState.following && !isMe && (
-                <button
-                  onClick={() => toggleCloseFriend(account.username)}
-                  className={`px-4 py-2 rounded-lg text-xs border flex items-center gap-1.5 ${
-                    closeFriends.includes(account.username)
-                      ? 'border-emerald-400/50 text-emerald-300 bg-emerald-400/10'
-                      : 'border-white/[0.08] text-zinc-400 hover:border-emerald-400/30'
-                  }`}
-                  title="Close Friends can see your close-friends-only stories"
-                >
-                  <UserCheck className="w-3.5 h-3.5" /> {closeFriends.includes(account.username) ? 'Close Friend ✓' : 'Add to Close Friends'}
-                </button>
-              )}
             </>
           )}
         </div>
@@ -488,7 +446,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <Lock className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
             <p className="text-white font-bold text-sm">This account is private</p>
             <p className="text-zinc-500 text-xs mt-1 max-w-xs mx-auto leading-relaxed">
-              Follow this account to see their stories and highlights.
+              Follow this account to unlock messaging and see their full profile.
             </p>
           </div>
         )}
@@ -499,77 +457,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <Ban className="w-7 h-7 text-red-400 mx-auto mb-2" />
             <p className="text-red-300 text-sm font-bold">You've blocked @{account.username}</p>
             <p className="text-zinc-500 text-xs mt-1">They can't find your profile, follow you, or message you. Unblock to change that.</p>
-          </div>
-        )}
-
-        {/* highlights */}
-        {isMe && (
-          <div className="px-4 sm:px-6 mt-6">
-            <button
-              onClick={() => createHighlightFromStories()}
-              disabled={stories.length === 0}
-              className="w-full border border-dashed border-white/15 rounded-2xl p-4 flex items-center gap-3 text-left disabled:opacity-40 hover:border-cyan-400/40 transition-colors"
-            >
-              <span className="w-11 h-11 rounded-xl bg-white/[0.05] flex items-center justify-center shrink-0">
-                <Grid3X3 className="w-5 h-5 text-cyan-300" />
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-xs text-white font-bold">New highlight</span>
-                <span className="block text-[10px] text-zinc-500 leading-tight">
-                  {stories.length > 0 ? `Save your ${stories.length} active stor${stories.length === 1 ? 'y' : 'ies'} to your profile for good` : 'Share a story first, then save it here'}
-                </span>
-              </span>
-              <ChevronRight className="w-4 h-4 text-zinc-600" />
-            </button>
-          </div>
-        )}
-        {highlights.length > 0 && (
-          <div className="px-4 sm:px-6 mt-4">
-            <h3 className="text-[9px] font-bold tracking-[0.25em] text-zinc-500 uppercase mb-2">Highlights</h3>
-            <div className="flex gap-3 overflow-x-auto feed-scroll pb-1">
-              {highlights.map(h => (
-                <div key={h.id} className="relative shrink-0 group">
-                  <button
-                    type="button"
-                    onClick={() => h.stories && h.stories.length > 0 && onOpenStory(h.stories, 0)}
-                    className="flex flex-col items-center gap-1.5 w-[72px]"
-                    title={`Highlight: ${h.title}`}
-                  >
-                    <span className="w-[62px] h-[62px] rounded-full border border-white/15 p-0.5 block">
-                      <HighlightCover coverPath={h.cover_path} fallbackGradient={account.avatar_gradient} seed={h.id} />
-                    </span>
-                    <span className="text-[10px] text-zinc-300 truncate w-full text-center">{h.title}</span>
-                  </button>
-                  {isMe && (
-                    <button
-                      onClick={async () => {
-                        await deleteHighlight(supabase, h.id);
-                        setHighlights(prev => prev.filter(x => x.id !== h.id));
-                        flash('Highlight deleted');
-                      }}
-                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/80 border border-white/20 text-zinc-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                      aria-label={`Delete highlight ${h.title}`}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* stories grid */}
-        {stories.length > 0 && (!account.is_private || isMe || followState.following) && (
-          <div className="px-4 sm:px-6 mt-5 pb-6">
-            <h3 className="text-[9px] font-bold tracking-[0.25em] text-zinc-500 uppercase mb-2 flex items-center gap-1.5">
-              <Play className="w-3 h-3" /> Active stories · expire in 24h
-            </h3>
-            <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-1.5">
-              {stories.map((s, i) => (
-                <StoryTile key={s.id} story={s} onClick={() => onOpenStory(stories, i)} />
-              ))}
-            </div>
           </div>
         )}
 
@@ -607,7 +494,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               )}
               {listAccounts.map(acc => {
                 const lf = listFollowMap[acc.username];
-                const isCF = closeFriends.includes(acc.username);
                 return (
                   <div key={acc.id} className="flex items-center gap-2.5 px-2 py-2 hover:bg-white/[0.04] rounded-xl">
                     <button type="button" onClick={() => { setListModal(null); navigate(`/profile/${encodeURIComponent(acc.username)}`); }} className="shrink-0" title={`Open @${acc.username}`}>
@@ -619,15 +505,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     </div>
                     {isMe && listModal === 'followers' && (
                       <>
-                        <button
-                          onClick={() => toggleCloseFriend(acc.username)}
-                          className={`shrink-0 text-[9px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg border transition-colors ${
-                            isCF ? 'border-emerald-400/50 text-emerald-300 bg-emerald-400/10' : 'border-white/10 text-zinc-400'
-                          }`}
-                          title="Close Friends can see close-friends-only stories"
-                        >
-                          <UserCheck className="w-3.5 h-3.5" />
-                        </button>
                         <button
                           onClick={() => removeFollowerRow(acc.username)}
                           className="shrink-0 text-[9px] font-bold tracking-widest uppercase px-2.5 py-1.5 rounded-lg border border-white/10 text-zinc-400 hover:text-red-300"
@@ -717,17 +594,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     setListLoading(false);
   }
 
-  /* save all active stories into one new highlight */
-  async function createHighlightFromStories() {
-    if (!supabase || !account || stories.length === 0) return;
-    const res = await createHighlight(supabase, account.username, `Stories ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`, stories.map(s => s.id), stories[0].media_path);
-    if (res.ok) {
-      flash('Stories saved to a new highlight');
-      load();
-    } else {
-      flash(res.error || 'Could not create the highlight.');
-    }
-  }
 };
 
 /* ---------- small pieces ---------- */
@@ -747,60 +613,6 @@ const BioLinks: React.FC<{ bio: string }> = ({ bio }) => {
         )
       )}
     </p>
-  );
-};
-
-const HighlightCover: React.FC<{ coverPath: string; fallbackGradient?: string; seed: string }> = ({ coverPath, fallbackGradient, seed }) => {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    if (coverPath) {
-      storyMediaUrl(supabase, coverPath).then(u => { if (alive) setUrl(u); }).catch(() => undefined);
-    }
-    return () => { alive = false; };
-  }, [coverPath]);
-  return (
-    <span className="w-full h-full rounded-full overflow-hidden block bg-[#0b0d14]">
-      {url ? (
-        <img src={url} alt="" className="w-full h-full object-cover" />
-      ) : (
-        <span className="w-full h-full block" style={{ background: fallbackGradient || 'linear-gradient(135deg,#164e63,#0f172a)' }} data-seed={seed} />
-      )}
-    </span>
-  );
-};
-
-const StoryTile: React.FC<{ story: Story; onClick: () => void }> = ({ story, onClick }) => {
-  const [url, setUrl] = useState<string | null>(null);
-  const [err, setErr] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    storyMediaUrl(supabase, story.media_path)
-      .then(u => { if (alive) setUrl(u); })
-      .catch(() => { if (alive) setErr(true); });
-    return () => { alive = false; };
-  }, [story.media_path]);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative aspect-[9/14] rounded-xl overflow-hidden bg-[#0b0d14] border border-white/[0.06] hover:border-cyan-400/50 transition-colors group"
-      title="View story"
-    >
-      {url && story.media_type === 'image' && <img src={url} alt="" className="w-full h-full object-cover" />}
-      {url && story.media_type === 'video' && (
-        <>
-          <video src={url} muted playsInline className="w-full h-full object-cover" />
-          <Play className="absolute inset-0 m-auto w-6 h-6 text-white/90" />
-        </>
-      )}
-      {!url && !err && <span className="absolute inset-0 animate-pulse bg-white/[0.03]" />}
-      {story.audience === 'close_friends' && (
-        <span className="absolute top-1.5 left-1.5 text-[8px] font-bold tracking-widest uppercase text-emerald-300 bg-black/70 border border-emerald-400/30 rounded px-1 py-0.5">
-          Close friends
-        </span>
-      )}
-    </button>
   );
 };
 

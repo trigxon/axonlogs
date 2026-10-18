@@ -243,13 +243,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     if (!supabase || !account || deleteConfirmText.trim().toUpperCase() !== 'DELETE') return;
     const u = account.username;
     try {
-      // Best-effort content cleanup within RLS: my stories + highlights + my
-      // message rows stay ( chats are shared ); profile gets anonymized.
-      await supabase.from('stories').delete().eq('username', u);
-      await supabase.from('highlights').delete().eq('username', u);
+      // Best-effort content cleanup within RLS: my follows + notifications
+      // + messages stay (chats are shared); profile gets anonymized.
       await supabase.from('follows').delete().eq('follower', u);
       await supabase.from('follows').delete().eq('followed', u);
-      await supabase.from('close_friends').delete().eq('owner', u);
       await supabase.from('notifications').delete().eq('username', u);
       await supabase
         .from('accounts')
@@ -637,11 +634,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               {notifPrefs.messages ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
             </button>
           </SettingRow>
-          <SettingRow title="Story activity" desc="Reactions and replies to your stories">
-            <button onClick={() => toggleNotifPref('stories')}>
-              {notifPrefs.stories ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
-            </button>
-          </SettingRow>
           <SettingRow title="Calls" desc="Incoming and missed call alerts">
             <button onClick={() => toggleNotifPref('calls')}>
               {notifPrefs.calls ? <ToggleRight className="text-amber-400 w-8 h-8" /> : <ToggleLeft className="text-zinc-700 w-8 h-8" />}
@@ -737,7 +729,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               <h3 className="text-sm font-bold tracking-widest uppercase">Delete your account?</h3>
             </div>
             <p className="text-xs text-zinc-300 leading-relaxed">
-              Your stories, highlights, follows and notifications are erased. Your profile becomes
+              Your follows, requests and notifications are erased. Your profile becomes
               “Deleted account” and can't be used again. Your username will stay reserved —
               full removal of the login record needs the site owner's dashboard.
             </p>

@@ -65,9 +65,9 @@ export async function runTier9Tests(projectRoot: string): Promise<TestResult[]> 
       [v2.includes('with check (from_username = public.my_username())'), 'dm_invites INSERT must be scoped to the sender'],
       [v2.includes('to_username = public.my_username() or from_username = public.my_username()'), 'dm_invites must be readable only by both parties'],
       [v2.includes('sender_id = public.my_username()'), 'messages INSERT must stamp the authenticated sender'],
-      [v2.includes('f.follower = public.my_username()') && v2.includes("f.status = 'active'"), '1:1 DM sends must be server-gated on an ACTIVE follow'],
-      [v2.includes('p.chat_id = messages.chat_id and p.username = public.my_username()'), 'messages must be readable only by chat members'],
-      [v2.includes('p.chat_id = chats.id and p.username = public.my_username()'), 'chats must be readable only by chat members'],
+      [v2.includes("f.followed = other.username\n         and f.status = 'active'") && v2.includes('public.can_dm_chat(messages.chat_id, public.my_username())'), '1:1 DM sends must be server-gated on an ACTIVE follow (can_dm_chat + follows join)'],
+      [v2.includes('public.is_chat_member(messages.chat_id, public.my_username())'), 'messages must be readable only by chat members (definer helper)'],
+      [v2.includes('public.is_chat_member(chats.id, public.my_username())'), 'chats must be readable only by chat members (definer helper)'],
     ];
     for (const [ok, name] of checks) {
       results.push({ name: `9.2 ${name}`, passed: ok, duration: 0 });

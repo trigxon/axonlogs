@@ -6,7 +6,7 @@ import {
   fetchFollowing, fetchAccountsByUsernames, isBlockedEitherWay,
   type Account, type FollowState,
 } from '../../utils/auth';
-import { StoryAvatar } from '../stories/StoriesRail';
+import { ProfileAvatar } from '../profile/ProfileAvatar';
 
 export interface ExplorePanelProps {
   onBack: () => void;
@@ -145,7 +145,7 @@ export const ExplorePanel: React.FC<ExplorePanelProps> = ({ onBack, onOpenProfil
     return (
       <div key={acc.id} className="flex items-center gap-3 px-3 sm:px-4 py-2.5 hover:bg-white/[0.03] transition-colors">
         <button type="button" onClick={() => { commitSearch(acc.username); onOpenProfile(acc.username); }} className="shrink-0">
-          <StoryAvatar username={acc.username} size={46} ring="none" />
+          <ProfileAvatar username={acc.username} size={46} ring="none" />
         </button>
         <button
           type="button"
@@ -294,7 +294,7 @@ export const ExplorePanel: React.FC<ExplorePanelProps> = ({ onBack, onOpenProfil
               </h3>
               {suggested.length === 0 && (
                 <p className="text-zinc-600 text-xs px-4 py-6 leading-relaxed">
-                  You're not following anyone yet. Search a @username above, follow them, and their stories
+                  You're not following anyone yet. Search a @username above, follow them, and message them privately.
                   and chats will show up here.
                 </p>
               )}
