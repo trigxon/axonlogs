@@ -169,3 +169,34 @@ Re-run `supabase/schema.sql` once more in the SQL editor to activate Phase D (`c
 ### 7.4 Remaining known gaps (unchanged)
 
 TURN relay (S7/Phase F), link previews + delivered-vs-read server acks beyond `read_by` (Phase E), S3 key-wrapping / S4 encrypted attachments (Phase E), message-edit/audit tables (S6), reports/moderation tables (Phase G), web-push (Phase F).
+
+---
+
+## 8. Phase D.1 — signup resilience (live auth config drift caught by smoke)
+
+Date: 2026-10-19 · Build: PASS · Tests: **94/94 PASS**
+
+### 8.1 Finding S10 · HIGH — the project's Supabase Auth config changed under the app (signup broken on production)
+
+The Phase D deployment smoke (`smoke-auth-v2.mjs` against production) caught a REAL outage the static tests could never see:
+
+- Direct REST probe: `POST /auth/v1/signup` with the synthetic `<user>@users.axonlogs.app` now returns **`400 email_address_invalid`** — GoTrue's (new) email validation rejects the username-only synthetic domain.
+- `GET /auth/v1/settings` shows **`mailer_autoconfirm: false`** — email confirmation is now **ON** (it was OFF when Phase B shipped and was verified then). With confirmation ON, a synthetic-email signup can never yield a session (no mailbox exists to confirm), and every signup burns the built-in SMTP quota (`over_email_send_rate_limit`, 429) on a mailbox that cannot receive.
+- Combined effect: every NEW signup on production died at `auth.signUp`, silently fell through to the legacy PBKDF2 insert, which the (correct) v2 RLS lockdown rejects with 42501 — surfacing the misleading copy "The database is locked down…". Existing logins were never affected.
+
+### 8.2 Shipped in this release
+
+| Change | Where |
+|---|---|
+| `isInvalidEmailError` classifier + honest `EMAIL_INVALID_MSG` (states the real cause + both owner remedies); invalid-email short-circuits BEFORE the legacy fallback so users never see the misleading RLS copy | `src/utils/auth.ts` |
+| **Zero-conf signup path**: client attempts the deployed edge function first; on success it signs in with the password (normal session). An undeployed function gracefully falls through to the classic paths | `src/utils/auth.ts` (`edgeSignup`) |
+| **`supabase/functions/auth-signup`** — Deno edge function using the edge-injected `SUPABASE_SERVICE_ROLE_KEY` (never shipped to the browser): `admin.createUser` with `email_confirm: true` (bypasses SMTP, rate limits AND domain validation) + profile-row provisioning with the same username rules; maps duplicates to `username_taken` | `supabase/functions/auth-signup/index.ts` |
+| Live smoke reports externally-blocked signup as **SKIPPED with the on-screen reason**, never as a fake pass; real failures still exit non-zero | `scripts/smoke-auth-v2.mjs` |
+| Tier 12 (5 checks + executed classifier runtime) | `tests/tier12_signup_resilience.test.ts` |
+
+### 8.3 Owner unblock (pick ONE, ~2 minutes each)
+
+1. **Recommended**: deploy the edge function — `supabase login` once, then `supabase functions deploy auth-signup --project-ref qlepfndedkpqmzyfnhmc`. Signup then works regardless of confirmation/validation settings, with zero secrets in the client.
+2. **Alternative**: Supabase dashboard → Authentication → Providers → Email → turn **"Confirm email" OFF** (the Phase-B verified state). If GoTrue's email-domain validation is enabled there, disable it too (or allow `users.axonlogs.app`).
+
+Until one of these runs, production remains fully usable for every EXISTING account (login, chats, calls, notifications) and new signup shows the honest blocked message.

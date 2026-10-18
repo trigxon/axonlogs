@@ -78,12 +78,25 @@ export const isRateLimitError = (error: any): boolean => {
   return error.code === 'over_email_send_rate_limit' || /rate limit/i.test(msg);
 };
 
+/** GoTrue now rejects the synthetic username-only email domain outright. */
+export const isInvalidEmailError = (error: any): boolean => {
+  if (!error) return false;
+  const code = (error as any).code || (error as any).error_code;
+  const msg = String(error.message || error.msg || '');
+  return code === 'email_address_invalid' || /email.*invalid|invalid.*email/i.test(msg);
+};
+
 const RATE_LIMIT_MSG =
   'Too many accounts have been created from this network. Wait a few minutes and try again.';
 
 const AUTH_CONFIRMATION_MSG =
   "This site's database asks for email confirmation, but accounts here use a username only. " +
   'The site owner can fix it in the Supabase dashboard (Authentication → Providers → Email → turn off "Confirm email").';
+
+const EMAIL_INVALID_MSG =
+  'New sign-ups are temporarily blocked by this site\'s email provider settings. ' +
+  'The site owner can fix it by deploying supabase/functions/auth-signup (bypasses email validation) ' +
+  'or relaxing the email rules in the Supabase dashboard. Existing accounts can still log in.';
 
 /** Supabase Auth enforces its own password floor (6 chars). */
 const isAuthPasswordFloorError = (error: any): boolean =>
@@ -301,6 +314,56 @@ const isViewMissingError = (error: any): boolean => {
  * password floor (surfaced in plain language), and email-confirmation
  * projects (legacy fallback so the product keeps working).
  */
+/**
+ * Edge-function signup attempt (Phase D era): when the project deploys
+ * supabase/functions/auth-signup, the ADMIN API creates a CONFIRMED auth
+ * user (no email, no rate limit, no domain validation) and provisions the
+ * profile row. Returns null when the function is not available so the
+ * caller can fall through to the classic paths.
+ */
+const edgeSignup = async (
+  supabase: any,
+  u: string,
+  password: string,
+  avatarGradient: string
+): Promise<{ ok: true; account: Account } | { ok: false; error: string } | null> => {
+  try {
+    const { data, error } = await supabase.functions.invoke('auth-signup', {
+      body: { username: u, password, avatar_gradient: avatarGradient },
+    });
+    if (error) {
+      const ctx: any = (error as any).context;
+      const kind = String(ctx?.error || (error as any).message || '');
+      if (/username_taken/i.test(kind)) return { ok: false, error: 'That username is taken. Try another.' };
+      return null; // not deployed / transient — fall through
+    }
+    if (!data?.ok) return null;
+
+    // Confirmed auth user exists server-side — sign in to get a session.
+    const { data: signIn, error: signInErr } = await supabase.auth.signInWithPassword({
+      email: syntheticEmail(u),
+      password,
+    });
+    if (signInErr || !signIn?.session) return null;
+    const account = await linkProfileToAuthUser(supabase, u, signIn.user.id, {
+      avatar_gradient: avatarGradient,
+    });
+    if (account) return { ok: true, account };
+    return {
+      ok: true,
+      account: {
+        id: signIn.user.id,
+        username: u,
+        bio: '',
+        avatar_gradient: avatarGradient,
+        created_at: new Date().toISOString(),
+      },
+    };
+  } catch {
+    return null; // functions unreachable — classic paths take over
+  }
+};
+
 export const signupAccount = async (
   supabase: any,
   username: string,
@@ -316,6 +379,10 @@ export const signupAccount = async (
 
   const free = await usernameAvailable(supabase, u).catch(() => true);
   if (!free) return { ok: false, error: 'That username is taken. Try another.' };
+
+  // ---- Zero-conf primary: deployed edge function (admin API) ----
+  const viaEdge = await edgeSignup(supabase, u, password, avatarGradient);
+  if (viaEdge) return viaEdge;
 
   // ---- Primary: Supabase Auth (schema v2) ----
   try {
@@ -336,6 +403,11 @@ export const signupAccount = async (
       if (isRateLimitError(error)) {
         // Do NOT fall through to the legacy path — it would fail confusingly.
         return { ok: false, error: RATE_LIMIT_MSG };
+      }
+      if (isInvalidEmailError(error)) {
+        // GoTrue rejects the synthetic domain — the legacy insert would only
+        // produce a misleading RLS error, so surface the honest reason.
+        return { ok: false, error: EMAIL_INVALID_MSG };
       }
       // fall through to legacy path below (covers auth outages / older stacks)
     } else if (data?.session) {

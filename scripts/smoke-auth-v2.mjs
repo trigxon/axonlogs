@@ -96,6 +96,24 @@ try {
   ok(landedSignup, 'valid signup lands in the app (Supabase Auth session)');
   await page.screenshot({ path: `${SHOTS}au-3-signup.png` });
 
+  if (!landedSignup) {
+    // Signup can be externally blocked by the project's auth config (email
+    // confirmation ON, GoTrue email-domain validation, per-IP rate limit).
+    // Those states ship honest on-screen copy; report them as SKIPPED, not
+    // silent failures, and skip the session-dependent steps below.
+    text = await page.evaluate(() => document.body.innerText);
+    const externallyBlocked =
+      /temporarily blocked|asks for email confirmation|rate limit|locked down/i.test(text);
+    if (externallyBlocked) {
+      const reason = (text.match(/[^\n]*(?:temporarily blocked|asks for email confirmation|rate limit|locked down)[^\n]*/i) || ['auth provider blocked signup'])[0].trim();
+      console.log(`  ⚠ SKIP: signup blocked by project auth config — "${reason.slice(0, 90)}"`);
+      console.log('  ⚠ SKIP: session reload / profile / logout / login round-trip (need a session)');
+      console.log(`\nResult: ${passed} passed, ${failed} failed, 4 skipped (owner action documented in AUDIT.md §8)`);
+      await browser.close();
+      process.exit(failed > 0 ? 1 : 0);
+    }
+  }
+
   /* 4 — session survives reload (rail = signed-in shell) */
   await page.reload({ waitUntil: 'networkidle2' });
   const railRestored = await inApp();
