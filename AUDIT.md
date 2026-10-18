@@ -97,3 +97,43 @@ Legend: ✅ done & tested · 🟡 partial · ❌ planned (phase) · 🚫 deliber
 - Supabase Auth's 6-character password floor is live and surfaced in plain language ("Choose a password with at least 6 characters."). The earlier "any password accepted" behavior survives only on legacy (pre-v2) databases. This supersedes the earlier zero-restriction contract and is documented as a deliberate deviation (master prompt: "Use Supabase Auth rather than treating a custom password-hash column as a complete authentication system").
 - Legacy accounts (PBKDF2 rows) still log in with their existing passwords; on first login they are invisibly provisioned into Supabase Auth and their profile row is linked (`auth_uid`), after which their hash becomes unreadable through the `legacy_login` view.
 - **Deployment order:** ship client first (works on both schema generations), then the owner runs `supabase/schema.sql` once to lock the database down. Until then the live DB keeps the legacy permissive policies (S1/S2 still open until that SQL runs).
+
+---
+
+## 6. Phase C–G expansion (stories · notifications · routed shell · profiles · search · account lifecycle)
+
+Date: 2026-10-18 · HEAD: `d1fea86` · Build: PASS · Tests: **84/84 PASS** · Deploy: 7152959234 success
+
+### 6.1 What shipped (verified, not assumed)
+
+| Domain | Additions | Where |
+|---|---|---|
+| Shell | react-router (`BrowserRouter`): `/direct`, `/direct/t/:chatId`, `/explore`, `/notifications`, `/create`, `/profile(/:username)`, `/settings`, in-app 404; desktop rail (Chats/Search/Create/Notifications/New msg/Invite/Profile/Settings) + Instagram-style mobile bottom nav + realtime unread badge | `App.tsx`, `ChatApp.tsx` |
+| Stories | `stories` / `story_views` / `highlights` / `highlight_stories` / `close_friends` tables; **server-enforced 24h expiry** (RLS filters `expires_at > now()`), audience RLS via `can_view_story(owner, audience, viewer)` (followers ∪ public-visitors, close-friends list, blocks excluded); private `story_media` bucket with path-derived storage policy (`story_media/{username}/{audience}/{file}`); public `avatars` bucket; tray, composer (photo/video ≤10MB, text overlays, caption, Followers/Close-friends audiences), viewer (segment progress, pause, tap zones, quick reactions → notification, DM replies via the real engine, owner viewer-list + delete), highlights (create from active stories, delete) | `supabase/schema.sql` §6, `src/utils/stories.ts`, `src/components/stories/*` |
+| Notifications | `notifications` table (RLS: owner-only), DB triggers for follow / follow-request / follow-accepted / message-request / incoming-call; client-inserted story events stamped with the real actor; realtime badge (45s poll fallback); Activity panel with inline request accept/decline, mark-read (one/all), delete; per-group prefs (follows/messages/stories/calls) persisted locally and enforced via `prefsAllow` | schema §6.6–6.7, `src/utils/notifications.ts`, `NotificationsPanel.tsx` |
+| Profiles | Full routed profile: avatar **upload (client-downscaled) / removal** through the avatars bucket, edit name/bio/gradient, stats → follower/following list modals, remove-follower, block/unblock, close-friends toggle, private-account lock screen, follow/request/message actions, active stories grid + highlights row, bio linkification; chat header deep-links to profiles | `UserProfilePage.tsx`, `auth.ts` avatar helpers |
+| Search | `/explore`: username + display-name search, recent searches (device-local, clearable), "You follow" suggestions, block-filtered results, follow/Chat actions | `ExplorePanel.tsx` |
+| Account lifecycle | Settings → Account: password change (`auth.updateUser`), log-out-everywhere (`signOut({scope:'global'})`), account-data export (JSON), delete-account flow (content wipe + anonymize + global sign-out; auth-user row removal documented as owner-dashboard action) | `SettingsPanel.tsx` |
+| Engine | `sendMessage(text, file, replyToId, burnOverride, chatOverride)` — story replies land in the right DM deterministically | `CryptoContext.tsx` |
+
+### 6.2 Finding S8 · CRITICAL — RLS self-recursion (FIXED in repo; needs one SQL re-run)
+
+**Found by the live smoke, not by reading code.** The Phase-B `chat_participants` SELECT policy queried its own table (`exists (select 1 from chat_participants …)` inside its own USING clause). Postgres evaluates that recursively through RLS → `42P17 infinite recursion detected in policy for relation "chat_participants"` → every `chats`/`messages` read 500s → the client degrades to local mode. This shipped broken in Phase B because the pre-deployment smoke ran before the owner applied the SQL.
+
+**Fix (this release):** all membership checks now go through SECURITY DEFINER helpers that bypass RLS on `chat_participants`:
+`is_chat_member(chat, user)`, `chat_member_count(chat)`, `can_dm_chat(chat, user)` (keeps the server-enforced follow gate for 1:1 DMs). Tier 10.2 adds a structural regression guard: **no policy body may query its own table**.
+
+### 6.3 Finding S9 · LOW — signup email rate limit UX (fixed)
+
+Supabase Auth's `over_email_send_rate_limit` (per-IP signup quota) surfaced as a confusing legacy-path failure. Signup now detects it and shows "Too many accounts have been created from this network. Wait a few minutes and try again." in both the primary and legacy-migration paths.
+
+### 6.4 E2EE posture (unchanged, honest)
+
+Stories and notifications are plaintext-by-design (RLS-guarded) — matching Instagram's model. DM content stays per-chat AES with the S3 key-beside-ciphertext caveat documented above; the UI does not claim E2EE beyond what AUDIT §2-S3 substantiates.
+
+### 6.5 Deployment state & the one remaining user action
+
+- Production `axonlogs.vercel.app` serves this build (deploy 7152959234 success; live chunks verified: `index-CTQI6_7L.js` carries all shell/story/notification markers, lazy `SettingsPanel-C119Beph.js` carries the account-lifecycle strings).
+- **The live database still runs the Phase-B schema**: it has the recursive policy (S8) and lacks SECTION 6 (stories/notifications/calls/avatars buckets). Until the owner re-runs `supabase/schema.sql` once in the SQL editor, signup/DM degrade gracefully to local mode and the new features return empty-but-healthy UI.
+- **ACTION (owner, ~1 min): Supabase Dashboard → SQL Editor → paste `supabase/schema.sql` → Run.** It is idempotent. After it runs: reload the site — stories, notifications, profiles, search and the locked-down RLS all activate together.
+- TURN relay for calls remains unprovisioned (owner cost decision, documented in §3).
