@@ -307,6 +307,56 @@ $$;
 
 grant execute on function public.my_username() to anon, authenticated;
 
+-- Membership helper — SECURITY DEFINER so policies can ask "am I in this
+-- chat?" WITHOUT querying chat_participants from inside another RLS
+-- policy. A policy that reads its own table recurses forever
+-- ("infinite recursion detected in policy"), so every policy below goes
+-- through this definer function instead of a direct subquery.
+create or replace function public.is_chat_member(p_chat uuid, p_user text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.chat_participants
+    where chat_id = p_chat and username = lower(p_user)
+  );
+$$;
+
+-- Group-size helper for the DM follow-gate (same recursion avoidance).
+create or replace function public.chat_member_count(p_chat uuid)
+returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.chat_participants where chat_id = p_chat;
+$$;
+
+-- The server-enforced DM gate: I am a member AND (it's a group chat of
+-- 3+ OR I actively follow the other participant).
+create or replace function public.can_dm_chat(p_chat uuid, p_user text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select
+    exists (
+      select 1 from public.chat_participants me
+      where me.chat_id = p_chat and me.username = lower(p_user)
+    )
+    and (
+      public.chat_member_count(p_chat) > 2
+      or exists (
+        select 1
+        from public.chat_participants other
+        join public.follows f
+          on f.follower = lower(p_user)
+         and f.followed = other.username
+         and f.status = 'active'
+        where other.chat_id = p_chat
+          and other.username <> lower(p_user)
+      )
+    );
+$$;
+
+grant execute on function public.is_chat_member(uuid, text) to authenticated;
+grant execute on function public.chat_member_count(uuid) to authenticated;
+grant execute on function public.can_dm_chat(uuid, text) to authenticated;
+
 -- ------------------------------------------------------------
 -- 5.3 Safe profile reads — a view exposing ONLY public profile columns.
 --     Direct SELECT on accounts is revoked (that is what made password
@@ -354,11 +404,8 @@ drop policy if exists "members insert participants" on public.chat_participants;
 create policy "members read participants" on public.chat_participants
   for select using (
     username = public.my_username()
-    or exists (
-      select 1 from public.chat_participants p2
-      where p2.chat_id = chat_participants.chat_id
-        and p2.username = public.my_username()
-    )
+    -- definer helper: NEVER subquery chat_participants here (RLS recursion)
+    or public.is_chat_member(chat_participants.chat_id, public.my_username())
   );
 
 create policy "members insert participants" on public.chat_participants
@@ -501,10 +548,7 @@ drop policy if exists "public delete chats" on public.chats;
 drop policy if exists "members read chats" on public.chats;
 create policy "members read chats" on public.chats
   for select using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = chats.id and p.username = public.my_username()
-    )
+    public.is_chat_member(chats.id, public.my_username())
   );
 
 drop policy if exists "auth create chats" on public.chats;
@@ -515,20 +559,14 @@ drop policy if exists "members update chats" on public.chats;
 create policy "members update chats" on public.chats
   for update to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = chats.id and p.username = public.my_username()
-    )
+    public.is_chat_member(chats.id, public.my_username())
   );
 
 drop policy if exists "members delete chats" on public.chats;
 create policy "members delete chats" on public.chats
   for delete to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = chats.id and p.username = public.my_username()
-    )
+    public.is_chat_member(chats.id, public.my_username())
   );
 
 -- messages: members only. Sends are identity-checked AND, for 1:1 DMs,
@@ -541,10 +579,7 @@ drop policy if exists "public delete messages" on public.messages;
 drop policy if exists "members read messages" on public.messages;
 create policy "members read messages" on public.messages
   for select using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = messages.chat_id and p.username = public.my_username()
-    )
+    public.is_chat_member(messages.chat_id, public.my_username())
   );
 
 drop policy if exists "members send messages" on public.messages;
@@ -552,26 +587,7 @@ create policy "members send messages" on public.messages
   for insert to authenticated
   with check (
     sender_id = public.my_username()
-    and exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = messages.chat_id and p.username = public.my_username()
-    )
-    and (
-      -- group chats (3+ members): any member may send
-      (select count(*) from public.chat_participants pc
-       where pc.chat_id = messages.chat_id) > 2
-      -- 1:1 DMs: I must ACTIVELY follow the other participant
-      or exists (
-        select 1
-        from public.chat_participants other
-        join public.follows f
-          on f.follower = public.my_username()
-         and f.followed = other.username
-         and f.status = 'active'
-        where other.chat_id = messages.chat_id
-          and other.username <> public.my_username()
-      )
-    )
+    and public.can_dm_chat(messages.chat_id, public.my_username())
   );
 
 -- Updates (reactions, pins, read receipts, edits, unsend) stay
@@ -583,20 +599,14 @@ drop policy if exists "members update messages" on public.messages;
 create policy "members update messages" on public.messages
   for update to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = messages.chat_id and p.username = public.my_username()
-    )
+    public.is_chat_member(messages.chat_id, public.my_username())
   );
 
 drop policy if exists "members delete messages" on public.messages;
 create policy "members delete messages" on public.messages
   for delete to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants p
-      where p.chat_id = messages.chat_id and p.username = public.my_username()
-    )
+    public.is_chat_member(messages.chat_id, public.my_username())
   );
 
 -- ------------------------------------------------------------

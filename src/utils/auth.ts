@@ -71,6 +71,16 @@ export const isAlreadyRegisteredError = (error: any): boolean => {
 export const confirmationRequired = (result: { session?: any; user?: any } | null): boolean =>
   !!result?.user && !result?.session;
 
+/** Supabase Auth per-IP email quota hit (repeated signups from one network). */
+export const isRateLimitError = (error: any): boolean => {
+  if (!error) return false;
+  const msg = String(error.message || error.msg || '');
+  return error.code === 'over_email_send_rate_limit' || /rate limit/i.test(msg);
+};
+
+const RATE_LIMIT_MSG =
+  'Too many accounts have been created from this network. Wait a few minutes and try again.';
+
 const AUTH_CONFIRMATION_MSG =
   "This site's database asks for email confirmation, but accounts here use a username only. " +
   'The site owner can fix it in the Supabase dashboard (Authentication → Providers → Email → turn off "Confirm email").';
@@ -323,6 +333,10 @@ export const signupAccount = async (
       if (isAuthPasswordFloorError(error)) {
         return { ok: false, error: 'Choose a password with at least 6 characters.' };
       }
+      if (isRateLimitError(error)) {
+        // Do NOT fall through to the legacy path — it would fail confusingly.
+        return { ok: false, error: RATE_LIMIT_MSG };
+      }
       // fall through to legacy path below (covers auth outages / older stacks)
     } else if (data?.session) {
       const account = await linkProfileToAuthUser(supabase, u, data.user.id, {
@@ -454,6 +468,8 @@ export const loginAccount = async (
         // Auth user exists with a DIFFERENT password than the legacy hash
         // → the typed password is the old one.
         return { ok: false, error: 'Sorry, your password was incorrect.' };
+      } else if (error && isRateLimitError(error)) {
+        return { ok: false, error: RATE_LIMIT_MSG };
       } else if (confirmationRequired(data)) {
         // Confirmation-gated project: keep the legacy session working.
         return legacySession(legacy);

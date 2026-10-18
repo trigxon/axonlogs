@@ -54,6 +54,30 @@ export async function runTier10Tests(projectRoot: string): Promise<TestResult[]>
 
   const schema = read('supabase', 'schema.sql');
 
+  check('Tier 10.2: no RLS policy reads its own table (recursion guard)', [
+    // "infinite recursion detected in policy" happens when a policy body
+    // queries its own table. All membership lookups must go through the
+    // security-definer helpers (is_chat_member / can_dm_chat) instead.
+    [((): boolean => {
+      const policyBlocks = schema.split(/create policy /).slice(1);
+      for (const block of policyBlocks) {
+        const target = block.match(/on\s+(?:public\.)?(\w+)/);
+        const body = block.slice(0, block.indexOf(';'));
+        if (!target) continue;
+        const t = target[1];
+        if (new RegExp(`from\\s+(?:public\\.)?${t}\\b`).test(body) || new RegExp(`join\\s+(?:public\\.)?${t}\\b`).test(body)) {
+          return false;
+        }
+      }
+      return true;
+    })(), 'a policy body must never query its own table (use the definer helpers)'],
+    [schema.includes('create or replace function public.is_chat_member'), 'is_chat_member definer helper must exist'],
+    [schema.includes('create or replace function public.can_dm_chat'), 'can_dm_chat definer helper must exist'],
+    [schema.includes('public.is_chat_member(messages.chat_id, public.my_username())'), 'messages policies must use the definer helper'],
+    [schema.includes('public.is_chat_member(chats.id, public.my_username())'), 'chats policies must use the definer helper'],
+  ]);
+
+
   check('Tier 10.2: schema v2 stories table + server-enforced expiry + audience RLS', [
     [schema.includes('create table if not exists public.stories'), 'stories table missing'],
     [schema.includes("default (now() + interval '24 hours')"), 'stories must default to a 24h server-side expiry'],
