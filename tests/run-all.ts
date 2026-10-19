@@ -14,6 +14,8 @@ import { runTier11Tests } from './tier11_messaging_hardening.test.ts';
 import { runTier12Tests } from './tier12_signup_resilience.test.ts';
 import { runTier13Tests } from './tier13_contact_auth.test.ts';
 import { runTier14Tests } from './tier14_otp_reset_chatlock.test.ts';
+import { runTier15Tests } from './tier15_phase5_crypto.test.ts';
+import { runTier16Tests } from './tier16_admin.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +83,14 @@ async function main() {
   console.log('--- Executing Tier 14: OTP, Reset & Chat Lock ---');
   const t14 = await runTier14Tests(projectRoot);
   allResults.push(...t14);
+
+  console.log('--- Executing Tier 15: Private Storage & E2EE Keyrings ---');
+  const t15 = await runTier15Tests(projectRoot);
+  allResults.push(...t15);
+
+  console.log('--- Executing Tier 16: Owner-Only Admin Panel ---');
+  const t16 = await runTier16Tests(projectRoot);
+  allResults.push(...t16);
 
   const totalDuration = Date.now() - startTime;
 

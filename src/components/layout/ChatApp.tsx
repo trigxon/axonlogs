@@ -26,10 +26,12 @@ import NotificationsPanel from '../notifications/NotificationsPanel';
 import ExplorePanel from '../search/ExplorePanel';
 import UserProfilePage from '../profile/UserProfilePage';
 import ResetPasswordPanel from '../auth/ResetPasswordPanel';
+import KeyringGate from '../auth/KeyringGate';
+import AdminPanel from '../admin/AdminPanel';
 
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
 
-type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'user' | 'reset' | 'notfound';
+type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'user' | 'reset' | 'admin' | 'notfound';
 
 let audioCtx: AudioContext | null = null;
 const playPing = () => {
@@ -132,6 +134,7 @@ export const ChatApp: React.FC = () => {
     }
     if (p.startsWith('/settings')) return 'settings';
     if (p.startsWith('/reset')) return 'reset';
+    if (p.startsWith('/admin')) return 'admin';
     return 'notfound';
   };
   const [pane, setPane] = useState<Pane>(paneFromPath);
@@ -705,6 +708,9 @@ export const ChatApp: React.FC = () => {
     if (pane === 'reset') {
       return <ResetPasswordPanel onBack={() => go('/direct')} />;
     }
+    if (pane === 'admin') {
+      return <AdminPanel onBack={() => go('/direct')} />;
+    }
     if (pane === 'notfound') {
       return <NotFoundPane onHome={() => go('/direct')} />;
     }
@@ -1224,6 +1230,8 @@ export const ChatApp: React.FC = () => {
       {/* call overlays */}
       <CallOverlay />
       <IncomingCallScreen />
+      {/* Phase 5 / S3: one-time keyring unlock on new devices */}
+      <KeyringGate />
     </div>
   );
 };

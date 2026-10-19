@@ -123,7 +123,8 @@ export const previewFromMessage = (m: Message): ChatPreview => {
 export const hydratePreviews = async (
   chats: Chat[],
   mode: 'online' | 'local',
-  supabase: any | null
+  supabase: any | null,
+  username: string = ''
 ): Promise<Record<string, ChatPreview>> => {
   const map = readPreviewCache();
 
@@ -157,8 +158,11 @@ export const hydratePreviews = async (
     return map;
   }
 
-  // ONLINE mode — one lightweight query per chat (personal-scale app: fine)
+  // ONLINE mode — one lightweight query per chat (personal-scale app: fine).
+  // Phase 5 / S3: previews decrypt under the RESOLVED conversation key —
+  // E2EE DMs unwrap on-device, legacy chats keep the share_code model.
   if (!supabase) return map;
+  const { resolveChatKey } = await import('./chatCrypto');
   await Promise.all(
     chats.map(async chat => {
       try {
@@ -171,13 +175,14 @@ export const hydratePreviews = async (
         if (data && data.length > 0) {
           const latest = data[0] as Message;
           if (latest.sender_id === 'SYSTEM') return;
-          const decrypted = latest.text ? aesDecrypt(latest.text, chat.share_code) : '';
+          const chatKey = await resolveChatKey(supabase, chat, username || '');
+          const decrypted = latest.text ? aesDecrypt(latest.text, chatKey) : '';
           if (latest.text && !decrypted && !latest.file_url) {
             if (!map[chat.id]) map[chat.id] = { text: 'End-to-end encrypted', at: latest.created_at, senderId: latest.sender_id };
             return;
           }
           let fileUrl: string | null = null;
-          if (latest.file_url) fileUrl = aesDecrypt(latest.file_url, chat.share_code) || null;
+          if (latest.file_url) fileUrl = aesDecrypt(latest.file_url, chatKey) || null;
           map[chat.id] = previewFromMessage({ ...latest, text: decrypted, file_url: fileUrl });
         }
       } catch {

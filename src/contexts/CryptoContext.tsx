@@ -4,6 +4,17 @@ import CryptoJS from 'crypto-js';
 import { getMyAvatar, setMyAvatar } from '../utils/chatMeta';
 import { isPrivacyLocked } from '../utils/chatLockCore';
 import {
+  resolveChatKey,
+  generateConversationKey,
+  wrapConversationKey,
+  encryptBytes,
+  getActivePrivateCryptoKey,
+  getActivePrivateJwk,
+  setActivePrivateKey,
+  invalidateChatKey,
+  clearKeyCache,
+} from '../utils/chatCrypto';
+import {
   type AxonSession,
   type Account,
   getStoredSession,
@@ -29,6 +40,20 @@ import {
   outboxForChat,
   classifyFlushError,
 } from '../utils/outbox';
+
+/**
+ * Phase 5 / S3: resolve the message passphrase for a conversation.
+ * E2EE DMs (chat_keys rows, scheme 'ecdh-p256') unwrap the true
+ * conversation key on-device; everything else falls back to the
+ * legacy share_code model. Memoised per chat for the session.
+ */
+const chatKeyOf = async (
+  supabase: any,
+  chat: { id: string; share_code: string },
+  username: string,
+  online: boolean
+): Promise<string> =>
+  online && supabase ? resolveChatKey(supabase, chat, username || '') : chat.share_code;
 
 export interface Chat {
   id: string;
@@ -156,6 +181,11 @@ interface CryptoContextType {
   renameChat: (id: string, newName: string) => Promise<void>;
   archiveChat: (id: string) => void;
   restoreChat: (id: string) => void;
+  // Phase 6: group member management
+  fetchGroupMembers: (chatId: string) => Promise<{ username: string; added_at: string }[]>;
+  addGroupMember: (chatId: string, username: string) => Promise<{ ok: boolean; error?: string }>;
+  removeGroupMember: (chatId: string, username: string) => Promise<{ ok: boolean; error?: string }>;
+  leaveGroup: (chatId: string) => Promise<boolean>;
   archivedChats: Chat[];
   deleteChat: (id: string) => Promise<void>;
   changeChatPassword: (id: string, newCode: string) => Promise<boolean>;
@@ -518,8 +548,29 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     setAccount(null);
     // End the Supabase Auth session too (best-effort on v1 setups)
     void logoutAccount(supabase);
+    // Phase 5 hygiene: drop all in-memory key material for the session.
+    clearKeyCache();
+    void setActivePrivateKey(null);
     addLog('Account logged out');
   }, [addLog]);
+
+  // Phase 5 / S3: session restore — silently re-open the device-held private
+  // key (IndexedDB, non-extractable device key) so E2EE DMs keep working
+  // after a refresh without ever storing the password.
+  useEffect(() => {
+    const u = account?.username;
+    if (!u || backendMode !== 'online') return;
+    let cancelled = false;
+    (async () => {
+      const { trySilentUnlock } = await import('../utils/keyringService');
+      if (cancelled) return;
+      const res = await trySilentUnlock(u);
+      if (res.status === 'ready' && 'created' in res && res.created) {
+        addLog('Encryption keyring ready — direct messages are end-to-end encrypted');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account?.username, backendMode, addLog]);
 
   // Instagram-style activity status: keep last_seen_at fresh while signed in
   useEffect(() => {
@@ -670,6 +721,36 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (!invited) {
       // Keep the channel (it works once the recipient searches us instead)
       addLog(`DM invite to @${target} failed — channel kept`);
+    }
+
+    // ── Phase 5 / S3: end-to-end key establishment ─────────────────────
+    // When BOTH sides hold keyrings, a fresh 256-bit conversation key is
+    // wrapped for each participant via ECDH and stored in chat_keys. The
+    // plaintext key never touches the server; share_code becomes a mere
+    // lookup code. Without two keyrings the legacy model applies.
+    try {
+      const myPriv = getActivePrivateCryptoKey();
+      const myPub = getActivePrivateJwk();
+      const { data: peerKeyRow } = await supabase
+        .from('account_keys')
+        .select('public_jwk')
+        .eq('username', target)
+        .maybeSingle();
+      if (myPriv && myPub && peerKeyRow?.public_jwk) {
+        const convKey = generateConversationKey();
+        const wrappedMe = await wrapConversationKey(convKey, myPriv, myPub, data.id);
+        const wrappedPeer = await wrapConversationKey(convKey, myPriv, peerKeyRow.public_jwk, data.id);
+        await supabase.from('chat_keys').insert([
+          { chat_id: data.id, username: me, wrap_scheme: 'ecdh-p256', wrapped_key: wrappedMe, wrap_info: { peer: me } },
+          { chat_id: data.id, username: target, wrap_scheme: 'ecdh-p256', wrapped_key: wrappedPeer, wrap_info: { peer: me } },
+        ]);
+        addLog(`End-to-end encrypted channel to @${target} — keys wrapped on-device`);
+      } else {
+        addLog(`@${target} has no encryption keyring yet — channel uses the legacy key model`);
+      }
+    } catch (e2eeErr) {
+      console.warn('E2EE key establishment failed; legacy model applies', e2eeErr);
+      addLog(`Key setup hiccup — channel falls back to the legacy key model`);
     }
 
     // Member-scoped RLS (schema v2) admits both sides via membership rows
@@ -1019,6 +1100,75 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     addLog(`Restored terminal ${chat.name}`);
   };
 
+  /* ------------------- Phase 6: group member management ------------------- */
+
+  const fetchGroupMembers = useCallback(async (chatId: string): Promise<{ username: string; added_at: string }[]> => {
+    if (backendMode !== 'online' || !supabase) return [];
+    const { data } = await supabase
+      .from('chat_participants')
+      .select('username, added_at')
+      .eq('chat_id', chatId)
+      .order('added_at', { ascending: true });
+    return (data || []) as { username: string; added_at: string }[];
+  }, [backendMode, supabase]);
+
+  const addGroupMember = useCallback(async (chatId: string, rawUsername: string): Promise<{ ok: boolean; error?: string }> => {
+    if (backendMode !== 'online' || !supabase || !account) return { ok: false, error: 'Groups need the cloud backend.' };
+    const uname = rawUsername.trim().toLowerCase().replace(/^@/, '');
+    if (!uname) return { ok: false, error: 'Enter a username.' };
+    if (uname === account.username.toLowerCase()) return { ok: false, error: "That's you — you're already in." };
+    // must be a real account
+    const { data: acct } = await supabase.from('accounts').select('username').eq('username', uname).maybeSingle();
+    if (!acct) return { ok: false, error: `@${uname} doesn't exist.` };
+    if (await isBlockedEitherWay(supabase, account.username.toLowerCase(), uname)) {
+      return { ok: false, error: `You can't add @${uname}.` };
+    }
+    const { data: existing } = await supabase
+      .from('chat_participants')
+      .select('username')
+      .eq('chat_id', chatId)
+      .eq('username', uname)
+      .maybeSingle();
+    if (existing) return { ok: false, error: `@${uname} is already in this group.` };
+    const { error } = await supabase.from('chat_participants').insert({ chat_id: chatId, username: uname });
+    if (error) return { ok: false, error: error.message || 'Could not add the member.' };
+    addLog(`@${uname} added to the group`);
+    return { ok: true };
+  }, [backendMode, supabase, account, addLog]);
+
+  const removeGroupMember = useCallback(async (chatId: string, username: string): Promise<{ ok: boolean; error?: string }> => {
+    if (backendMode !== 'online' || !supabase) return { ok: false, error: 'Groups need the cloud backend.' };
+    const { error } = await supabase
+      .from('chat_participants')
+      .delete()
+      .eq('chat_id', chatId)
+      .eq('username', username.toLowerCase());
+    if (error) return { ok: false, error: error.message || 'Could not remove the member.' };
+    addLog(`@${username} removed from the group`);
+    return { ok: true };
+  }, [backendMode, supabase, addLog]);
+
+  /** TRUE leave: the membership row is deleted (RLS: self-leave). */
+  const leaveGroup = useCallback(async (chatId: string): Promise<boolean> => {
+    if (backendMode !== 'online' || !supabase || !account) return false;
+    const { error } = await supabase
+      .from('chat_participants')
+      .delete()
+      .eq('chat_id', chatId)
+      .eq('username', account.username.toLowerCase());
+    if (error) {
+      addLog(`Could not leave the group (${error.message})`);
+      return false;
+    }
+    setChats(prev => prev.filter(c => c.id !== chatId));
+    setArchivedChats(prev => prev.filter(c => c.id !== chatId));
+    setMessages(prev => prev.filter(m => m.chat_id !== chatId));
+    if (activeChat?.id === chatId) setActiveChat(null);
+    invalidateChatKey(chatId);
+    addLog('You left the group');
+    return true;
+  }, [backendMode, supabase, account, activeChat, addLog]);
+
   const deleteChat = async (id: string) => {
     if (backendMode === 'online') {
       if (!supabase) return;
@@ -1098,6 +1248,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const fetchMessages = async () => {
         // Phase D keyset pagination: newest page only — older history loads
         // on demand via loadOlderMessages() instead of unbounded full scans.
+        // Phase 5 S3: resolve the conversation key first (E2EE DMs unwrap
+        // the wrapped key on-device; legacy chats keep share_code).
+        const chatKey = await chatKeyOf(supabase, activeChat, account?.username || '', backendMode === 'online');
         const { data } = await supabase!
           .from('messages')
           .select('*')
@@ -1109,13 +1262,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           const page = (data.slice().reverse()) as Message[];
           oldestCursorRef.current = page.length ? page[0].created_at : null;
           setHasMoreMessages(data.length === MESSAGE_PAGE_SIZE);
-          const decryptedMsgs = page.map(msg => toDisplayMessage(msg, activeChat.share_code));
+          const decryptedMsgs = page.map(msg => toDisplayMessage(msg, chatKey));
 
           // Offline recovery (Phase D): re-attach this chat's queued but
           // undelivered payloads so failed sends survive full page reloads.
+          // Queued payloads were encrypted with the SAME resolved key.
           const queued = outboxForChat(activeChat.id).filter(e => !decryptedMsgs.some(m => m.id === e.id));
           const queuedMsgs: Message[] = queued.map(e => ({
-            ...toDisplayMessage(e.payload as Message, e.share_code),
+            ...toDisplayMessage(e.payload as Message, chatKey),
             client_tag: e.client_tag,
             status: 'failed' as const,
           }));
@@ -1154,7 +1308,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           schema: 'public',
           table: 'messages',
           filter: `chat_id=eq.${activeChat.id}`,
-        }, (payload) => {
+        }, async (payload) => {
           // Chat Lock: while the conversation sits behind the lock screen,
           // incoming payloads are never decrypted or stored.
           if (isPrivacyLocked(activeChat.id)) return;
@@ -1169,8 +1323,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             setLatency(Date.now() - msgTime);
           }
 
-          const decryptedText = newMsg.text ? decryptText(newMsg.text, activeChat.share_code) : '';
-          const decryptedFileUrl = newMsg.file_url ? decryptText(newMsg.file_url, activeChat.share_code) : null;
+          // Phase 5 S3: resolve the conversation key (cached after first use).
+          const chatKey = await chatKeyOf(supabase, activeChat, account?.username || '', backendMode === 'online');
+          const decryptedText = newMsg.text ? decryptText(newMsg.text, chatKey) : '';
+          const decryptedFileUrl = newMsg.file_url ? decryptText(newMsg.file_url, chatKey) : null;
           const hasTextError = newMsg.text ? !decryptedText : false;
           const hasFileError = newMsg.file_url ? !decryptedFileUrl : false;
 
@@ -1367,6 +1523,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (loadingOlder || !hasMoreMessages || !oldestCursorRef.current) return;
     setLoadingOlder(true);
     try {
+      const chatKey = await chatKeyOf(supabase, activeChat, account?.username || '', true);
       const { data } = await supabase
         .from('messages')
         .select('*')
@@ -1378,7 +1535,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         const page = (data.slice().reverse()) as Message[];
         oldestCursorRef.current = page[0].created_at;
         setHasMoreMessages(data.length === MESSAGE_PAGE_SIZE);
-        const decrypted = page.map(m => toDisplayMessage(m, activeChat.share_code));
+        const decrypted = page.map(m => toDisplayMessage(m, chatKey));
         setMessages(prev => {
           const existing = new Set(prev.map(m => m.id));
           return [...decrypted.filter(m => !existing.has(m.id)), ...prev];
@@ -1490,31 +1647,45 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
     if (backendMode === 'online') {
       if (!supabase) return;
-      const encryptedText = encryptText(text, targetChat.share_code);
+      // Phase 5 S3/S4: resolve the conversation key — E2EE DMs use the
+      // on-device conversation key; everything else the share_code model.
+      const chatKey = await chatKeyOf(supabase, targetChat, account?.username || '', true);
+      const encryptedText = encryptText(text, chatKey);
       let fileUrl = null;
 
       if (settingsRef.current.allowFiles && file) {
-        // Universal file upload (no accept constraints on input handled elsewhere)
-        const fileExt = (file.name.split('.').pop() || 'bin').toLowerCase();
-        const fileName = `${crypto.randomUUID()}.${fileExt}`;
+        // Phase 5 S4: bytes are AES-GCM-encrypted with the conversation key
+        // BEFORE upload; the private bucket stores ciphertext only.
+        try {
+          const plainBuf = await file.arrayBuffer();
+          const cipherBuf = await encryptBytes(chatKey, plainBuf);
+          const fileName = `${targetChat.id}/${crypto.randomUUID()}.enc`;
 
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('chat_files')
-          .upload(fileName, file);
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('attachments')
+            .upload(fileName, cipherBuf, { contentType: 'application/octet-stream' });
 
-        if (uploadData) {
-          const { data: { publicUrl } } = supabase.storage
-            .from('chat_files')
-            .getPublicUrl(uploadData.path);
-
-          fileUrl = encryptText(publicUrl, targetChat.share_code);
-        } else {
-          // Cloud storage unavailable (e.g. bucket not created yet): embed the
-          // attachment as an encrypted payload so files ALWAYS transmit.
+          if (uploadData) {
+            // Store "path|mime|name" — encrypted in the message row. The
+            // receiver renders it via a membership-gated signed URL.
+            fileUrl = encryptText(`${uploadData.path}|${file.type || 'application/octet-stream'}|${file.name}`, chatKey);
+          } else {
+            // Storage unavailable (e.g. bucket not created yet): embed the
+            // attachment as an encrypted payload so files ALWAYS transmit.
+            const dataUrl = await fileToDataUrl(file);
+            if (dataUrl) {
+              fileUrl = encryptText(dataUrl, chatKey);
+              addLog(`[UPLOAD: Cloud storage unavailable (${uploadError?.message || 'unknown error'}). Attachment embedded as encrypted payload.]`);
+            } else {
+              addLog('[UPLOAD: Failed to read attachment. No payload attached.]');
+            }
+          }
+        } catch (encErr) {
+          console.error('Encrypted upload failed:', encErr);
           const dataUrl = await fileToDataUrl(file);
           if (dataUrl) {
-            fileUrl = encryptText(dataUrl, targetChat.share_code);
-            addLog(`[UPLOAD: Cloud storage unavailable (${uploadError?.message || 'unknown error'}). Attachment embedded as encrypted payload.]`);
+            fileUrl = encryptText(dataUrl, chatKey);
+            addLog('[UPLOAD: Encrypted upload failed — attachment embedded as encrypted payload.]');
           } else {
             addLog('[UPLOAD: Failed to read attachment. No payload attached.]');
           }
@@ -1566,7 +1737,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             chat_id: targetChat.id,
             sender_id: deviceId,
             text,
-            file_url: fileUrl ? decryptText(fileUrl, targetChat.share_code) : null,
+            file_url: fileUrl ? decryptText(fileUrl, chatKey) : null,
             burn_on_read: burnOnRead,
             reply_to_id: replyToId,
             read_by: [],
@@ -1691,10 +1862,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       const allMsgs = readJSON<Message[]>('axon_messages', []);
       writeJSON('axon_messages', allMsgs.map(m => m.id === msgId ? { ...m, text: encryptText(newText, activeChat.share_code), edited: true } : m));
     } else if (supabase) {
-      supabase.from('messages').update({ text: encryptText(newText, activeChat.share_code), edited: true }).eq('id', msgId).then();
+      // Phase 5 S3: re-encrypt edits under the resolved conversation key.
+      (async () => {
+        const chatKey = await chatKeyOf(supabase, activeChat, account?.username || '', true);
+        supabase.from('messages').update({ text: encryptText(newText, chatKey), edited: true }).eq('id', msgId).then();
+      })();
     }
     addLog(`Message ${msgId.slice(0, 6)}... edited`);
-  }, [activeChat, backendMode, addLog]);
+  }, [activeChat, backendMode, addLog, account, supabase]);
 
   const toggleReaction = useCallback((msgId: string, emoji: string) => {
     if (!activeChat || !deviceId) return;
@@ -1764,12 +1939,13 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     // so a retry can never create a second copy of the message.
     const clientTag = msg.client_tag || crypto.randomUUID();
     setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, status: 'pending' } : m)));
+    const chatKey = await chatKeyOf(supabase, activeChat, account?.username || '', true);
     const { error } = await insertMessageSafe({
       id: msg.id,
       chat_id: msg.chat_id,
       sender_id: msg.sender_id,
-      text: encryptText(msg.text, activeChat.share_code),
-      file_url: msg.file_url ? encryptText(msg.file_url, activeChat.share_code) : null,
+      text: encryptText(msg.text, chatKey),
+      file_url: msg.file_url ? encryptText(msg.file_url, chatKey) : null,
       burn_on_read: msg.burn_on_read,
       reply_to_id: msg.reply_to_id ?? null,
       read_by: [],
@@ -1792,8 +1968,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           id: msg.id,
           chat_id: msg.chat_id,
           sender_id: msg.sender_id,
-          text: encryptText(msg.text, activeChat.share_code),
-          file_url: msg.file_url ? encryptText(msg.file_url, activeChat.share_code) : null,
+          text: encryptText(msg.text, chatKey),
+          file_url: msg.file_url ? encryptText(msg.file_url, chatKey) : null,
           burn_on_read: msg.burn_on_read,
           reply_to_id: msg.reply_to_id ?? null,
           read_by: [],
@@ -1825,8 +2001,13 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
 
   /** Forward a message's (decrypted) content into another encrypted channel. */
   const forwardMessage = useCallback(async (msg: Message, targetChat: Chat) => {
-    const encryptedText = msg.text ? encryptText(msg.text, targetChat.share_code) : '';
-    const encryptedFile = msg.file_url ? encryptText(msg.file_url, targetChat.share_code) : null;
+    const online = backendMode === 'online' && !!supabase;
+    // Phase 5 S3: re-encrypt under the TARGET chat's resolved key.
+    const targetKey = online && supabase
+      ? await chatKeyOf(supabase, targetChat, account?.username || '', true)
+      : targetChat.share_code;
+    const encryptedText = msg.text ? encryptText(msg.text, targetKey) : '';
+    const encryptedFile = msg.file_url ? encryptText(msg.file_url, targetKey) : null;
     if (backendMode === 'online' && supabase) {
       const { error } = await supabase.from('messages').insert({
         chat_id: targetChat.id,
@@ -2241,6 +2422,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         myGradient, updateMyGradient,
         account, loginWithAccount, logout, searchAccounts, startDmWithUser,
         createGroupChat, unsendMessage, forwardMessage,
+        fetchGroupMembers, addGroupMember, removeGroupMember, leaveGroup,
         callingChat, callType, callStatus, callNotice, incomingCall, localStream, remoteStream,
         startCall, endCall, acceptIncomingCall, rejectIncomingCall, getCallRtt, messagesInView, setMessagesInView,
       }}

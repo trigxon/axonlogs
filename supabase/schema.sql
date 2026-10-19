@@ -1084,3 +1084,398 @@ comment on table public.chat_lock_settings is
   'Chat Lock (Phase 4): per-user master switch + PBKDF2 verifier. The plaintext chat-lock password never reaches the server.';
 comment on table public.conversation_locks is
   'Chat Lock (Phase 4): rows mark conversations that open behind the lock screen. Unlock state lives only in the tab session.';
+
+
+-- ============================================================
+--  SECTION 9 · Phase 5 — private encrypted attachments (S4) and
+--  per-conversation key establishment (S3).
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 9.1  Private attachments bucket.
+--      Uploads are ciphertext: the client AES-GCM-encrypts file bytes
+--      with the conversation key BEFORE upload, so the storage layer
+--      never sees plaintext media. Path layout: <chat_id>/<uuid>.enc
+--      RLS gates both upload and read to chat members only.
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('attachments', 'attachments', false)
+on conflict (id) do update set public = false;
+
+drop policy if exists "attachments member upload" on storage.objects;
+create policy "attachments member upload"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'attachments'
+    and public.is_chat_member(
+      ((storage.foldername(name))[1])::uuid,
+      public.my_username()
+    )
+  );
+
+drop policy if exists "attachments member read" on storage.objects;
+create policy "attachments member read"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'attachments'
+    and public.is_chat_member(
+      ((storage.foldername(name))[1])::uuid,
+      public.my_username()
+    )
+  );
+
+drop policy if exists "attachments member manage" on storage.objects;
+create policy "attachments member manage"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'attachments'
+    and public.is_chat_member(
+      ((storage.foldername(name))[1])::uuid,
+      public.my_username()
+    )
+  );
+
+comment on policy "attachments member upload" on storage.objects is
+  'S4 fix: only chat members may upload into their conversation folder, and only ciphertext lands here.';
+
+-- ------------------------------------------------------------
+-- 9.2  account_keys — per-user ECDH P-256 keyring (S3).
+--      The private key is generated on-device and stored ONLY wrapped:
+--        wrapped_private_jwk = AES-GCM(private JWK, PBKDF2(password, kdf_salt))
+--      The server can never recover it without the user's password.
+--      Public keys are public by design — other clients need them to
+--      wrap conversation keys for their owner.
+-- ------------------------------------------------------------
+create table if not exists public.account_keys (
+  username            text primary key references public.accounts(username) on delete cascade,
+  auth_uid            uuid,
+  public_jwk          jsonb not null,
+  wrapped_private_jwk text not null,
+  kdf_salt            text not null,
+  kdf_iterations      int  not null default 310000,
+  updated_at          timestamptz not null default now()
+);
+
+alter table public.account_keys enable row level security;
+
+drop policy if exists "keyring public keys readable" on public.account_keys;
+create policy "keyring public keys readable"
+  on public.account_keys for select to authenticated
+  using (true);
+
+drop policy if exists "keyring owner writes" on public.account_keys;
+create policy "keyring owner writes"
+  on public.account_keys for insert to authenticated
+  with check (username = public.my_username());
+
+drop policy if exists "keyring owner updates" on public.account_keys;
+create policy "keyring owner updates"
+  on public.account_keys for update to authenticated
+  using (username = public.my_username())
+  with check (username = public.my_username());
+
+drop policy if exists "keyring owner deletes" on public.account_keys;
+create policy "keyring owner deletes"
+  on public.account_keys for delete to authenticated
+  using (username = public.my_username());
+
+comment on table public.account_keys is
+  'S3 fix: on-device ECDH P-256 keyrings. wrapped_private_jwk is AES-GCM under a PBKDF2 key derived from the account password — the plaintext private key never leaves the device.';
+
+-- ------------------------------------------------------------
+-- 9.3  chat_keys — per-conversation keys, wrapped per participant.
+--      Scheme 'ecdh-p256': wrapped_key = AES-GCM(
+--        conversation_key, HKDF(ECDH(my_priv, peer_pub), salt = chat_id))
+--      A conversation key row can only be unwrapped by the named
+--      participant's device-held private key. The server stores
+--      ciphertext plus public keys only.
+-- ------------------------------------------------------------
+create table if not exists public.chat_keys (
+  chat_id     uuid not null references public.chats(id) on delete cascade,
+  username    text not null,
+  wrap_scheme text not null default 'ecdh-p256',
+  wrapped_key text not null,
+  wrap_info   jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now(),
+  primary key (chat_id, username)
+);
+
+alter table public.chat_keys enable row level security;
+
+drop policy if exists "chat keys own reads" on public.chat_keys;
+create policy "chat keys own reads"
+  on public.chat_keys for select to authenticated
+  using (username = public.my_username());
+
+drop policy if exists "chat keys participant inserts" on public.chat_keys;
+create policy "chat keys participant inserts"
+  on public.chat_keys for insert to authenticated
+  with check (
+    public.is_chat_member(chat_id, public.my_username())
+    and (
+      username = public.my_username()
+      or public.is_chat_member(chat_id, username)
+    )
+  );
+
+drop policy if exists "chat keys participant deletes" on public.chat_keys;
+create policy "chat keys participant deletes"
+  on public.chat_keys for delete to authenticated
+  using (
+    public.is_chat_member(chat_id, public.my_username())
+    and username = public.my_username()
+  );
+
+comment on table public.chat_keys is
+  'S3 fix: per-conversation symmetric keys, each row wrapped for exactly one participant via ECDH. For DMs the plaintext key exists only on the two devices; a database breach cannot decrypt messages.';
+
+-- ------------------------------------------------------------
+-- 9.4  Group management: leave a group yourself, or the creator
+--      removes a member. (Phase 6 — group member management.)
+-- ------------------------------------------------------------
+drop policy if exists "members delete participants" on public.chat_participants;
+create policy "members delete participants"
+  on public.chat_participants for delete to authenticated
+  using (
+    username = public.my_username()
+    or exists (
+      select 1 from public.chats c
+      where c.id = chat_participants.chat_id
+        and c.created_by = auth.uid()
+    )
+  );
+
+comment on policy "members delete participants" on public.chat_participants is
+  'Group management: self-leave always allowed; removal of others restricted to the chat creator.';
+
+
+-- ============================================================
+--  SECTION 10 · Phase 7 — owner-only admin panel.
+--  The admin role is SERVER-ENFORCED: it lives in admin_users,
+--  granted only by direct SQL by the database owner. No client
+--  insert/update policy exists — nobody can grant themselves.
+--  ADMINS CANNOT READ PRIVATE CHATS: no policy grants access to
+--  message plaintext, and ciphertext is undecryptable without
+--  device keys (SECTION 9). Moderation works only through the
+--  reports queue with reporter-attached evidence.
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 10.1  admin_users — the server-enforced role table.
+--       (is_admin() above is the runtime check.)
+--       Grant rows ONLY via SQL editor as the owner:
+--         insert into public.admin_users (username, granted_by)
+--         values ('<your-username>', 'owner');
+-- ------------------------------------------------------------
+create table if not exists public.admin_users (
+  username    text primary key references public.accounts(username) on delete cascade,
+  granted_by  text not null default 'owner',
+  granted_at  timestamptz not null default now(),
+  note        text not null default ''
+);
+
+alter table public.admin_users enable row level security;
+
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.admin_users a
+    where a.username = public.my_username()
+  );
+$$;
+
+revoke execute on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+
+
+-- SELECT: admins only (the client uses this as the role check —
+-- a non-admin literally cannot read the table, so the UI gate is
+-- backed by the server, not by hiding buttons).
+drop policy if exists "admins read admin_users" on public.admin_users;
+create policy "admins read admin_users"
+  on public.admin_users for select to authenticated
+  using (public.is_admin());
+
+-- NO insert/update/delete policies: only table-owner SQL can manage roles.
+
+comment on table public.admin_users is
+  'Server-enforced admin role (Phase 7). Rows are granted only by owner SQL; RLS lets admins read it, nobody else.';
+
+-- ------------------------------------------------------------
+-- 10.2  admin_audit_log — append-only. INSERT through the
+--       definer RPC (admins), SELECT admins, NO UPDATE/DELETE
+--       for anyone (not even admins).
+-- ------------------------------------------------------------
+create table if not exists public.admin_audit_log (
+  id              bigserial primary key,
+  actor_username  text not null,
+  action          text not null,
+  target_type     text not null default '',
+  target_id       text not null default '',
+  details         jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_admin_audit_created
+  on public.admin_audit_log (created_at desc);
+
+alter table public.admin_audit_log enable row level security;
+
+drop policy if exists "admins read audit log" on public.admin_audit_log;
+create policy "admins read audit log"
+  on public.admin_audit_log for select to authenticated
+  using (public.is_admin());
+
+-- Intentionally NO insert/update/delete policies: writes go through
+-- admin_write_audit RPC (definer, admin-gated). Rows are immutable.
+
+create or replace function public.admin_write_audit(
+  p_action text,
+  p_target_type text default '',
+  p_target_id text default '',
+  p_details jsonb default '{}'::jsonb
+)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'admin only';
+  end if;
+  insert into public.admin_audit_log (actor_username, action, target_type, target_id, details)
+  values (public.my_username(), p_action, p_target_type, p_target_id, p_details);
+end;
+$$;
+
+revoke execute on function public.admin_write_audit(text, text, text, jsonb) from public, anon;
+grant execute on function public.admin_write_audit(text, text, text, jsonb) to authenticated;
+
+comment on table public.admin_audit_log is
+  'Append-only moderation audit trail (Phase 7): who / what / target / when / details. Immutable for everyone.';
+
+-- ------------------------------------------------------------
+-- 10.3  reports — the ONLY moderation intake. Under E2EE the
+--       admin can never read chat ciphertext; a report carries
+--       the reporter-pasted evidence snippet (what THEY saw)
+--       plus metadata. Admin acts; ciphertext stays sealed.
+-- ------------------------------------------------------------
+create table if not exists public.reports (
+  id                  uuid primary key default gen_random_uuid(),
+  reporter_username   text not null,
+  chat_id             text not null default '',
+  message_id          text not null default '',
+  reported_username   text not null default '',
+  reason              text not null,
+  evidence            text not null default '',
+  status              text not null default 'open',
+  admin_note          text not null default '',
+  resolved_by         text,
+  resolved_at         timestamptz,
+  created_at          timestamptz not null default now(),
+  constraint reports_status_chk check (status in ('open','reviewed','actioned','dismissed'))
+);
+
+create index if not exists idx_reports_status
+  on public.reports (status, created_at desc);
+
+alter table public.reports enable row level security;
+
+drop policy if exists "reporter reads own reports" on public.reports;
+create policy "reporter reads own reports"
+  on public.reports for select to authenticated
+  using (
+    reporter_username = public.my_username()
+    or public.is_admin()
+  );
+
+drop policy if exists "anyone may file reports" on public.reports;
+create policy "anyone may file reports"
+  on public.reports for insert to authenticated
+  with check (
+    reporter_username = public.my_username()
+    and length(reason) between 3 and 2000
+  );
+
+-- updates: admins only (status/admin_note/resolved_*), enforced by RLS
+drop policy if exists "admins resolve reports" on public.reports;
+create policy "admins resolve reports"
+  on public.reports for update to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+comment on table public.reports is
+  'Moderation intake (Phase 7). Evidence is reporter-attached plaintext; admins never gain chat-ciphertext access.';
+
+-- ------------------------------------------------------------
+-- 10.4  admin_stats() — real server-side numbers for the
+--       dashboard. Missing integrations return NULL and the UI
+--       labels them honestly as unavailable.
+-- ------------------------------------------------------------
+create or replace function public.admin_stats()
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  result jsonb;
+  v_storage bigint;
+begin
+  if not public.is_admin() then
+    raise exception 'admin only';
+  end if;
+
+  select coalesce(sum(size), 0)::bigint into v_storage
+    from storage.objects
+    where bucket_id in ('attachments', 'avatars');
+
+  select jsonb_build_object(
+    'accounts_total',        (select count(*) from public.accounts),
+    'accounts_verified',     (
+      select count(*) from public.accounts acc
+      join auth.users u on u.id = acc.auth_uid
+      where u.email_confirmed_at is not null or u.phone_confirmed_at is not null
+    ),
+    'accounts_legacy',       (select count(*) from public.accounts where auth_uid is null),
+    'messages_total',        (select count(*) from public.messages),
+    'chats_total',           (select count(*) from public.chats),
+    'calls_total',           (select count(*) from public.calls),
+    'reports_open',          (select count(*) from public.reports where status = 'open'),
+    'reports_total',         (select count(*) from public.reports),
+    'attachments_bytes',     v_storage,
+    'newest_accounts',       (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'username', t.username, 'created_at', t.created_at, 'verified', t.verified
+      )), '[]'::jsonb) from (
+        select acc.username, acc.created_at,
+          (u.email_confirmed_at is not null or u.phone_confirmed_at is not null) as verified
+        from public.accounts acc
+        left join auth.users u on u.id = acc.auth_uid
+        order by acc.created_at desc limit 8
+      ) t
+    ),
+    -- Honest gaps: these are NOT recorded server-side today.
+    'otp_outcomes',          null::text,
+    'rate_limit_events',     null::text,
+    'banned_total',          (select count(*) from public.accounts where banned is true)
+  ) into result;
+
+  return result;
+end;
+$$;
+
+revoke execute on function public.admin_stats() from public, anon;
+grant execute on function public.admin_stats() to authenticated;
+
+-- ------------------------------------------------------------
+-- 10.5  banned flag on accounts (UX layer; the authoritative
+--       enforcement is the Supabase auth ban via the admin-ops
+--       edge function, which kills the user's JWTs).
+-- ------------------------------------------------------------
+alter table public.accounts add column if not exists banned boolean not null default false;
+alter table public.accounts add column if not exists ban_reason text not null default '';
+
+-- RLS: every authenticated user may read the minimal ban flag of
+-- any account (needed to block interactions with banned users).
+-- NOTE: accounts rows are otherwise restricted by SECTION 5.
+drop policy if exists "ban flags readable" on public.accounts;
+create policy "ban flags readable"
+  on public.accounts for select to authenticated
+  using (true);

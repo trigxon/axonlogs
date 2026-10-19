@@ -955,7 +955,28 @@ export const loginAccount = async (
         return { ok: false, error: 'This account has no username on record — log in with your username instead.' };
       }
       const account = await linkProfileToAuthUser(supabase, name, data.user.id);
-      if (account) return { ok: true, account };
+      if (account) {
+        // Phase 7: banned accounts are refused at the door (the
+        // authoritative enforcement is the auth-level ban set by the
+        // admin-ops edge function; this keeps the UX message clear).
+        try {
+          const { data: row } = await supabase
+            .from('accounts')
+            .select('banned, ban_reason')
+            .eq('username', (account.username || name).toLowerCase())
+            .maybeSingle();
+          if (row?.banned) {
+            await supabase.auth.signOut();
+            return {
+              ok: false,
+              error: row.ban_reason
+                ? `This account is suspended: ${row.ban_reason}`
+                : 'This account is suspended.',
+            };
+          }
+        } catch { /* banned column pre-SECTION-10 — allow */ }
+        return { ok: true, account };
+      }
       return {
         ok: true,
         account: {

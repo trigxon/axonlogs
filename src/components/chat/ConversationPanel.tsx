@@ -3,7 +3,7 @@ import {
   ArrowLeft, Phone, Video, Info, Paperclip, SendHorizontal, Flame, X,
   Reply, Pin, Clipboard, Edit2, Trash2, Lock, LockOpen,
   ChevronDown, Search, Check, KeyRound, Archive, Smile, Undo2, CornerUpRight,
-  BellOff, Bell, Palette, Image as ImageIcon, Ban, Flag, User,
+  BellOff, Bell, Palette, Image as ImageIcon, Ban, Flag, User, Users, UserPlus, Loader2,
 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
@@ -20,6 +20,8 @@ import {
   markChatReadUpToNow, CHAT_THEMES, getChatTheme, setChatTheme,
   getNickname, setNickname, isChatMuted, setChatMuted, dmPeer,
 } from '../../utils/chatMeta';
+import { isPrivateAttachment } from '../../utils/chatCrypto';
+import EncryptedAttachment from './EncryptedAttachment';
 
 const QUICK_EMOJIS = ['❤️', '👍', '😂', '🔥', '💯', '🚀', '👀', '😮'];
 const HEART = '❤️';
@@ -165,6 +167,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     markAsRead, startCall, deleteChat, archiveChat, restoreChat, account,
     unsendMessage, forwardMessage, chats, archivedChats,
     hasMoreMessages, loadingOlder, loadOlderMessages, resendMessage,
+    fetchGroupMembers, addGroupMember, removeGroupMember, leaveGroup,
   } = useCrypto();
 
   const myHandle = account?.username?.toLowerCase() || '';
@@ -192,6 +195,13 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   const [searchOpen, setSearchOpen] = useState(false);
   const [chatSearch, setChatSearch] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
+  // Phase 6: group member management
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [members, setMembers] = useState<{ username: string; added_at: string }[]>([]);
+  const [isCreator, setIsCreator] = useState(false);
+  const [addUsername, setAddUsername] = useState('');
+  const [memberBusy, setMemberBusy] = useState(false);
+  const [memberErr, setMemberErr] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
   const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<string | null>(null);
@@ -366,8 +376,31 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     }
   };
 
+  // Phase 6: group member management — open the members modal
+  const openMembers = async () => {
+    setMembersOpen(true);
+    setMemberErr(null);
+    setAddUsername('');
+    setMembers([]);
+    try {
+      const list = await fetchGroupMembers(chat.id);
+      setMembers(list);
+      // creator check: chat row's created_by vs my auth uid
+      const { data: row } = await supabase!.from('chats').select('created_by').eq('id', chat.id).maybeSingle();
+      const { data: u } = await supabase!.auth.getUser();
+      setIsCreator(!!row?.created_by && !!u?.user?.id && row.created_by === u.user.id);
+    } catch {
+      setMembers([]);
+    }
+  };
+
   const renderFile = (fileUrl: string | null) => {
     if (!fileUrl) return null;
+    // Phase 5 / S4: private-bucket references render through the
+    // signed-URL + on-device decrypt pipeline.
+    if (isPrivateAttachment(fileUrl)) {
+      return <EncryptedAttachment fileRef={fileUrl} chat={chat} myUsername={myHandle} />;
+    }
     const isImage = fileUrl.match(/\.(jpeg|jpg|gif|png|webp|avif)(\?.*)?$/i) || fileUrl.startsWith('data:image/');
     const isAudio = fileUrl.match(/\.(webm|mp3|ogg|wav|m4a)(\?.*)?$/i) || fileUrl.startsWith('data:audio/');
     const isVideo = fileUrl.match(/\.(mp4|webm|mov)(\?.*)?$/i) || fileUrl.startsWith('data:video/');
@@ -573,6 +606,14 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     </div>
                   )}
                   {/* Instagram: shared media */}
+                  {isGroup && networkStatus === 'ONLINE' && (
+                    <MenuRow
+                      icon={<Users className="w-3.5 h-3.5" />}
+                      label="Members"
+                      onClick={() => { setMenuPanel('none'); setOptionsOpen(false); openMembers(); }}
+                      trailing={<span className="text-[9px] text-zinc-600">{members.length || ''}</span>}
+                    />
+                  )}
                   <MenuRow
                     icon={<ImageIcon className="w-3.5 h-3.5" />}
                     label="Shared media"
@@ -615,7 +656,11 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     onClick={() => {
                       setOptionsOpen(false);
                       if (isArchivedChat) { restoreChat(chat.id); return; }
-                      if (confirm(isGroup ? `Leave "${chat.name}"?` : `Archive "${chat.name}"? You can unarchive it later.`)) { archiveChat(chat.id); onBack(); }
+                      if (isGroup) {
+                        if (confirm(`Leave "${chat.name}"? You will stop receiving its messages.`)) { leaveGroup(chat.id); onBack(); }
+                        return;
+                      }
+                      if (confirm(`Archive "${chat.name}"? You can unarchive it later.`)) { archiveChat(chat.id); onBack(); }
                     }}
                   />
                   <MenuRow icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete all messages" onClick={() => { setOptionsOpen(false); purgeTerminal(); }} danger />
@@ -1197,7 +1242,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 <div className="col-span-3 text-center text-zinc-600 text-xs py-8">No media shared yet.</div>
               )}
               {mediaMessages.slice().reverse().map(m => (
-                <MediaThumb key={m.id} url={m.file_url!} />
+                <MediaThumb key={m.id} url={m.file_url!} chat={chat} myUsername={myHandle} />
               ))}
             </div>
           </div>
@@ -1234,6 +1279,112 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
           <button onClick={() => { setEditingMsgId(null); setEditingText(''); }} className="text-zinc-500 hover:text-white text-xs uppercase px-2">Esc</button>
         </div>
       )}
+      {/* ---------------- Phase 6: group members modal ---------------- */}
+      {membersOpen && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setMembersOpen(false)}>
+          <div
+            className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0a0c12] shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-label="Group members"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+              <span className="text-sm font-bold text-white">Members</span>
+              <button className="text-zinc-500 hover:text-white" onClick={() => setMembersOpen(false)} aria-label="Close">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {isCreator && (
+              <div className="px-4 py-3 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={addUsername}
+                    onChange={e => { setAddUsername(e.target.value); setMemberErr(null); }}
+                    onKeyDown={async e => {
+                      if (e.key !== 'Enter' || memberBusy || !addUsername.trim()) return;
+                      setMemberBusy(true);
+                      const res = await addGroupMember(chat.id, addUsername);
+                      setMemberBusy(false);
+                      if (!res.ok) { setMemberErr(res.error || 'Could not add.'); return; }
+                      setAddUsername('');
+                      openMembers();
+                    }}
+                    placeholder="@username to add"
+                    className="flex-1 rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-cyan-400/50"
+                  />
+                  <button
+                    disabled={memberBusy || !addUsername.trim()}
+                    onClick={async () => {
+                      setMemberBusy(true);
+                      const res = await addGroupMember(chat.id, addUsername);
+                      setMemberBusy(false);
+                      if (!res.ok) { setMemberErr(res.error || 'Could not add.'); return; }
+                      setAddUsername('');
+                      openMembers();
+                    }}
+                    className="rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-black text-xs font-bold px-3 py-2 flex items-center gap-1.5"
+                  >
+                    {memberBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserPlus className="w-3 h-3" />}
+                    Add
+                  </button>
+                </div>
+                {memberErr && <p className="text-red-400 text-[11px] mt-2">{memberErr}</p>}
+              </div>
+            )}
+
+            <div className="max-h-72 overflow-y-auto feed-scroll">
+              {members.length === 0 && (
+                <div className="text-center text-zinc-600 text-xs py-8">No members found.</div>
+              )}
+              {members.map(mem => {
+                const isMe = mem.username === myHandle;
+                return (
+                  <div key={mem.username} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.03]">
+                    <Avatar seed={mem.username} name={mem.username.slice(0, 2).toUpperCase()} size={30} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-white truncate">@{mem.username}</div>
+                      <div className="text-[10px] text-zinc-600">
+                        joined {new Date(mem.added_at).toLocaleDateString()}
+                        {isMe && ' · you'}
+                      </div>
+                    </div>
+                    {isCreator && !isMe && (
+                      <button
+                        onClick={async () => {
+                          const res = await removeGroupMember(chat.id, mem.username);
+                          if (!res.ok) { setMemberErr(res.error || 'Could not remove.'); return; }
+                          openMembers();
+                        }}
+                        className="text-[10px] font-bold text-red-400 hover:text-red-300 border border-red-400/30 rounded-lg px-2 py-1"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-4 py-3 border-t border-white/[0.06]">
+              <button
+                onClick={async () => {
+                  if (confirm(`Leave this group? You will stop receiving its messages.`)) {
+                    const ok = await leaveGroup(chat.id);
+                    if (ok) { setMembersOpen(false); onBack(); }
+                  }
+                }}
+                className="w-full rounded-lg border border-red-400/30 text-red-400 hover:text-red-300 text-xs font-bold py-2"
+              >
+                Leave group
+              </button>
+              <p className="text-zinc-600 text-[10px] mt-2 leading-relaxed">
+                Group consoles use the invite-code key model — anyone you add with the code can read its history.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 
@@ -1262,7 +1413,15 @@ const MenuRow: React.FC<{
 );
 
 /** Thumbnail for the shared-media gallery (images / video / audio / files). */
-const MediaThumb: React.FC<{ url: string }> = ({ url }) => {
+const MediaThumb: React.FC<{ url: string; chat?: { id: string; share_code: string }; myUsername?: string }> = ({ url, chat, myUsername }) => {
+  // Phase 5 / S4: encrypted references decrypt through the same pipeline.
+  if (isPrivateAttachment(url) && chat && myUsername) {
+    return (
+      <div className="aspect-square w-full rounded-lg border border-white/10 overflow-hidden bg-black/40">
+        <EncryptedAttachment fileRef={url} chat={chat} myUsername={myUsername} />
+      </div>
+    );
+  }
   const isImage = url.match(/\.(jpeg|jpg|gif|png|webp|avif)(\?.*)?$/i) || url.startsWith('data:image/');
   const isVideo = url.match(/\.(mp4|webm|mov)(\?.*)?$/i) || url.startsWith('data:video/');
   const isAudio = url.match(/\.(webm|mp3|ogg|wav|m4a)(\?.*)?$/i) || url.startsWith('data:audio/');

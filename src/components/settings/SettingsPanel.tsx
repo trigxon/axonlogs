@@ -274,11 +274,14 @@ const ChatLockCard: React.FC = () => {
   );
 };
 
+import { useNavigate } from 'react-router-dom';
+
 export interface SettingsPanelProps {
   onBack?: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
+  const navigate = useNavigate();
   const { textSize, cardPadding, borderRadius, setTextSize, setCardPadding, setBorderRadius } = useTheme();
   const { alias, deviceId, updateAlias, addLog, backendMode, networkStatus, pushLocalToCloud, settings, updateSettings, simBotActive, toggleSimBot, logout, account } = useCrypto();
 
@@ -433,6 +436,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
       showStatus('error', error.message || 'Could not change the password.');
       return;
     }
+    // Phase 5 / S3: re-wrap the encryption key under the new password so
+    // end-to-end conversations keep opening (same key, new wrap).
+    try {
+      const { rewrapKeyring } = await import('../../utils/keyringService');
+      const rw = await rewrapKeyring(supabase, account?.username || '', newPassword);
+      if (!rw.ok) addLog(`Key re-wrap skipped: ${rw.error}`);
+    } catch { /* account_keys not provisioned — legacy model applies */ }
     setNewPassword('');
     setConfirmPassword('');
     setCurrentPassword('');
@@ -685,6 +695,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
             <div className="bg-[#050505] border border-zinc-800 px-3 py-1.5 text-zinc-500 font-mono text-[10px] rounded-md select-all">
               {deviceId || 'UNKNOWN'}
             </div>
+          </SettingRow>
+          <SettingRow title="Admin" desc="Owner-only moderation console — access is checked by the server">
+            <button
+              onClick={() => navigate('/admin')}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs px-3 py-1.5 rounded-md transition-colors"
+            >
+              Open
+            </button>
           </SettingRow>
         </SectionCard>
 

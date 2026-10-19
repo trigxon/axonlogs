@@ -162,6 +162,7 @@ export const AuthScreen: React.FC = () => {
           }
           return;
         }
+        await bootstrapKeyring(res.account.username, password);
         loginWithAccount({ username: res.account.username, accountId: res.account.id });
       } catch (err: any) {
         setError(err?.message || 'Something went wrong. Try again.');
@@ -197,6 +198,7 @@ export const AuthScreen: React.FC = () => {
         if (isMissingTableError(res.error)) setNeedsSetup(true);
         return;
       }
+      await bootstrapKeyring(res.account.username, password);
       loginWithAccount({ username: res.account.username, accountId: res.account.id });
     } catch (err: any) {
       setError(err?.message || 'Something went wrong. Try again.');
@@ -215,6 +217,7 @@ export const AuthScreen: React.FC = () => {
         ? await verifySignupEmailOtp(supabase, pending.email, code, uClean, myGradient)
         : await verifySignupOtp(supabase, pending.phone!, code, uClean, myGradient);
       if (!res.ok) { setError(res.error); return; }
+      await bootstrapKeyring(res.account.username, password);
       loginWithAccount({ username: res.account.username, accountId: res.account.id });
     } catch (err: any) {
       setError(err?.message || 'Something went wrong. Try again.');
@@ -305,6 +308,23 @@ export const AuthScreen: React.FC = () => {
     try {
       const res = await completePasswordReset(supabase, rp1, signOutOthers);
       if (!res.ok) { setError(res.error); return; }
+      // Phase 5 / S3: re-wrap the keyring under the NEW password so existing
+      // end-to-end chats keep opening on this device.
+      try {
+        const { hasActivePrivateKey, rewrapKeyring } = await import('../../utils/keyringService');
+        if (hasActivePrivateKey()) {
+          const uid = (await supabase.auth.getUser()).data.user?.id;
+          const { data: acct } = await supabase
+            .from('accounts')
+            .select('username')
+            .eq('auth_uid', uid)
+            .maybeSingle();
+          if (acct?.username) {
+            const rw = await rewrapKeyring(supabase, acct.username, rp1);
+            if (rw.ok) addLog('Encryption key re-wrapped under the new password');
+          }
+        }
+      } catch { /* best-effort re-wrap */ }
       setForgotStep('done');
       addLog(signOutOthers ? 'Password reset — other devices signed out' : 'Password reset');
     } finally {
@@ -327,6 +347,26 @@ export const AuthScreen: React.FC = () => {
 
   const contactKind = parseContact(contact)?.kind;
   const confirmMismatch = confirmPassword.length > 0 && confirmPassword !== password;
+
+  /**
+   * Phase 5 / S3: open (or create on first login) the account keyring with
+   * the password already in hand. E2EE direct messages depend on it; legacy
+   * chats are unaffected when this is skipped or fails.
+   */
+  const bootstrapKeyring = async (uname: string, pwd: string) => {
+    if (!supabase) return;
+    try {
+      const { ensureKeyringForLogin } = await import('../../utils/keyringService');
+      const res = await ensureKeyringForLogin(supabase, uname, pwd);
+      if (res.status === 'ready' && res.created) {
+        addLog('Encryption keyring created — direct messages are end-to-end encrypted');
+      } else if (res.status === 'unwrap-failed') {
+        addLog(`Encryption key unlock failed (${res.error}) — legacy chats still work`);
+      }
+    } catch {
+      /* account_keys not provisioned yet — legacy key model applies */
+    }
+  };
 
   return (
     <div className="h-app w-full premium-bg text-[#d6d8de] font-mono overflow-hidden relative scanlines">

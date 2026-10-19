@@ -118,9 +118,18 @@ async function main() {
     ['verify_chat_lock', `select (to_regprocedure('public.verify_chat_lock(text)') is not null)::text as n`],
     ['realtime_tables', `select count(*)::int as n from pg_publication_tables where pubname='supabase_realtime'`],
     ['stories_gone', `select (to_regclass('public.stories') is null)::text as n`],
+    ['account_keys', `select (to_regclass('public.account_keys') is not null)::text as n`],
+    ['chat_keys', `select (to_regclass('public.chat_keys') is not null)::text as n`],
+    ['keyring_read_policy', `select count(*)::int as n from pg_policies where schemaname='public' and tablename='account_keys' and policyname='keyring public keys readable'`],
+    ['keyring_owner_write', `select count(*)::int as n from pg_policies where schemaname='public' and tablename='account_keys' and policyname='keyring owner writes' and coalesce(with_check, qual) like '%my_username%'`],
+    ['chat_keys_own_reads', `select count(*)::int as n from pg_policies where schemaname='public' and tablename='chat_keys' and policyname='chat keys own reads' and qual like '%my_username%'`],
+    ['chat_keys_member_insert', `select count(*)::int as n from pg_policies where schemaname='public' and tablename='chat_keys' and policyname='chat keys participant inserts' and with_check like '%is_chat_member%'`],
+    ['attachments_upload_rls', `select count(*)::int as n from pg_policies where schemaname='storage' and tablename='objects' and policyname='attachments member upload' and with_check like '%is_chat_member%'`],
+    ['attachments_read_rls', `select count(*)::int as n from pg_policies where schemaname='storage' and tablename='objects' and policyname='attachments member read' and qual like '%is_chat_member%'`],
   ];
   let fail = 0;
-  const expectTrue = new Set(['chat_lock_settings', 'conversation_locks', 'verify_chat_lock', 'stories_gone']);
+  const expectTrue = new Set(['chat_lock_settings', 'conversation_locks', 'verify_chat_lock', 'stories_gone', 'account_keys', 'chat_keys']);
+  const expectPositive = new Set(['tables', 'policies', 'realtime_tables', 'keyring_read_policy', 'keyring_owner_write', 'chat_keys_own_reads', 'chat_keys_member_insert', 'attachments_upload_rls', 'attachments_read_rls']);
   for (const [name, sql] of checks) {
     const rows = await q(client, sql);
     const val = String(rows[0].n);

@@ -80,7 +80,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
   // Hydrate last-message previews for every chat (local storage or Supabase)
   useEffect(() => {
     let cancelled = false;
-    hydratePreviews(chats, backendMode, supabase).then(map => {
+    hydratePreviews(chats, backendMode, supabase, myHandle).then(map => {
       if (!cancelled) setPreviews({ ...map });
     });
     return () => { cancelled = true; };
