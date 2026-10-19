@@ -124,17 +124,31 @@ const linkProfileToAuthUser = async (
     profile = null;
   }
   if (!profile) {
-    const { data, error } = await supabase
-      .from('accounts')
-      .insert({
-        username: u,
-        auth_uid: authUid,
-        bio: seed?.bio || '',
-        avatar_gradient: seed?.avatar_gradient || '',
-        display_name: '',
-      })
-      .select(accountCols(false))
-      .single();
+    const base = {
+      username: u,
+      auth_uid: authUid,
+      bio: seed?.bio || '',
+      avatar_gradient: seed?.avatar_gradient || '',
+      display_name: '',
+    };
+    const attempt = async (extra: Record<string, unknown>) => {
+      const { data, error } = await supabase
+        .from('accounts')
+        .insert({ ...base, ...extra })
+        .select(accountCols(false))
+        .single();
+      return { data, error };
+    };
+    // v2 databases: password_hash is nullable — insert without it.
+    // v1 databases: the column is NOT NULL — retry with an inert empty hash
+    // ('' never verifies: real hashes are 4 '$'-separated PBKDF2 parts).
+    // A duplicate (23505) means the row was created concurrently — no retry.
+    const isDuplicate = (e: any) =>
+      !!e && (e.code === '23505' || /duplicate key|unique constraint/i.test(String(e.message || '')));
+    let { data, error } = await attempt({});
+    if (error && !isDuplicate(error)) {
+      ({ data, error } = await attempt({ password_hash: '' }));
+    }
     if (!error && data) return data as Account;
     return null;
   }
@@ -1393,8 +1407,16 @@ export const insertChatParticipants = async (
   const list = [...new Set(usernames.map(u => u.trim().toLowerCase().replace(/^@/, '')))].filter(Boolean);
   if (list.length === 0) return;
   const rows = list.map(username => ({ chat_id: chatId, username }));
-  const { error } = await supabase.from('chat_participants').upsert(rows, { onConflict: 'chat_id,username', ignoreDuplicates: true });
-  if (error && !isMissingTableError(error)) {
+  // Plain insert WITHOUT .select() (return=minimal) is REQUIRED here:
+  // RETURNING re-checks each returned row against the SELECT policy, and
+  // raising 42501 for the OTHER participant's row (invisible until the
+  // creator's own membership exists) silently killed every DM/group
+  // creation. Duplicates on retry surface as 23505 and are harmless —
+  // the member is already in the chat, which is the desired end state.
+  const { error } = await supabase.from('chat_participants').insert(rows);
+  const isHarmless =
+    isMissingTableError(error) || /duplicate key|unique constraint/i.test(String(error?.message || ''));
+  if (error && !isHarmless) {
     console.warn('chat_participants insert skipped:', error.message);
   }
 };

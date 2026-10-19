@@ -260,6 +260,19 @@ create policy "public access chat_files" on storage.objects
 
 -- ============================================================
 --
+-- 5.0b accounts.password_hash becomes nullable (v2 auth migration).
+--      Supabase Auth owns credentials now; the legacy PBKDF2 hash exists
+--      only on pre-v2 rows. Forcing NOT NULL made every v2 profile
+--      insert (edge function + client linkProfileToAuthUser) fail with a
+--      silent 23502 — new signups got a session but NO profile row, so
+--      they were invisible to search/follow/DM. Hashes stay unreadable
+--      (REVOKE + profiles view — the S2 fix is unchanged).
+--
+-- ============================================================
+alter table public.accounts alter column password_hash drop not null;
+
+-- ============================================================
+--
 -- SECTION 5 — IDENTITY & AUTHORIZATION V2 (security hardening)
 --
 -- The policies above (Sections 1-4) are the LEGACY baseline: they keep
@@ -547,6 +560,13 @@ create policy "recipient clears invites" on public.dm_invites
 
 -- chats: readable only by members; creatable by signed-in users
 -- (membership row follows immediately).
+-- 5.0c: INSERT ... RETURNING checks returned rows against the SELECT
+-- policy. The creator is not a member until chat_participants lands a
+-- moment later, so .single() got 0 rows and DM/group creation broke.
+-- chats.created_by (default = the inserting user) makes the creator see
+-- their own chat immediately; nothing else loosens.
+alter table public.chats add column if not exists created_by uuid default auth.uid();
+
 drop policy if exists "public read chats"   on public.chats;
 drop policy if exists "public insert chats" on public.chats;
 drop policy if exists "public update chats" on public.chats;
@@ -556,6 +576,7 @@ drop policy if exists "members read chats" on public.chats;
 create policy "members read chats" on public.chats
   for select using (
     public.is_chat_member(chats.id, public.my_username())
+    or chats.created_by = auth.uid()
   );
 
 drop policy if exists "auth create chats" on public.chats;
@@ -837,7 +858,18 @@ do $$ begin
   drop policy if exists "story media visibility" on storage.objects;
   drop policy if exists "story media owner upload" on storage.objects;
   drop policy if exists "story media owner manage" on storage.objects;
-  delete from storage.buckets where id = 'story_media';
+  -- The bucket row is best-effort: hosted projects guard storage tables
+  -- with storage.protect_delete(), which turns direct SQL deletes into
+  -- errors. Swallow that (and only that) so the teardown still removes
+  -- every policy/table on live databases; an orphaned, empty, private
+  -- bucket is inert. Owner may delete it in Dashboard → Storage.
+  begin
+    delete from storage.objects where bucket_id = 'story_media';
+    delete from storage.buckets where id = 'story_media';
+  exception when others then
+    raise warning 'story_media bucket cleanup skipped by storage.protection (%). '
+                  'Delete it manually in Dashboard → Storage if desired.', sqlerrm;
+  end;
   -- tables (children before parents; cascade is belt-and-braces)
   drop table if exists public.highlight_stories cascade;
   drop table if exists public.story_views cascade;

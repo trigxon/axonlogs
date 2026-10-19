@@ -91,15 +91,34 @@ Deno.serve(async (req) => {
         .eq('username', u)
         .maybeSingle();
       if (!existing) {
-        await supabaseAdmin.from('accounts').insert({
+        const profile = {
           username: u,
           auth_uid: authUid,
           bio: '',
           avatar_gradient: avatar_gradient || '',
           display_name: '',
-        });
+        };
+        // v2 databases: password_hash is nullable (schema 5.0b) — omit it.
+        // v1 databases: the column is NOT NULL — retry with an inert empty
+        // hash ('' never verifies: PBKDF2 strings are 4 '$'-separated parts).
+        const { error: insertErr } = await supabaseAdmin.from('accounts').insert(profile);
+        if (insertErr) {
+          const { error: retryErr } = await supabaseAdmin
+            .from('accounts')
+            .insert({ ...profile, password_hash: '' });
+          if (retryErr) {
+            // Never report ok:true without a profile row — the user would be
+            // invisible to search/follow/DM. Fail honestly instead.
+            console.error('accounts insert failed:', { insertErr, retryErr });
+            return json(500, { error: 'signup_unavailable' });
+          }
+        }
       } else {
-        await supabaseAdmin.from('accounts').update({ auth_uid: authUid }).eq('username', u);
+        const { error: claimErr } = await supabaseAdmin
+          .from('accounts')
+          .update({ auth_uid: authUid })
+          .eq('username', u);
+        if (claimErr) console.error('accounts claim failed:', claimErr);
       }
     }
 
