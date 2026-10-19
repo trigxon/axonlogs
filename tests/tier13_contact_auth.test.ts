@@ -102,19 +102,19 @@ export async function runTier13Tests(projectRoot: string): Promise<TestResult[]>
   /* ---------------- 13.7 AuthScreen wiring ---------------- */
 
   const screen = read('src', 'components', 'auth', 'AuthScreen.tsx');
-  check('Tier 13.7: the auth screen walks all five modes with private-by-default copy', [
+  check('Tier 13.7: the auth screen walks all modes with private-by-default copy', [
     [screen.includes("placeholder={mode === 'login' ? 'username, email or mobile' : 'username'}"), 'login must advertise all three identifiers'],
     [screen.includes('inputMode="email"') && screen.includes('placeholder="email or mobile number"'), 'signup must collect the real contact'],
-    [screen.includes('Verified once with a link or a text code. Used only for account security — never shown to anyone.'), 'the privacy promise must be on-screen'],
-    [screen.includes("mode === 'confirm'"), 'the email-confirmation pending screen must exist'],
-    [screen.includes("mode === 'otp'"), 'the SMS OTP screen must exist'],
-    [screen.includes('We sent a verification link to'), 'the confirm screen must show the masked destination'],
-    [screen.includes('Enter the code we texted to'), 'the OTP screen must show the masked number'],
+    [screen.includes('Verified once with a six-digit code. Used only for account security — never shown to anyone.'), 'the privacy promise must be on-screen'],
+    [screen.includes("mode === 'otp'"), 'the six-digit code screen must exist for both email and SMS'],
+    [screen.includes("mode === 'verify'"), 'the legacy one-time verification screen must exist'],
+    [screen.includes('Enter the six-digit code we sent to'), 'the code screen must show the masked destination'],
+    [screen.includes('If your email shows a button or link instead of a code, tap it'), 'link-style provider mail must degrade gracefully'],
   ]);
 
-  check('Tier 13.8: forgot-password link is reachable from login', [
+  check('Tier 13.8: forgot-password flow is reachable from login', [
     [screen.includes("onClick={() => switchMode('forgot')}"), 'login must offer Forgot password?'],
-    [screen.includes('Send recovery link'), 'the forgot form must send the recovery email'],
+    [screen.includes('Send recovery code'), 'the forgot form must send the six-digit recovery code'],
     [screen.includes('RECOVERY'), 'the titlebar must reflect the recovery mode'],
   ]);
 

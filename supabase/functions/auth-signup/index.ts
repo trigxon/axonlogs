@@ -51,7 +51,8 @@ Deno.serve(async (req) => {
     if (!USERNAME_RE.test(u) || /^\.|\.$/.test(u)) {
       return json(400, { error: 'invalid_username' });
     }
-    if (typeof password !== 'string' || password.length < 6) {
+    // Matches the project's GoTrue password_min_length (8).
+    if (typeof password !== 'string' || password.length < 8) {
       return json(400, { error: 'weak_password' });
     }
 

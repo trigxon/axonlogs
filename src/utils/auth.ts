@@ -98,9 +98,9 @@ const EMAIL_INVALID_MSG =
   'The site owner can fix it by deploying supabase/functions/auth-signup (bypasses email validation) ' +
   'or relaxing the email rules in the Supabase dashboard. Existing accounts can still log in.';
 
-/** Supabase Auth enforces its own password floor (6 chars). */
+/** Supabase Auth enforces its own password floor (project setting, 8). */
 const isAuthPasswordFloorError = (error: any): boolean =>
-  !!error && /password should be at least|password.*at least \d+ characters/i.test(String(error.message || ''));
+  !!error && /password should be at least|password.*at least \d+ characters|weak_password|too weak/i.test(String(error.message || (error as any).msg || ''));
 
 /**
  * Create or link the public profile row for a Supabase Auth user.
@@ -214,13 +214,34 @@ export const validateUsername = (username: string): string | null => {
 };
 
 /**
- * Password policy: intentionally NONE.
- * Any password is accepted — no minimum length, no maximum, no character
- * requirements, spaces and unicode included. (Instagram-style restrictions
- * apply to usernames only, by design.) The password is PBKDF2-SHA256
- * hashed on-device before it ever leaves the browser.
+ * Password policy (master-prompt section 3): NO composition rules.
+ * No forced uppercase/lowercase/digits/symbols, spaces and unicode
+ * welcome, passphrases welcome, and the value is used EXACTLY as
+ * typed — never trimmed, never silently modified.
+ *
+ * Only two provider-grounded limits remain:
+ * - minimum length 8: the project's Supabase Auth floor
+ *   (password_min_length = 8 — set in the auth config), and
+ * - maximum 72 BYTES: the login provider hashes with bcrypt, which
+ *   silently truncates beyond 72 bytes — rejecting instead of
+ *   truncating keeps “we never modify your password” true.
+ * Documented in AUDIT.md; composition rules stay out by design.
  */
-export const validatePassword = (_password: string): string | null => null;
+export const PASSWORD_MIN = 8;
+export const PASSWORD_MAX_BYTES = 72;
+
+export const passwordByteLength = (password: string): number =>
+  new TextEncoder().encode(password).length;
+
+export const validatePassword = (password: string): string | null => {
+  if (password.length < PASSWORD_MIN) {
+    return `Choose a password with at least ${PASSWORD_MIN} characters.`;
+  }
+  if (passwordByteLength(password) > PASSWORD_MAX_BYTES) {
+    return `Passwords are limited to ${PASSWORD_MAX_BYTES} bytes by our login provider — shorten it a little.`;
+  }
+  return null;
+};
 
 /* ------------------------------ session -------------------------------- */
 
@@ -412,7 +433,7 @@ export const signupAccount = async (
         return { ok: false, error: 'That username is taken. Try another.' };
       }
       if (isAuthPasswordFloorError(error)) {
-        return { ok: false, error: 'Choose a password with at least 6 characters.' };
+        return { ok: false, error: `Choose a password with at least ${PASSWORD_MIN} characters.` };
       }
       if (isRateLimitError(error)) {
         // Do NOT fall through to the legacy path — it would fail confusingly.
@@ -583,7 +604,7 @@ export const signupWithContact = async (
           return { ok: false, error: 'An account with this email already exists. Try logging in.' };
         }
         if (isAuthPasswordFloorError(error)) {
-          return { ok: false, error: 'Choose a password with at least 6 characters.' };
+          return { ok: false, error: `Choose a password with at least ${PASSWORD_MIN} characters.` };
         }
         if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
         if (isInvalidEmailError(error)) {
@@ -630,7 +651,7 @@ export const signupWithContact = async (
         return { ok: false, error: 'An account with this mobile number already exists. Try logging in.' };
       }
       if (isAuthPasswordFloorError(error)) {
-        return { ok: false, error: 'Choose a password with at least 6 characters.' };
+        return { ok: false, error: `Choose a password with at least ${PASSWORD_MIN} characters.` };
       }
       if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
       const msg = String(error.message || error.msg || error.code || '');
@@ -662,6 +683,55 @@ export const signupWithContact = async (
   }
 };
 
+/** Shared finish for both OTP routes: create/link the profile, return the account. */
+const finishOtpSignup = async (
+  supabase: any,
+  user: any,
+  username: string,
+  avatarGradient: string
+): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+  const u = String(user?.user_metadata?.username || username).toLowerCase();
+  const account = await linkProfileToAuthUser(supabase, u, user.id, {
+    avatar_gradient: avatarGradient,
+  });
+  if (account) return { ok: true, account };
+  return {
+    ok: true,
+    account: {
+      id: user.id,
+      username: u,
+      bio: '',
+      avatar_gradient: avatarGradient,
+      created_at: new Date().toISOString(),
+    },
+  };
+};
+
+/** Verify the six-digit EMAIL code that completes a signup (server-enforced). */
+export const verifySignupEmailOtp = async (
+  supabase: any,
+  email: string,
+  token: string,
+  username: string,
+  avatarGradient: string
+): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+  const code = token.trim();
+  if (!/^\d{4,10}$/.test(code)) return { ok: false, error: 'Enter the six-digit code from the email.' };
+  try {
+    const { data, error } = await supabase.auth.verifyOtp({ email, token: code, type: 'signup' });
+    if (error) {
+      const msg = String(error.message || '');
+      if (/expired/i.test(msg)) return { ok: false, error: 'That code expired. Send a new one.' };
+      if (/rate|too many/i.test(msg)) return { ok: false, error: 'Too many attempts — wait a minute and try again.' };
+      return { ok: false, error: "That code isn't right. Check the email and try again." };
+    }
+    if (data?.session && data?.user) return finishOtpSignup(supabase, data.user, username, avatarGradient);
+    return { ok: false, error: 'Verification did not complete. Try again.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Verification failed.' };
+  }
+};
+
 /** Verify the SMS OTP that completed a mobile signup. */
 export const verifySignupOtp = async (
   supabase: any,
@@ -677,25 +747,10 @@ export const verifySignupOtp = async (
     if (error) {
       const msg = String(error.message || '');
       if (/expired/i.test(msg)) return { ok: false, error: 'That code expired. Send a new one.' };
+      if (/rate|too many/i.test(msg)) return { ok: false, error: 'Too many attempts — wait a minute and try again.' };
       return { ok: false, error: "That code isn't right. Check the SMS and try again." };
     }
-    if (data?.session && data?.user) {
-      const u = String(data.user.user_metadata?.username || username).toLowerCase();
-      const account = await linkProfileToAuthUser(supabase, u, data.user.id, {
-        avatar_gradient: avatarGradient,
-      });
-      if (account) return { ok: true, account };
-      return {
-        ok: true,
-        account: {
-          id: data.user.id,
-          username: u,
-          bio: '',
-          avatar_gradient: avatarGradient,
-          created_at: new Date().toISOString(),
-        },
-      };
-    }
+    if (data?.session && data?.user) return finishOtpSignup(supabase, data.user, username, avatarGradient);
     return { ok: false, error: 'Verification did not complete. Try again.' };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Verification failed.' };
@@ -719,11 +774,30 @@ export const resendContactConfirmation = async (
   }
 };
 
+/** Re-send the signup SMS code (rate-limited by the provider). */
+export const resendPhoneOtp = async (
+  supabase: any,
+  phone: string
+): Promise<{ ok: true } | { ok: false; error: string }> => {
+  try {
+    const { error } = await supabase.auth.resend({ type: 'sms', phone } as any);
+    if (error) {
+      if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
+      return { ok: false, error: error.message || 'Could not resend the code.' };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not resend the code.' };
+  }
+};
+
 /**
- * Forgot password — emails a one-time recovery link that opens /reset on
- * this site with a session attached. Only accounts created with an email
- * (or migrated to one) can receive it; username-only legacy accounts are
- * told to use Settings → Account while signed in.
+ * Forgot password — sends a one-time SIX-DIGIT RECOVERY CODE to the email
+ * (separate from the signup code, single-use, short-lived). The response
+ * is intentionally identical whether or not the address is registered, so
+ * the form cannot be used to discover who has an account. Username-only
+ * legacy accounts have no mailbox — they are told to change the password
+ * in Settings → Account while signed in.
  */
 export const requestPasswordReset = async (
   supabase: any,
@@ -733,6 +807,8 @@ export const requestPasswordReset = async (
   if (!CONTACT_EMAIL_RE.test(v)) return { ok: false, error: "That email address doesn't look right." };
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(v, {
+      // Kept for projects that send link-style recovery mail: the link
+      // lands on /reset with a session. Code-style mail ignores this.
       redirectTo: `${window.location.origin}/reset`,
     });
     if (error) {
@@ -745,15 +821,59 @@ export const requestPasswordReset = async (
   }
 };
 
-/** Finish a recovery-link session: set the new password. */
+/**
+ * Verify the six-digit recovery code server-side. Success establishes a
+ * short-lived recovery session (Supabase Auth), which the next call uses
+ * to actually set the new password. The code can NEVER be reused as a
+ * login credential and dies the moment it is consumed.
+ */
+export const verifyRecoveryOtp = async (
+  supabase: any,
+  email: string,
+  token: string
+): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const v = email.trim().toLowerCase();
+  const code = token.trim();
+  if (!CONTACT_EMAIL_RE.test(v)) return { ok: false, error: "That email address doesn't look right." };
+  if (!/^\d{4,10}$/.test(code)) return { ok: false, error: 'Enter the six-digit recovery code.' };
+  try {
+    const { data, error } = await supabase.auth.verifyOtp({ email: v, token: code, type: 'recovery' });
+    if (error) {
+      const msg = String(error.message || '');
+      if (/expired/i.test(msg)) return { ok: false, error: 'That code expired. Request a new one.' };
+      if (/rate|too many/i.test(msg)) return { ok: false, error: 'Too many attempts — wait a minute and try again.' };
+      return { ok: false, error: "That code isn't right. Check the email and try again." };
+    }
+    if (!data?.session) return { ok: false, error: 'Verification did not complete. Try again.' };
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Verification failed.' };
+  }
+};
+
+/** Sign out every OTHER session after a password change/reset. */
+export const signOutOtherSessions = async (supabase: any): Promise<boolean> => {
+  try {
+    // scope 'others' keeps THIS session and revokes the rest.
+    await supabase.auth.signOut({ scope: 'others' } as any);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Finish a recovery: set the new password (uses the recovery session). */
 export const completePasswordReset = async (
   supabase: any,
-  newPassword: string
+  newPassword: string,
+  signOutOthers: boolean = true
 ): Promise<{ ok: true } | { ok: false; error: string }> => {
-  if (newPassword.length < 6) return { ok: false, error: 'Choose a password with at least 6 characters.' };
+  const v = validatePassword(newPassword);
+  if (v) return { ok: false, error: v };
   try {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) return { ok: false, error: error.message || 'Could not set the new password.' };
+    if (signOutOthers) await signOutOtherSessions(supabase);
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Could not set the new password.' };
@@ -810,7 +930,7 @@ export const loginAccount = async (
   supabase: any,
   identifier: string,
   password: string
-): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+): Promise<{ ok: true; account: Account } | { ok: false; error: string; needsVerification?: true }> => {
   const raw = identifier.trim();
   const contact = parseContact(raw);
   // Username-only accounts keep the synthetic-email mapping; accounts created
@@ -845,6 +965,16 @@ export const loginAccount = async (
           avatar_gradient: '',
           created_at: new Date().toISOString(),
         },
+      };
+    }
+    if (error && isEmailNotConfirmedError(error)) {
+      // Legacy account that never verified its email (verification was
+      // switched on after the account existed): gate it behind the same
+      // one-time verification instead of locking the user out silently.
+      return {
+        ok: false,
+        error: 'Your email still needs its one-time verification. Log in with your email address to receive a code.',
+        needsVerification: true,
       };
     }
     if (error && !isInvalidCredentialsError(error)) {
@@ -905,7 +1035,16 @@ const isInvalidCredentialsError = (error: any): boolean => {
   const msg = String(error.message || '');
   return (
     error.code === 'invalid_credentials' ||
-    /invalid login credentials|email not confirmed|user not found/i.test(msg)
+    /invalid login credentials|user not found/i.test(msg)
+  );
+};
+
+/** The account exists but its email was never verified (legacy gate). */
+export const isEmailNotConfirmedError = (error: any): boolean => {
+  if (!error) return false;
+  return (
+    error.code === 'email_not_confirmed' ||
+    /email not confirmed/i.test(String(error.message || ''))
   );
 };
 

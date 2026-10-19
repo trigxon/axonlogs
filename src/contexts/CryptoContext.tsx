@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode, useCall
 import { createClient } from '@supabase/supabase-js';
 import CryptoJS from 'crypto-js';
 import { getMyAvatar, setMyAvatar } from '../utils/chatMeta';
+import { isPrivacyLocked } from '../utils/chatLockCore';
 import {
   type AxonSession,
   type Account,
@@ -132,6 +133,11 @@ interface CryptoContextType {
   messages: Message[];
   /** Phase D keyset pagination over message history */
   hasMoreMessages: boolean;
+  /** Bump to force a fresh fetch of the active conversation's messages. */
+  messagesReloadKey: number;
+  bumpMessagesReload: () => void;
+  /** Chat Lock (Phase 4): drop a conversation's messages from memory now. */
+  scrubConversation: (chatId: string) => void;
   loadingOlder: boolean;
   loadOlderMessages: () => Promise<void>;
   latency: number;
@@ -370,6 +376,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   // Phase D: history pagination + delivery state
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  // Chat Lock (Phase 4): bumping forces a fresh fetch after an unlock.
+  const [messagesReloadKey, setMessagesReloadKey] = useState(0);
+  const bumpMessagesReload = useCallback(() => setMessagesReloadKey(k => k + 1), []);
+  // Chat Lock (Phase 4): purge a conversation's decrypted messages from
+  // component memory the moment its lock engages.
+  const scrubConversation = useCallback((chatId: string) => {
+    setMessages(prev => prev.filter(m => m.chat_id !== chatId));
+  }, []);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const oldestCursorRef = useRef<string | null>(null);
   const [latency, setLatency] = useState(0);
@@ -1067,6 +1081,12 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (backendMode === 'online') {
       if (!supabase || !activeChat) return;
+      // Chat Lock (Phase 4): a protected conversation that is not unlocked
+      // in this tab session loads NOTHING — no fetch, no decrypt, no state.
+      if (isPrivacyLocked(activeChat.id)) {
+        setMessages([]);
+        return;
+      }
       if (unlockedChatId !== activeChat.id) {
         setMessages([]);
         return;
@@ -1135,6 +1155,9 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           table: 'messages',
           filter: `chat_id=eq.${activeChat.id}`,
         }, (payload) => {
+          // Chat Lock: while the conversation sits behind the lock screen,
+          // incoming payloads are never decrypted or stored.
+          if (isPrivacyLocked(activeChat.id)) return;
           if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
             if (oldId) setMessages(prev => prev.filter(m => m.id !== oldId));
@@ -1198,6 +1221,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           });
         })
         .on('broadcast', { event: 'EPH_MSG' }, ({ payload }) => {
+          if (isPrivacyLocked(activeChat.id)) return; // Chat Lock gate
           const { sender_id, text, file_url, reply_to_id, id, created_at } = payload;
 
           const decryptedText = text ? decryptText(text, activeChat.share_code) : '';
@@ -1242,6 +1266,10 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       setMessages([]);
       return;
     }
+    if (isPrivacyLocked(activeChat.id)) {
+      setMessages([]);
+      return;
+    }
     if (unlockedChatId !== activeChat.id) {
       setMessages([]);
       return;
@@ -1260,7 +1288,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       destructTimersRef.current.forEach(t => clearTimeout(t));
       destructTimersRef.current = [];
     };
-  }, [activeChat, deviceId, alias, decryptText, scheduleDestruct, backendMode, unlockedChatId]);
+  }, [activeChat, deviceId, alias, decryptText, scheduleDestruct, backendMode, unlockedChatId, messagesReloadKey]);
 
   const broadcastTyping = useCallback((isTyping: boolean) => {
     if (presenceChannel) {
@@ -2202,7 +2230,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   return (
     <CryptoContext.Provider
       value={{
-        deviceId, alias, chats, archivedChats, activeChat, messages, hasMoreMessages, loadingOlder, loadOlderMessages, latency,
+        deviceId, alias, chats, archivedChats, activeChat, messages, hasMoreMessages, messagesReloadKey, bumpMessagesReload, scrubConversation, loadingOlder, loadOlderMessages, latency,
         setActiveChat, createChat, joinChat, sendMessage, purgeTerminal,
         addSystemMessage, deleteMessageLocally, editMessage, toggleReaction, togglePinMessage, markAsRead, resendMessage,
         updateAlias, systemLogs,

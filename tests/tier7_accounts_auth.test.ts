@@ -159,13 +159,19 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
       [validateUsername('john doe') !== null, 'spaces must be rejected'],
       [validateUsername('john-doe') !== null, 'hyphens must be rejected'],
       [validateUsername('j@hn') !== null, 'special characters must be rejected'],
-      [validatePassword('') === null, 'passwords must be unrestricted (no minimum)'],
-      [validatePassword('a') === null, '1-char passwords must be allowed'],
-      [validatePassword('p@$$w0rd 💪 with spaces') === null, 'unicode/space/symbol passwords must be allowed'],
-      [validatePassword('x'.repeat(500)) === null, 'long passwords must be allowed (no maximum)'],
-      // structural guards so a future edit can't silently re-add password rules
-      [!authUtil.includes('Password must be at least'), 'auth.ts must not enforce a password minimum'],
-      [!authUtil.includes('Password must be at most'), 'auth.ts must not enforce a password maximum'],
+      // Owner spec (master prompt §3): NO composition rules — only the
+      // provider-grounded floor (8, = password_min_length) and the bcrypt
+      // 72-byte ceiling. Supersedes the old zero-restriction policy.
+      [validatePassword('') !== null, 'empty passwords must fail the floor'],
+      [validatePassword('a') !== null, '1-char passwords must fail the floor'],
+      [validatePassword('1234567') !== null, '7 chars must fail the floor'],
+      [validatePassword('p@$$w0rd 💪 with spaces') === null, 'unicode/space/symbol passwords must be allowed (no composition rules)'],
+      [validatePassword('correct horse battery staple') === null, 'long passphrases must be allowed'],
+      [validatePassword('x'.repeat(72)) === null, '72 bytes must pass (bcrypt ceiling)'],
+      [validatePassword('x'.repeat(73)) !== null, '73 bytes must fail (provider would silently truncate)'],
+      // structural guards so a future edit can't silently re-add composition rules
+      [!/must contain (uppercase|lowercase|a digit|a special|an uppercase)/i.test(authUtil), 'auth.ts must not enforce composition rules'],
+      [authUtil.includes('NO composition rules'), 'the no-composition policy must stay documented'],
       [authUtil.includes('{1,30}'), 'username regex must implement the Instagram 1-30 rule'],
       [authScreen.includes('maxLength={30}'), 'AuthScreen username input must cap at 30 characters'],
       [authScreen.includes("This username isn't available"), 'AuthScreen must show the live availability result'],

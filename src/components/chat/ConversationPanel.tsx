@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
+import { verifyChatLockPassword, setConversationLocked } from '../../utils/chatLock';
+import { markChatUnlocked } from '../../utils/chatLockCore';
 import {
   dmDisplayName, activityLabel, fetchAccount, blockUser, unblockUser,
   fetchBlockedUsers, type Account,
@@ -30,7 +32,101 @@ export interface ConversationPanelProps {
   onTriggerPanic: () => void;
   /** deep-link to a user's profile page (optional) */
   onOpenProfile?: (username: string) => void;
+  /** Chat Lock (Phase 4): this conversation currently sits behind the lock screen */
+  privacyLocked?: boolean;
+  /** Chat Lock master switch is on for this account */
+  chatLockEnabled?: boolean;
+  /** this conversation is in the user's protected list */
+  chatProtected?: boolean;
+  /** called after a successful unlock so the shell can refetch messages */
+  onPrivacyUnlocked?: () => void;
+  /** called after the protected list changes so the shell can resync */
+  onProtectedChanged?: () => void;
 }
+
+/**
+ * Chat Lock gate (Phase 4). Rendered INSTEAD of the conversation body —
+ * messages, drafts and composer are all unmounted, so nothing leaks into
+ * the DOM while the lock is up. Unlocking verifies the separate chat-lock
+ * passcode server-side (PBKDF2 verifier compare, rate-limited there).
+ */
+const ChatLockGate: React.FC<{ onUnlocked: () => void; displayName: string }> = ({ onUnlocked, displayName }) => {
+  const [pw, setPw] = useState('');
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !supabase) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await verifyChatLockPassword(pw);
+      if (!res.ok) { setError(res.error); return; }
+      setPw('');
+      onUnlocked();
+    } catch (err: any) {
+      setError(err?.message || 'Could not verify the passcode.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="h-full flex items-center justify-center px-4 py-8 overflow-y-auto">
+      <form onSubmit={submit} className="w-full max-w-xs text-center space-y-4" aria-label="Locked conversation">
+        <div className="w-16 h-16 mx-auto rounded-full term-panel flex items-center justify-center border border-blue-500/40">
+          <Lock className="w-6 h-6 text-blue-400" />
+        </div>
+        <div>
+          <div className="text-blue-300 text-sm font-bold tracking-widest uppercase mb-1">Chat locked</div>
+          <p className="text-zinc-500 text-xs leading-relaxed">
+            {displayName} is protected with your chat lock. It re-locks whenever you refresh,
+            switch tabs or leave this conversation.
+          </p>
+        </div>
+        <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-blue-400/60 transition-colors">
+          <Lock className="w-4 h-4 text-zinc-500 shrink-0" />
+          <input
+            type={show ? 'text' : 'password'}
+            value={pw}
+            onChange={e => { setPw(e.target.value); setError(null); }}
+            placeholder="Chat lock passcode"
+            autoComplete="off"
+            autoFocus
+            className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
+            aria-label="Chat lock passcode"
+          />
+          <button
+            type="button"
+            onClick={() => setShow(v => !v)}
+            tabIndex={-1}
+            aria-label={show ? 'Hide passcode' : 'Show passcode'}
+            className="text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            {show ? <LockOpen className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+          </button>
+        </div>
+        {error && (
+          <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left" role="alert">
+            {error}
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={busy || !pw}
+          className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <LockOpen className="w-4 h-4" /> {busy ? 'Checking…' : 'Unlock conversation'}
+        </button>
+        <p className="text-[10px] text-zinc-600 leading-relaxed">
+          Forgot it? Settings → Chat lock can remove the lock with your account session.
+        </p>
+      </form>
+    </div>
+  );
+};
 
 const DayDivider: React.FC<{ day: string }> = ({ day }) => {
   const label = (() => {
@@ -56,6 +152,11 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   onRequestKeyRotation,
   onTriggerPanic,
   onOpenProfile,
+  privacyLocked = false,
+  chatLockEnabled = false,
+  chatProtected = false,
+  onPrivacyUnlocked,
+  onProtectedChanged,
 }) => {
   const {
     deviceId, messages, latency, sendMessage, purgeTerminal, addSystemMessage,
@@ -345,7 +446,9 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               )}
             </div>
             <div className="text-[10px] tracking-wide truncate">
-              {chatLocked ? (
+              {privacyLocked ? (
+                <span className="text-blue-400 flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Locked — protected by your chat lock</span>
+              ) : chatLocked ? (
                 <span className="text-amber-400 flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> Locked — enter the key to read this chat</span>
               ) : isTypingHere() ? (
                 <span className="text-emerald-400">typing…</span>
@@ -494,6 +597,17 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     label={chatLocked ? 'Unlock chat' : 'Lock chat'}
                     onClick={() => { setOptionsOpen(false); if (chatLocked) { onBack(); } else lockChat(chat.id); }}
                   />
+                  {chatLockEnabled && (
+                    <MenuRow
+                      icon={chatProtected ? <LockOpen className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                      label={chatProtected ? 'Remove chat lock' : 'Protect with chat lock'}
+                      onClick={async () => {
+                        setOptionsOpen(false);
+                        const res = await setConversationLocked(chat.id, !chatProtected);
+                        if (res.ok) onProtectedChanged?.();
+                      }}
+                    />
+                  )}
                   <MenuRow icon={<KeyRound className="w-3.5 h-3.5" />} label="Change chat key" onClick={() => { setOptionsOpen(false); onRequestKeyRotation(chat.id); }} danger />
                   <MenuRow
                     icon={<Archive className="w-3.5 h-3.5" />}
@@ -586,7 +700,12 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
           }}
           className={`feed-scroll h-full overflow-y-auto px-3 sm:px-5 py-4 flex flex-col relative ${chatLocked ? 'items-center justify-center' : ''}`}
         >
-          {chatLocked ? (
+          {privacyLocked ? (
+            <ChatLockGate
+              displayName={displayName}
+              onUnlocked={() => { markChatUnlocked(chat.id); onPrivacyUnlocked?.(); }}
+            />
+          ) : chatLocked ? (
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="w-16 h-16 rounded-full term-panel flex items-center justify-center border border-amber-500/40">
                 <Lock className="w-6 h-6 text-amber-400" />
@@ -872,7 +991,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
         <div className="px-4 py-3 border-t border-white/[0.06] text-center text-[10px] tracking-widest uppercase text-zinc-600 shrink-0">
           Unlock this chat to send messages
         </div>
-      ) : blockedPeer ? (
+      ) : privacyLocked ? null : blockedPeer ? (
         <div className="px-4 py-3 border-t border-white/[0.06] flex items-center justify-center gap-3 shrink-0">
           <span className="text-xs text-zinc-400 flex items-center gap-1.5"><Ban className="w-3.5 h-3.5 text-red-400" /> You blocked @{peer}.</span>
           <button

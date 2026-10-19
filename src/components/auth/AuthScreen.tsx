@@ -1,24 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import {
   AtSign, Lock, Eye, EyeOff, UserPlus, LogIn, AlertTriangle, Check, X,
-  Mail, Phone, KeyRound, ArrowLeft,
+  Mail, Phone, KeyRound, ArrowLeft, ShieldCheck, LogOut,
 } from 'lucide-react';
 import { supabase, useCrypto } from '../../contexts/CryptoContext';
 import SecurityNote from '../ui/SecurityNote';
+import OtpInput from './OtpInput';
 import {
   signupWithContact,
   verifySignupOtp,
+  verifySignupEmailOtp,
+  verifyRecoveryOtp,
   resendContactConfirmation,
+  resendPhoneOtp,
   requestPasswordReset,
+  completePasswordReset,
   validateContact,
   validateUsername,
+  validatePassword,
+  PASSWORD_MIN,
   usernameAvailable,
   isMissingTableError,
   loginAccount,
   parseContact,
 } from '../../utils/auth';
 
-type AuthMode = 'login' | 'signup' | 'confirm' | 'otp' | 'forgot';
+type AuthMode = 'login' | 'signup' | 'otp' | 'verify' | 'forgot';
 
 interface PendingContact {
   masked: string;
@@ -26,16 +33,22 @@ interface PendingContact {
   phone?: string;
 }
 
+const RESEND_SECONDS = 60;
+
 /**
- * Instagram-style auth screen (login / signup) rendered inside the
- * restored macOS window chrome.
+ * Instagram-style auth screen (login / signup) inside the macOS window
+ * chrome. Axon Logs cyber-terminal theme preserved.
  *
- * Signup (owner spec 2026-10-19): username + password + REAL email OR
- * mobile number — whichever the user prefers. Verification happens once
- * at signup (email link / SMS OTP) and again only for password changes.
- * Login accepts the username, the email or the mobile number.
- * The password is hashed by Supabase Auth; legacy PBKDF2 accounts keep
- * working through the invisible migration path.
+ * Verification (master-prompt section 1): new accounts verify ONCE with a
+ * SIX-DIGIT code sent to their real email (or SMS to their mobile). The
+ * code is generated, expired and attempt-limited server-side by Supabase
+ * Auth; this screen only collects it. Existing (legacy) accounts that
+ * never verified are gated behind the same one-time check — they keep
+ * their username, profile and conversations.
+ *
+ * Password rules (section 3): NO composition requirements — passphrases,
+ * spaces and unicode all fine. Only the provider-grounded floor (8 chars)
+ * and a 72-byte ceiling apply. Passwords are never trimmed.
  */
 export const AuthScreen: React.FC = () => {
   const { loginWithAccount, myGradient, deviceId, addLog } = useCrypto();
@@ -43,6 +56,7 @@ export const AuthScreen: React.FC = () => {
   const [username, setUsername] = useState('');
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,13 +65,30 @@ export const AuthScreen: React.FC = () => {
   const [clock, setClock] = useState(() => new Date());
   const [pending, setPending] = useState<PendingContact | null>(null);
   const [otp, setOtp] = useState('');
+  const [resendIn, setResendIn] = useState(0);
+
+  // existing-account (legacy) one-time email verification
+  const [verifyEmail, setVerifyEmail] = useState('');
+
+  // forgot-password flow
+  const [forgotStep, setForgotStep] = useState<'email' | 'code' | 'newpass' | 'done'>('email');
   const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotSent, setForgotSent] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [rp1, setRp1] = useState('');
+  const [rp2, setRp2] = useState('');
+  const [showRp, setShowRp] = useState(false);
+  const [signOutOthers, setSignOutOthers] = useState(true);
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setInterval(() => setResendIn(s => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [resendIn]);
 
   // Instagram-style live availability check while typing (signup only).
   const uClean = username.trim().toLowerCase();
@@ -84,7 +115,10 @@ export const AuthScreen: React.FC = () => {
     if (m === 'login' || m === 'signup') {
       setPending(null);
       setOtp('');
-      setForgotSent(false);
+      setForgotStep('email');
+      setRecoveryCode('');
+      setRp1(''); setRp2('');
+      setVerifyEmail('');
     }
   };
 
@@ -116,6 +150,16 @@ export const AuthScreen: React.FC = () => {
         if (!res.ok) {
           setError(res.error);
           if (isMissingTableError(res.error)) setNeedsSetup(true);
+          // Legacy account whose email was never verified → route into the
+          // one-time verification instead of leaving the user stuck.
+          if (res.needsVerification) {
+            const parsed = parseContact(username.trim());
+            if (parsed?.kind === 'email') {
+              setVerifyEmail(parsed.email);
+              setMode('verify');
+              setResendIn(RESEND_SECONDS);
+            }
+          }
           return;
         }
         loginWithAccount({ username: res.account.username, accountId: res.account.id });
@@ -133,14 +177,19 @@ export const AuthScreen: React.FC = () => {
     const cError = validateContact(contact);
     if (cError) { setError(cError); return; }
     if (!password) { setError('Enter your password.'); return; }
+    const pError = validatePassword(password);
+    if (pError) { setError(pError); return; }
+    if (password !== confirmPassword) { setError("The two passwords don't match."); return; }
 
     setBusy(true);
     try {
       const res = await signupWithContact(supabase, username, password, contact, myGradient);
       if ('pending' in res && res.pending) {
         setPending({ masked: res.masked, email: (res as any).email, phone: (res as any).phone });
-        setMode(res.pending === 'confirm_email' ? 'confirm' : 'otp');
-        addLog(res.pending === 'confirm_email' ? 'Verification link sent' : 'SMS code sent');
+        setOtp('');
+        setMode('otp');
+        setResendIn(RESEND_SECONDS);
+        addLog(res.pending === 'confirm_email' ? 'Verification code emailed' : 'SMS code sent');
         return;
       }
       if (!res.ok) {
@@ -156,13 +205,15 @@ export const AuthScreen: React.FC = () => {
     }
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (busy || !supabase || !pending?.phone) return;
+  /** Six-digit code verify — signup (email or SMS). Submit-on-complete. */
+  const doSignupOtp = async (code: string) => {
+    if (busy || !supabase || !pending) return;
     setError(null);
     setBusy(true);
     try {
-      const res = await verifySignupOtp(supabase, pending.phone, otp, uClean, myGradient);
+      const res = pending.email
+        ? await verifySignupEmailOtp(supabase, pending.email, code, uClean, myGradient)
+        : await verifySignupOtp(supabase, pending.phone!, code, uClean, myGradient);
       if (!res.ok) { setError(res.error); return; }
       loginWithAccount({ username: res.account.username, accountId: res.account.id });
     } catch (err: any) {
@@ -172,14 +223,41 @@ export const AuthScreen: React.FC = () => {
     }
   };
 
-  const handleResend = async () => {
-    if (busy || !supabase || !pending?.email) return;
+  /** Resend the pending signup code. */
+  const handleResendSignup = async () => {
+    if (busy || !supabase || !pending || resendIn > 0) return;
     setError(null);
     setBusy(true);
     try {
-      const res = await resendContactConfirmation(supabase, pending.email);
+      const res = pending.email
+        ? await resendContactConfirmation(supabase, pending.email)
+        : await resendPhoneOtp(supabase, pending.phone!);
       if (!res.ok) setError(res.error);
-      else addLog('Verification link resent');
+      else { setResendIn(RESEND_SECONDS); setOtp(''); addLog('New code sent'); }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Existing-account one-time email verification (legacy gate). */
+  const startVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !supabase) return;
+    const parsed = parseContact(verifyEmail.trim());
+    if (parsed?.kind !== 'email') { setError('Enter the email you registered with.'); return; }
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await resendContactConfirmation(supabase, parsed.email);
+      if (!res.ok) setError(res.error);
+      else {
+        setVerifyEmail(parsed.email);
+        setResendIn(RESEND_SECONDS);
+        setPending({ masked: parsed.email.replace(/^(.).*?(@.*)$/, '$1•••$2'), email: parsed.email });
+        setOtp('');
+        setMode('otp');
+        addLog('Verification code emailed');
+      }
     } finally {
       setBusy(false);
     }
@@ -193,14 +271,62 @@ export const AuthScreen: React.FC = () => {
     try {
       const res = await requestPasswordReset(supabase, forgotEmail);
       if (!res.ok) { setError(res.error); return; }
-      setForgotSent(true);
-      addLog('Password recovery email sent');
+      setForgotStep('code');
+      setResendIn(RESEND_SECONDS);
+      setRecoveryCode('');
+      addLog('Recovery code emailed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRecoveryOtp = async (code: string) => {
+    if (busy || !supabase) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await verifyRecoveryOtp(supabase, forgotEmail, code);
+      if (!res.ok) { setError(res.error); return; }
+      setForgotStep('newpass');
+      addLog('Recovery code verified');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !supabase) return;
+    setError(null);
+    const v = validatePassword(rp1);
+    if (v) { setError(v); return; }
+    if (rp1 !== rp2) { setError("The two passwords don't match."); return; }
+    setBusy(true);
+    try {
+      const res = await completePasswordReset(supabase, rp1, signOutOthers);
+      if (!res.ok) { setError(res.error); return; }
+      setForgotStep('done');
+      addLog(signOutOthers ? 'Password reset — other devices signed out' : 'Password reset');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendRecovery = async () => {
+    if (busy || !supabase || resendIn > 0) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await requestPasswordReset(supabase, forgotEmail);
+      if (!res.ok) setError(res.error);
+      else { setResendIn(RESEND_SECONDS); setRecoveryCode(''); addLog('New recovery code sent'); }
     } finally {
       setBusy(false);
     }
   };
 
   const contactKind = parseContact(contact)?.kind;
+  const confirmMismatch = confirmPassword.length > 0 && confirmPassword !== password;
 
   return (
     <div className="h-app w-full premium-bg text-[#d6d8de] font-mono overflow-hidden relative scanlines">
@@ -231,7 +357,7 @@ export const AuthScreen: React.FC = () => {
             </div>
             <div className="flex items-center gap-3 shrink-0 text-[9px] md:text-[10px] font-bold tracking-widest uppercase text-zinc-500 tabular-nums">
               <span className="hidden sm:inline text-cyan-500/90">
-                {mode === 'forgot' ? 'RECOVERY' : 'SIGN IN'}
+                {mode === 'forgot' ? 'RECOVERY' : mode === 'otp' || mode === 'verify' ? 'VERIFY' : 'SIGN IN'}
               </span>
               <span className="text-emerald-500/90">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </div>
@@ -248,7 +374,7 @@ export const AuthScreen: React.FC = () => {
                 <h1 className="text-white font-bold text-2xl tracking-wide">Axon Logs</h1>
                 {mode === 'signup' ? (
                   <p className="text-zinc-500 text-xs mt-2 text-center leading-relaxed">
-                    Sign up with your email or mobile — verified once.<br />Private by default. No feeds. No noise.
+                    Sign up with your email or mobile — verified once with a 6-digit code.<br />Private by default. No feeds. No noise.
                   </p>
                 ) : mode === 'login' ? (
                   <p className="text-zinc-500 text-xs mt-2 text-center leading-relaxed">
@@ -257,38 +383,52 @@ export const AuthScreen: React.FC = () => {
                 ) : null}
               </div>
 
-              {/* ---- ONE-TIME EMAIL CONFIRMATION ---- */}
-              {mode === 'confirm' && pending ? (
-                <div className="text-center space-y-5">
-                  <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
-                    <Mail className="w-6 h-6 text-cyan-300" />
+              {/* ---- SIX-DIGIT CODE (signup: email or SMS) ---- */}
+              {mode === 'otp' && pending ? (
+                <div className="space-y-4 text-center">
+                  <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center ${pending.email ? 'bg-cyan-500/10 border border-cyan-500/30' : 'bg-emerald-500/10 border border-emerald-500/30'}`}>
+                    {pending.email ? <Mail className="w-6 h-6 text-cyan-300" /> : <Phone className="w-6 h-6 text-emerald-300" />}
                   </div>
                   <div>
                     <div className="text-white font-bold text-sm">One-time check</div>
                     <p className="text-zinc-500 text-xs mt-2 leading-relaxed">
-                      We sent a verification link to <span className="text-zinc-300 font-bold">{pending.masked}</span>.<br />
-                      Tap it once — that's the only time we'll ask.
+                      Enter the six-digit code we sent to{' '}
+                      <span className="text-zinc-300 font-bold">{pending.masked}</span>.
+                      {!pending.email && <><br />Codes by text work the same way.</>}
                     </p>
+                    {pending.email && (
+                      <p className="text-zinc-600 text-[11px] mt-1.5 leading-relaxed">
+                        If your email shows a button or link instead of a code, tap it — verification completes either way.
+                      </p>
+                    )}
                   </div>
+                  <OtpInput
+                    value={otp}
+                    onChange={v => { setOtp(v); setError(null); }}
+                    onComplete={doSignupOtp}
+                    disabled={busy}
+                    error={!!error}
+                  />
                   {error && (
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left">
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left" role="alert">
                       {error}
                     </div>
                   )}
                   <button
                     type="button"
-                    onClick={handleResend}
-                    disabled={busy}
-                    className="w-full term-panel term-interactive py-2.5 rounded-lg text-[10px] font-bold tracking-[0.25em] uppercase text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors disabled:opacity-50"
+                    onClick={() => doSignupOtp(otp)}
+                    disabled={busy || otp.length !== 6}
+                    className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {busy ? 'Sending…' : 'Resend the link'}
+                    <Check className="w-4 h-4" /> {busy ? 'Checking…' : 'Verify and finish'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => switchMode('login')}
-                    className="text-xs text-cyan-400 font-bold hover:text-cyan-300 transition-colors"
+                    onClick={handleResendSignup}
+                    disabled={busy || resendIn > 0}
+                    className="w-full term-panel term-interactive py-2.5 rounded-lg text-[10px] font-bold tracking-[0.25em] uppercase text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors disabled:opacity-50"
                   >
-                    I've verified — log in
+                    {resendIn > 0 ? `Resend available in ${resendIn}s` : 'Send a new code'}
                   </button>
                   <button
                     type="button"
@@ -298,31 +438,37 @@ export const AuthScreen: React.FC = () => {
                     <span className="inline-flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Back to sign up</span>
                   </button>
                 </div>
-              ) : mode === 'otp' && pending ? (
-                /* ---- SMS OTP ---- */
-                <form onSubmit={handleVerifyOtp} className="space-y-4 text-center">
-                  <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-                    <Phone className="w-6 h-6 text-emerald-300" />
+              ) : mode === 'verify' ? (
+                /* ---- LEGACY ACCOUNT ONE-TIME EMAIL VERIFICATION ---- */
+                <form onSubmit={startVerify} className="space-y-4 text-center">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
+                    <ShieldCheck className="w-6 h-6 text-cyan-300" />
                   </div>
-                  <p className="text-zinc-500 text-xs leading-relaxed">
-                    Enter the code we texted to <span className="text-zinc-300 font-bold">{pending.masked}</span>.
-                  </p>
+                  <div>
+                    <div className="text-white font-bold text-sm">Verify your email — once</div>
+                    <p className="text-zinc-500 text-xs mt-2 leading-relaxed">
+                      This account hasn't finished its one-time email check. Enter the email you
+                      registered with and we'll send a six-digit code. Your username, profile and
+                      conversations all stay exactly as they are.
+                    </p>
+                  </div>
                   <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
-                    <KeyRound className="w-4 h-4 text-zinc-500 shrink-0" />
+                    <Mail className="w-4 h-4 text-zinc-500 shrink-0" />
                     <input
                       type="text"
-                      value={otp}
-                      onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 8)); setError(null); }}
-                      placeholder="6-digit code"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      autoFocus
-                      className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600 tracking-[0.4em] text-center"
-                      aria-label="Verification code"
+                      value={verifyEmail}
+                      onChange={e => { setVerifyEmail(e.target.value); setError(null); }}
+                      placeholder="your@email.com"
+                      inputMode="email"
+                      autoComplete="email"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
+                      aria-label="Registered email"
                     />
                   </div>
                   {error && (
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left">
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left" role="alert">
                       {error}
                     </div>
                   )}
@@ -331,39 +477,22 @@ export const AuthScreen: React.FC = () => {
                     disabled={busy}
                     className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Check className="w-4 h-4" /> Verify and finish
+                    <Mail className="w-4 h-4" /> Email me a code
                   </button>
                   <button
                     type="button"
-                    onClick={() => switchMode('signup')}
+                    onClick={() => switchMode('login')}
                     className="block mx-auto text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
                   >
-                    <span className="inline-flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Back to sign up</span>
+                    <span className="inline-flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Back to log in</span>
                   </button>
                 </form>
               ) : mode === 'forgot' ? (
-                /* ---- FORGOT PASSWORD ---- */
-                forgotSent ? (
-                  <div className="text-center space-y-5">
-                    <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
-                      <Mail className="w-6 h-6 text-cyan-300" />
-                    </div>
-                    <p className="text-zinc-500 text-xs leading-relaxed">
-                      Recovery link sent to <span className="text-zinc-300 font-bold">{forgotEmail.replace(/^(.).*?(@.*)$/, '$1•••$2')}</span>.<br />
-                      Open it on this device — it signs you in once so you can set a new password.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => switchMode('login')}
-                      className="text-xs text-cyan-400 font-bold hover:text-cyan-300 transition-colors"
-                    >
-                      Back to log in
-                    </button>
-                  </div>
-                ) : (
+                /* ---- FORGOT PASSWORD (3 steps: email → code → new password) ---- */
+                forgotStep === 'email' ? (
                   <form onSubmit={handleForgot} className="space-y-3">
                     <p className="text-zinc-500 text-xs leading-relaxed text-center">
-                      Enter the email you signed up with. We'll send a one-time link to set a new password.
+                      Enter the email you signed up with. We'll send a one-time six-digit code to set a new password.
                     </p>
                     <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
                       <Mail className="w-4 h-4 text-zinc-500 shrink-0" />
@@ -380,7 +509,7 @@ export const AuthScreen: React.FC = () => {
                       />
                     </div>
                     {error && (
-                      <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
+                      <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg" role="alert">
                         {error}
                       </div>
                     )}
@@ -389,7 +518,7 @@ export const AuthScreen: React.FC = () => {
                       disabled={busy}
                       className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Mail className="w-4 h-4" /> Send recovery link
+                      <Mail className="w-4 h-4" /> Send recovery code
                     </button>
                     <button
                       type="button"
@@ -399,6 +528,141 @@ export const AuthScreen: React.FC = () => {
                       <span className="inline-flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Back to log in</span>
                     </button>
                   </form>
+                ) : forgotStep === 'code' ? (
+                  <div className="space-y-4 text-center">
+                    <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
+                      <KeyRound className="w-6 h-6 text-cyan-300" />
+                    </div>
+                    <p className="text-zinc-500 text-xs leading-relaxed">
+                      Enter the six-digit recovery code sent to{' '}
+                      <span className="text-zinc-300 font-bold">{forgotEmail.replace(/^(.).*?(@.*)$/, '$1•••$2')}</span>.
+                      It works once and expires soon.
+                    </p>
+                    <OtpInput
+                      value={recoveryCode}
+                      onChange={v => { setRecoveryCode(v); setError(null); }}
+                      onComplete={doRecoveryOtp}
+                      disabled={busy}
+                      error={!!error}
+                    />
+                    {error && (
+                      <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg text-left" role="alert">
+                        {error}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => doRecoveryOtp(recoveryCode)}
+                      disabled={busy || recoveryCode.length !== 6}
+                      className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Check className="w-4 h-4" /> {busy ? 'Checking…' : 'Verify code'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resendRecovery}
+                      disabled={busy || resendIn > 0}
+                      className="w-full term-panel term-interactive py-2.5 rounded-lg text-[10px] font-bold tracking-[0.25em] uppercase text-zinc-300 hover:text-cyan-300 border border-white/[0.07] transition-colors disabled:opacity-50"
+                    >
+                      {resendIn > 0 ? `Resend available in ${resendIn}s` : 'Send a new code'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setForgotStep('email'); setError(null); }}
+                      className="block mx-auto text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
+                    >
+                      <span className="inline-flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Wrong email? Go back</span>
+                    </button>
+                  </div>
+                ) : forgotStep === 'newpass' ? (
+                  <form onSubmit={handleNewPassword} className="space-y-3">
+                    <div className="text-white font-bold text-sm text-center">Set a new password</div>
+                    <p className="text-zinc-500 text-xs leading-relaxed text-center">
+                      No rules — passphrases welcome. At least {PASSWORD_MIN} characters.
+                    </p>
+                    <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
+                      <Lock className="w-4 h-4 text-zinc-500 shrink-0" />
+                      <input
+                        type={showRp ? 'text' : 'password'}
+                        value={rp1}
+                        onChange={e => { setRp1(e.target.value); setError(null); }}
+                        placeholder="New password"
+                        autoComplete="new-password"
+                        className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
+                        aria-label="New password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRp(v => !v)}
+                        className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                        tabIndex={-1}
+                        aria-label={showRp ? 'Hide new password' : 'Show new password'}
+                      >
+                        {showRp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
+                      <Lock className="w-4 h-4 text-zinc-500 shrink-0" />
+                      <input
+                        type={showRp ? 'text' : 'password'}
+                        value={rp2}
+                        onChange={e => { setRp2(e.target.value); setError(null); }}
+                        placeholder="Repeat the new password"
+                        autoComplete="new-password"
+                        className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
+                        aria-label="Repeat the new password"
+                      />
+                    </div>
+                    {rp2.length > 0 && rp1 !== rp2 && (
+                      <div className="px-1 text-[11px] text-red-400">The two passwords don't match yet.</div>
+                    )}
+                    <label className="flex items-start gap-2.5 px-1 py-1 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={signOutOthers}
+                        onChange={e => setSignOutOthers(e.target.checked)}
+                        className="mt-0.5 accent-cyan-400"
+                      />
+                      <span className="text-[11px] text-zinc-400 leading-snug flex items-start gap-1.5">
+                        <LogOut className="w-3.5 h-3.5 shrink-0 mt-0.5 text-zinc-500" />
+                        Log out other devices after the reset (recommended — this one stays signed in).
+                      </span>
+                    </label>
+                    {error && (
+                      <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg" role="alert">
+                        {error}
+                      </div>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={busy || !rp1 || !rp2}
+                      className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Check className="w-4 h-4" /> {busy ? 'Saving…' : 'Save new password'}
+                    </button>
+                  </form>
+                ) : (
+                  <div className="text-center space-y-5">
+                    <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                      <Check className="w-6 h-6 text-emerald-300" />
+                    </div>
+                    <div>
+                      <div className="text-white font-bold text-sm">Password updated</div>
+                      <p className="text-zinc-500 text-xs mt-2 leading-relaxed">
+                        {signOutOthers
+                          ? 'Your other devices were signed out. This device keeps its session.'
+                          : 'Your new password works everywhere from now on.'}{' '}
+                        The recovery code is now dead — it can't be reused.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => switchMode('login')}
+                      className="btn-premium w-full py-2.5 rounded-lg flex items-center justify-center gap-2"
+                    >
+                      <LogIn className="w-4 h-4" /> Log in with the new password
+                    </button>
+                  </div>
                 )
               ) : (
                 /* ---- LOGIN / SIGNUP ---- */
@@ -462,7 +726,7 @@ export const AuthScreen: React.FC = () => {
                         />
                       </div>
                       <div className="min-h-[18px] px-1 text-[11px] leading-snug text-zinc-600">
-                        Verified once with a link or a text code. Used only for account security — never shown to anyone.
+                        Verified once with a six-digit code. Used only for account security — never shown to anyone.
                       </div>
                     </>
                   )}
@@ -490,8 +754,39 @@ export const AuthScreen: React.FC = () => {
                     </button>
                   </div>
 
+                  {/* confirm password (signup only) */}
+                  {mode === 'signup' && (
+                    <>
+                      <div className="term-input rounded-lg px-3 py-2.5 flex items-center gap-2.5 focus-within:border-cyan-400/60 transition-colors">
+                        <Lock className="w-4 h-4 text-zinc-500 shrink-0" />
+                        <input
+                          type={showPass ? 'text' : 'password'}
+                          value={confirmPassword}
+                          onChange={e => { setConfirmPassword(e.target.value); setError(null); }}
+                          placeholder="repeat the password"
+                          autoComplete="new-password"
+                          className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600"
+                          aria-label="Repeat the password"
+                        />
+                      </div>
+                      <div className="min-h-[16px] px-1 text-[11px] leading-snug">
+                        {confirmMismatch ? (
+                          <span className="text-red-400 flex items-center gap-1">
+                            <X className="w-3 h-3 shrink-0" /> The two passwords don't match yet.
+                          </span>
+                        ) : confirmPassword ? (
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <Check className="w-3 h-3 shrink-0" /> They match.
+                          </span>
+                        ) : (
+                          <span className="text-zinc-600">No character rules — passphrases welcome. {PASSWORD_MIN}+ characters.</span>
+                        )}
+                      </div>
+                    </>
+                  )}
+
                   {error && (
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg">
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg" role="alert">
                       {error}
                     </div>
                   )}

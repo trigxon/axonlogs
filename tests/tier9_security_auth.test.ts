@@ -96,7 +96,7 @@ export async function runTier9Tests(projectRoot: string): Promise<TestResult[]> 
       [mod.confirmationRequired({ user: null, session: null }) === false, 'no user = not a confirmation case'],
       [mod.confirmationRequired({ user: { id: 'u1' }, session: { a: 1 } }) === false, 'session present = not a confirmation case'],
       [mod.validateUsername('alice') === null, 'username validation unchanged'],
-      [mod.validatePassword('') === null && mod.validatePassword('x') === null, 'client password pre-validation stays unrestricted'],
+      [mod.validatePassword('1234567') !== null && mod.validatePassword('12345678') === null, 'client password floor is 8 with NO composition rules'],
     ];
     for (const [ok, name] of checks) {
       results.push({ name: `9.3 ${name}`, passed: ok, duration: 0 });

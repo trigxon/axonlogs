@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, PlusSquare, KeyRound, Lock, MessageCircle, Send, Users, Check, X, UserCheck } from 'lucide-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
+import { isPrivacyLocked } from '../../utils/chatLockCore';
 import Avatar from '../profile/Avatar';
 import {
   hydratePreviews,
@@ -32,6 +33,8 @@ export interface InboxPanelProps {
   onJoinCode: () => void;
   /** bumped by the shell whenever messages change so previews stay fresh */
   refreshKey: number;
+  /** bumped by the shell whenever the chat-lock state changes (Phase 4) */
+  lockTick?: number;
 }
 
 /**
@@ -225,7 +228,12 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
 
   const renderRow = (chat: Chat) => {
     const isActive = activeChat?.id === chat.id;
-    const preview = previews[chat.id] || readCachedPreview(chat.id);
+    const cachedPreview = previews[chat.id] || readCachedPreview(chat.id);
+    // Chat Lock (Phase 4): a protected-but-locked conversation never shows
+    // its last-message content in the list — metadata only.
+    const preview = isPrivacyLocked(chat.id)
+      ? { ...cachedPreview, text: '🔒 Locked — unlock to read', senderId: '' }
+      : cachedPreview;
     const unread = isUnread(chat.id, preview, deviceId);
     const isTyping = isActive && typingInActive;
     const mine = preview?.senderId === deviceId;

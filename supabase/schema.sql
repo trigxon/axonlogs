@@ -925,3 +925,162 @@ create unique index if not exists idx_messages_chat_client_tag
 
 comment on column public.messages.client_tag is
   'Client idempotency key (Phase D): same tag across retries; (chat_id, client_tag) is unique.';
+
+-- ============================================================
+-- 8. Chat Lock — a user-chosen privacy lock for chosen
+--    conversations (Phase 4 of the master build prompt).
+-- ============================================================
+-- WHAT THIS IS: a device-privacy lock. Opening a protected
+-- conversation requires the chat-lock password until the user
+-- unlocks it IN THIS TAB SESSION. The unlock state is in-memory
+-- only (never localStorage/sessionStorage), so a refresh, a tab
+-- switch, a route change or a direct deep link all return the
+-- conversation to its locked state.
+--
+-- WHAT THIS IS NOT: not encryption. Message bodies are already
+-- end-to-end AES-encrypted per chat key; the chat-lock password
+-- is SEPARATE from the account password and from chat keys. The
+-- server stores only a PBKDF2-SHA256 (310k iterations) verifier
+-- derived client-side — never the password, never key material.
+--
+-- Statement order is safe for fresh databases: tables are created
+-- BEFORE the policies and the SQL RPC that read them (42P01 guard,
+-- see the Task-10 fixes above).
+-- ------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- 8.1 chat_lock_settings — one row per user: master switch, the
+--     PBKDF2 verifier, the auto-lock policy and the server-side
+--     brute-force cool-down state.
+-- ------------------------------------------------------------
+create table if not exists public.chat_lock_settings (
+  user_id           uuid primary key references auth.users(id) on delete cascade,
+  enabled           boolean not null default false,
+  salt              text not null,
+  verifier          text not null,
+  auto_lock_on_hide boolean not null default true,
+  failed_attempts   int not null default 0,
+  locked_until      timestamptz,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now(),
+  constraint chat_lock_verifier_format check (
+    char_length(salt) between 16 and 128
+    and char_length(verifier) between 32 and 256
+  )
+);
+
+alter table public.chat_lock_settings enable row level security;
+
+drop policy if exists "chat lock settings are owner-only" on public.chat_lock_settings;
+create policy "chat lock settings are owner-only" on public.chat_lock_settings
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
+-- 8.2 conversation_locks — WHICH conversations are protected.
+--     Presence of a row = the conversation opens behind the
+--     lock screen (while the master switch in 8.1 is enabled).
+--     The user can only protect conversations they are a
+--     member of (enforced in WITH CHECK, no enumeration side
+--     channel: probing foreign chat ids simply fails the check).
+-- ------------------------------------------------------------
+create table if not exists public.conversation_locks (
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  chat_id    uuid not null references public.chats(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, chat_id)
+);
+
+create index if not exists idx_conversation_locks_chat
+  on public.conversation_locks (chat_id);
+
+alter table public.conversation_locks enable row level security;
+
+drop policy if exists "conversation locks are owner-only" on public.conversation_locks;
+create policy "conversation locks are owner-only" on public.conversation_locks
+  for all
+  using (auth.uid() = user_id)
+  with check (
+    auth.uid() = user_id
+    and public.is_chat_member(chat_id, public.my_username())
+  );
+
+-- ------------------------------------------------------------
+-- 8.3 verify_chat_lock — the ONLY way a verifier is checked.
+--     Constant-work comparison server-side with an escalating
+--     cool-down after repeated failures (10s doubling per miss,
+--     hard lock from the 5th consecutive failure, capped at
+--     15 minutes). A success resets the counters.
+--     SECURITY DEFINER + auth.uid() scoping: the caller can
+--     only ever verify their OWN verifier, and the verifier
+--     value itself is never returned to the client.
+-- ------------------------------------------------------------
+create or replace function public.verify_chat_lock(p_verifier text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row  public.chat_lock_settings%rowtype;
+  v_wait int;
+begin
+  if p_verifier is null or char_length(p_verifier) = 0 then
+    return jsonb_build_object('ok', false, 'error', 'missing_verifier');
+  end if;
+
+  select * into v_row
+  from public.chat_lock_settings
+  where user_id = auth.uid();
+
+  if not found or not v_row.enabled then
+    return jsonb_build_object('ok', false, 'error', 'not_set_up');
+  end if;
+
+  if v_row.locked_until is not null and v_row.locked_until > now() then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'rate_limited',
+      'retry_after', ceil(extract(epoch from (v_row.locked_until - now())))::int
+    );
+  end if;
+
+  if v_row.verifier = p_verifier then
+    update public.chat_lock_settings
+      set failed_attempts = 0, locked_until = null, updated_at = now()
+      where user_id = auth.uid();
+    return jsonb_build_object('ok', true);
+  end if;
+
+  -- Wrong verifier: escalate. Misses 1-4 stay below the hard
+  -- lock but still carry a growing cool-down; the 5th (and any
+  -- later) consecutive miss trips locked_until.
+  v_wait := least(900, (10 * power(2, least(v_row.failed_attempts, 7)))::int);
+
+  update public.chat_lock_settings
+    set failed_attempts = failed_attempts + 1,
+        locked_until = case
+          when v_row.failed_attempts + 1 >= 5
+            then now() + make_interval(secs => v_wait)
+          else v_row.locked_until
+        end,
+        updated_at = now()
+    where user_id = auth.uid();
+
+  return jsonb_build_object(
+    'ok', false,
+    'error', 'wrong_password',
+    'attempts_left', greatest(0, 5 - (v_row.failed_attempts + 1)),
+    'cooldown_seconds', case when v_row.failed_attempts + 1 >= 5 then v_wait else 0 end
+  );
+end;
+$$;
+
+-- authenticated only: the RPC is scoped to auth.uid(), but Postgres grants
+-- EXECUTE to PUBLIC by default — revoke it so anon callers get nothing at all.
+revoke execute on function public.verify_chat_lock(text) from public, anon;
+grant execute on function public.verify_chat_lock(text) to authenticated;
+
+comment on table public.chat_lock_settings is
+  'Chat Lock (Phase 4): per-user master switch + PBKDF2 verifier. The plaintext chat-lock password never reaches the server.';
+comment on table public.conversation_locks is
+  'Chat Lock (Phase 4): rows mark conversations that open behind the lock screen. Unlock state lives only in the tab session.';

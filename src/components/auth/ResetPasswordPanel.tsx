@@ -86,7 +86,7 @@ export const ResetPasswordPanel: React.FC<{ onBack?: () => void }> = ({ onBack }
           <form onSubmit={submit} className="space-y-3 text-left">
             <div className="text-white font-bold text-sm text-center">Set a new password</div>
             <p className="text-zinc-500 text-xs leading-relaxed text-center">
-              Pick something you'll remember — at least 6 characters.
+              Pick something you'll remember — at least 8 characters. No rules — passphrases welcome.
             </p>
             <input
               type="password"

@@ -10,6 +10,11 @@ import {
   fetchFollowing, fetchAccountsByUsernames, type Account, type FollowState,
 } from '../../utils/auth';
 import { isChatMuted } from '../../utils/chatMeta';
+import { syncChatLockRuntime } from '../../utils/chatLock';
+import {
+  isPrivacyLocked, lockAllConversations,
+  getChatLockEnabledState, chatLockProtectedIds, getAutoLockOnHide,
+} from '../../utils/chatLockCore';
 import { fetchUnreadCount } from '../../utils/notifications';
 import InboxPanel from '../chat/InboxPanel';
 import ConversationPanel from '../chat/ConversationPanel';
@@ -55,7 +60,63 @@ export const ChatApp: React.FC = () => {
     startDmWithUser,
     unlockedChatId, unlockChat, settings, backendMode, myGradient,
     latency, typingUsers, onlineUsers, account,
+    bumpMessagesReload, scrubConversation,
   } = useCrypto();
+
+  /* ---------------- Chat Lock (Phase 4) controller ----------------
+   * Server state (chat_lock_settings + conversation_locks) is synced
+   * into the in-memory runtime; this tab's unlock set dies on refresh,
+   * and every route change / tab hide re-locks protected conversations. */
+  const [lockTick, setLockTick] = useState(0);
+  const [chatLockOn, setChatLockOn] = useState(false);
+  const [protectedIds, setProtectedIds] = useState<Set<string>>(() => new Set());
+  const bumpLock = () => setLockTick(t => t + 1);
+  const lockRoute = useLocation();
+
+  const resyncChatLock = React.useCallback(async () => {
+    await syncChatLockRuntime();
+    setChatLockOn(getChatLockEnabledState());
+    setProtectedIds(new Set(chatLockProtectedIds()));
+    bumpLock();
+  }, []);
+
+  // Sync on sign-in / account change.
+  React.useEffect(() => {
+    if (!account?.username) return;
+    resyncChatLock();
+  }, [account?.username, resyncChatLock]);
+
+  // Lock everything protected: tab hide, page hide, settings changes.
+  const lockAllNow = React.useCallback(() => {
+    const ids = lockAllConversations();
+    if (!ids.length) return;
+    ids.forEach(id => scrubConversation(id));
+    bumpLock();
+  }, [scrubConversation]);
+
+  React.useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden && getAutoLockOnHide()) lockAllNow();
+    };
+    const onPageHide = () => lockAllNow();
+    const onLockChanged = () => { resyncChatLock(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('axon:chat-lock-changed', onLockChanged);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('axon:chat-lock-changed', onLockChanged);
+    };
+  }, [lockAllNow, resyncChatLock]);
+
+  // Any route change re-locks protected conversations (deep links too).
+  const firstRoute = React.useRef(true);
+  React.useEffect(() => {
+    if (firstRoute.current) { firstRoute.current = false; return; }
+    lockAllNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockRoute.pathname]);
 
   /* ---------------- navigation (URL-routed) ---------------- */
   const location = useLocation();
@@ -660,6 +721,11 @@ export const ChatApp: React.FC = () => {
           onRequestKeyRotation={(id) => { setTargetChatId(id); setPasswordInput(''); setShowPasswordModal(true); }}
           onTriggerPanic={() => setPanicMode(true)}
           onOpenProfile={u => openProfileAt(u)}
+          privacyLocked={!!activeChat && isPrivacyLocked(activeChat.id)}
+          chatLockEnabled={chatLockOn}
+          chatProtected={!!activeChat && protectedIds.has(activeChat.id)}
+          onPrivacyUnlocked={() => { bumpMessagesReload(); bumpLock(); }}
+          onProtectedChanged={() => { resyncChatLock(); bumpMessagesReload(); }}
         />
       );
     }
@@ -786,6 +852,7 @@ export const ChatApp: React.FC = () => {
                   onNewGroup={() => setShowGroupModal(true)}
                   onJoinCode={() => setShowJoinModal(true)}
                   refreshKey={refreshKey}
+                  lockTick={lockTick}
                 />
               </div>
             </div>

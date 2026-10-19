@@ -19,13 +19,24 @@ import {
   RefreshCw,
   Flame,
   Timer,
+  Lock,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCrypto, BURN_DELAY_OPTIONS } from '../../contexts/CryptoContext';
 import SecurityNote from '../ui/SecurityNote';
 import { supabase } from '../../contexts/CryptoContext';
 import { getNotifPrefs, setNotifPrefs, type NotifPrefs } from '../../utils/notifications';
-import { fetchAccount, fetchFollowers, fetchFollowing, fetchBlockedUsers, verifyCurrentPassword } from '../../utils/auth';
+import { fetchAccount, fetchFollowers, fetchFollowing, fetchBlockedUsers, verifyCurrentPassword, validatePassword, PASSWORD_MIN } from '../../utils/auth';
+import {
+  fetchChatLockRuntime,
+  enableChatLock,
+  disableChatLock,
+  setChatLockAutoLock,
+  changeChatLockPassword,
+} from '../../utils/chatLock';
+import { validateChatLockPassword } from '../../utils/chatLockCore';
 import {
   exportAppData,
   exportPdfData,
@@ -35,6 +46,233 @@ import {
 
 const burnLabel = (seconds: number) =>
   seconds >= 3600 ? `${Math.round(seconds / 3600)}H` : seconds >= 60 ? `${Math.round(seconds / 60)}M` : `${seconds}S`;
+
+/** Tell the shell the chat-lock state changed so gates re-evaluate. */
+export const notifyChatLockChanged = () => {
+  try { window.dispatchEvent(new CustomEvent('axon:chat-lock-changed')); } catch { /* non-DOM */ }
+};
+
+/**
+ * Chat Lock card — a separate passcode that protects chosen conversations
+ * on this device. The passcode never reaches the server (only a PBKDF2
+ * verifier does); unlocking survives route changes inside the tab but dies
+ * on refresh, tab switches and deep links, by design.
+ */
+const ChatLockCard: React.FC = () => {
+  const { addLog, backendMode } = useCrypto();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [autoLock, setAutoLock] = useState(true);
+  const [p1, setP1] = useState('');
+  const [p2, setP2] = useState('');
+  const [show, setShow] = useState(false);
+  const [oldPw, setOldPw] = useState('');
+  const [changing, setChanging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  React.useEffect(() => {
+    let dead = false;
+    (async () => {
+      const s = await fetchChatLockRuntime();
+      if (!dead) {
+        setEnabled(!!s?.enabled);
+        setAutoLock(s?.auto_lock_on_hide !== false);
+        setLoaded(true);
+      }
+    })();
+    return () => { dead = true; };
+  }, []);
+
+  const say = (kind: 'error' | 'ok', text: string) => {
+    setMsg({ kind, text });
+    setTimeout(() => setMsg(null), 5000);
+  };
+
+  const online = backendMode === 'online' && !!supabase;
+
+  const handleEnable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setMsg(null);
+    if (!online) { say('error', 'You need the cloud connection for chat lock.'); return; }
+    const v = validateChatLockPassword(p1);
+    if (v) { say('error', v); return; }
+    if (p1 !== p2) { say('error', "The two passcodes don't match."); return; }
+    setBusy(true);
+    const res = await enableChatLock(p1);
+    setBusy(false);
+    if (!res.ok) { say('error', res.error); return; }
+    setP1(''); setP2('');
+    setEnabled(true);
+    addLog('Chat lock enabled');
+    say('ok', 'Chat lock is on. Protect individual chats from their conversation menu.');
+    notifyChatLockChanged();
+  };
+
+  const handleDisable = async () => {
+    if (busy || !online) return;
+    setBusy(true);
+    const res = await disableChatLock();
+    setBusy(false);
+    if (!res.ok) { say('error', res.error); return; }
+    setEnabled(false);
+    setChanging(false);
+    setOldPw('');
+    addLog('Chat lock removed — every protected chat unlocked');
+    notifyChatLockChanged();
+  };
+
+  const handleAutoLock = async (next: boolean) => {
+    setAutoLock(next);
+    const res = await setChatLockAutoLock(next);
+    if (!res.ok) { say('error', res.error); setAutoLock(!next); return; }
+    addLog(next ? 'Chat lock: locks when the tab hides' : 'Chat lock: locks on refresh and leaving only');
+    notifyChatLockChanged();
+  };
+
+  const handleChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setMsg(null);
+    const v = validateChatLockPassword(p1);
+    if (v) { say('error', v); return; }
+    if (p1 !== p2) { say('error', "The two passcodes don't match."); return; }
+    setBusy(true);
+    const res = await changeChatLockPassword(oldPw, p1);
+    setBusy(false);
+    if (!res.ok) { say('error', res.error); return; }
+    setP1(''); setP2(''); setOldPw(''); setChanging(false);
+    addLog('Chat lock passcode changed');
+    say('ok', 'Passcode updated.');
+    notifyChatLockChanged();
+  };
+
+  const canReset = oldPw.length > 0 && p1.length > 0;
+
+  return (
+    <div className="px-5 pb-4 space-y-2">
+      {loaded && enabled === false && (
+        <form onSubmit={handleEnable} className="space-y-2">
+          <p className="text-[11px] text-zinc-500 leading-relaxed">
+            Lock chosen conversations behind a separate passcode on this device.
+            They re-lock on refresh, tab switches and when you leave the chat.
+          </p>
+          <div className="relative">
+            <input
+              type={show ? 'text' : 'password'}
+              value={p1}
+              onChange={e => setP1(e.target.value)}
+              placeholder="Chat lock passcode (separate from your password)"
+              autoComplete="new-password"
+              className="w-full bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-2 pr-9 text-white text-xs outline-none rounded-md transition-colors"
+            />
+            <button type="button" onClick={() => setShow(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300" tabIndex={-1} aria-label={show ? 'Hide passcode' : 'Show passcode'}>
+              {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          <input
+            type={show ? 'text' : 'password'}
+            value={p2}
+            onChange={e => setP2(e.target.value)}
+            placeholder="Repeat the passcode"
+            autoComplete="new-password"
+            className="w-full bg-[#050505] border border-zinc-800 focus:border-blue-500 px-3 py-2 text-white text-xs outline-none rounded-md transition-colors"
+          />
+          <button
+            type="submit"
+            disabled={busy || !p1 || !p2}
+            className="w-full bg-blue-500/15 border border-blue-500/40 text-blue-300 hover:bg-blue-500/25 py-2 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors disabled:opacity-40"
+          >
+            {busy ? 'Setting up…' : 'Turn on chat lock'}
+          </button>
+        </form>
+      )}
+
+      {loaded && enabled && (
+        <div className="space-y-2">
+          <button
+            onClick={() => handleAutoLock(!autoLock)}
+            className="w-full flex items-center justify-between gap-3 bg-[#050505] border border-zinc-800 rounded-md px-3 py-2 text-left hover:border-zinc-700 transition-colors"
+          >
+            <span className="text-[11px] text-zinc-400 leading-snug">Lock when the tab hides or you switch apps</span>
+            {autoLock ? <ToggleRight className="text-blue-400 w-8 h-8 shrink-0" /> : <ToggleLeft className="text-zinc-700 w-8 h-8 shrink-0" />}
+          </button>
+          {!changing ? (
+            <button
+              onClick={() => setChanging(true)}
+              className="w-full bg-[#050505] border border-zinc-800 rounded-md px-3 py-2 text-left text-[11px] text-zinc-400 hover:border-zinc-700 transition-colors"
+            >
+              Change the chat lock passcode
+            </button>
+          ) : (
+            <form onSubmit={handleChange} className="space-y-2 bg-[#050505] border border-zinc-800 rounded-md p-3">
+              <input
+                type="password"
+                value={oldPw}
+                onChange={e => setOldPw(e.target.value)}
+                placeholder="Current chat lock passcode"
+                autoComplete="current-password"
+                className="w-full bg-black/40 border border-zinc-800 focus:border-blue-500 px-3 py-2 text-white text-xs outline-none rounded-md"
+              />
+              <input
+                type="password"
+                value={p1}
+                onChange={e => setP1(e.target.value)}
+                placeholder="New passcode"
+                autoComplete="new-password"
+                className="w-full bg-black/40 border border-zinc-800 focus:border-blue-500 px-3 py-2 text-white text-xs outline-none rounded-md"
+              />
+              <input
+                type="password"
+                value={p2}
+                onChange={e => setP2(e.target.value)}
+                placeholder="Repeat the new passcode"
+                autoComplete="new-password"
+                className="w-full bg-black/40 border border-zinc-800 focus:border-blue-500 px-3 py-2 text-white text-xs outline-none rounded-md"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={busy || !canReset}
+                  className="flex-1 bg-blue-500/15 border border-blue-500/40 text-blue-300 hover:bg-blue-500/25 py-1.5 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors disabled:opacity-40"
+                >
+                  {busy ? 'Verifying…' : 'Update passcode'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setChanging(false); setP1(''); setP2(''); setOldPw(''); }}
+                  className="px-3 border border-zinc-800 text-zinc-400 rounded-md text-[10px] font-bold uppercase"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+          <button
+            onClick={handleDisable}
+            disabled={busy}
+            className="w-full bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 rounded-md px-3 py-2 text-left text-[11px] transition-colors disabled:opacity-40"
+          >
+            Remove chat lock — unlocks every protected chat on every device
+          </button>
+        </div>
+      )}
+
+      {msg && (
+        <div className={`p-2 rounded-md text-[11px] ${msg.kind === 'error' ? 'bg-red-500/10 border border-red-500/30 text-red-400' : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'}`} role="status">
+          {msg.text}
+        </div>
+      )}
+
+      <p className="text-[10px] text-zinc-600 leading-relaxed">
+        Honest limits: this is a privacy screen, not extra encryption. The passcode is never sent anywhere
+        (only a scrambled verifier is stored). Forgot it? Removing chat lock requires your account session —
+        messages are never lost, because this lock never holds encryption keys.
+      </p>
+    </div>
+  );
+};
 
 export interface SettingsPanelProps {
   onBack?: () => void;
@@ -178,14 +416,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
       showStatus('error', verified.error);
       return;
     }
-    if (newPassword.length < 6) {
-      showStatus('error', 'Choose a password with at least 6 characters.');
+    if (newPassword.length < PASSWORD_MIN) {
+      showStatus('error', `Choose a password with at least ${PASSWORD_MIN} characters.`);
       return;
     }
     if (newPassword !== confirmPassword) {
       showStatus('error', "The two passwords don't match.");
       return;
     }
+    const policy = validatePassword(newPassword);
+    if (policy) { showStatus('error', policy); return; }
     setChangingPassword(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setChangingPassword(false);
@@ -471,7 +711,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
                   type="password"
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
-                  placeholder="New password (6+ characters)"
+                  placeholder={`New password (${PASSWORD_MIN}+ characters)`}
                   autoComplete="new-password"
                   className="bg-[#050505] border border-zinc-800 focus:border-emerald-500 px-3 py-2 text-white text-xs outline-none rounded-md transition-colors"
                 />
@@ -502,6 +742,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           <SettingRow title="Delete account" desc="Anonymize the profile and wipe its content — this can't be undone" isButton onClick={() => { setDeleteConfirmText(''); setShowDeleteAccountModal(true); }}>
             <ChevronRight className="w-4 h-4 text-red-500/50" />
           </SettingRow>
+        </SectionCard>
+
+        {/* CHAT LOCK — separate passcode protecting chosen conversations */}
+        <SectionCard icon={Lock} title="Chat lock" accent="bg-blue-500">
+          <ChatLockCard />
         </SectionCard>
 
         {/* PRIVACY & SAFETY */}

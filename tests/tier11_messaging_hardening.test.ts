@@ -46,7 +46,7 @@ export async function runTier11Tests(projectRoot: string): Promise<TestResult[]>
     [ctx.includes(".lt('created_at', oldestCursorRef.current)"), 'loadOlderMessages must keyset-paginate with a created_at cursor (never OFFSET)'],
     [ctx.includes('oldestCursorRef.current = null;'), 'cursor must reset when the active chat changes'],
     [ctx.includes('setHasMoreMessages(data.length === MESSAGE_PAGE_SIZE)'), 'hasMore must be derived from full-page detection'],
-    [ctx.includes('hasMoreMessages, loadingOlder, loadOlderMessages,') , 'pagination state must be exported through the context'],
+    [ctx.includes('hasMoreMessages, messagesReloadKey, bumpMessagesReload, scrubConversation, loadingOlder, loadOlderMessages,') , 'pagination state must be exported through the context'],
   ]);
 
   check('Tier 11.3: sends are idempotent — client_tag on insert, pending→sent lifecycle', [
