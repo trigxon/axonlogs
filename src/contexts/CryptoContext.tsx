@@ -92,6 +92,7 @@ export interface Message {
   text: string;
   file_url: string | null;
   burn_on_read: boolean;
+  vanish?: boolean;
   reply_to_id?: string | null;
   read_by?: string[];
   reactions?: Reaction[];
@@ -169,7 +170,7 @@ interface CryptoContextType {
   setActiveChat: (chat: Chat) => void;
   createChat: (customName?: string, customCode?: string, isEphemeral?: boolean) => Promise<boolean>;
   joinChat: (code: string) => Promise<boolean>;
-  sendMessage: (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean, chatOverride?: Chat) => Promise<void>;
+  sendMessage: (text: string, file?: File | null, replyToId?: string | null, burnOverride?: boolean, chatOverride?: Chat, vanishOverride?: boolean) => Promise<void>;
   editMessage: (msgId: string, newText: string) => void;
   toggleReaction: (msgId: string, emoji: string) => void;
   togglePinMessage: (msgId: string) => void;
@@ -1639,11 +1640,14 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     replyToId?: string | null,
     burnOverride?: boolean,
     /** story replies / deep links: send into a chat that is not (yet) the active one */
-    chatOverride?: Chat
+    chatOverride?: Chat,
+    /** vanish mode: stays readable until seen, then disappears when the chat is left */
+    vanishOverride?: boolean
   ) => {
     const targetChat = chatOverride || activeChat;
     if (!targetChat || !deviceId) return;
     const burnOnRead = burnOverride ?? settingsRef.current.burnOnRead;
+    const vanish = !!vanishOverride;
 
     if (backendMode === 'online') {
       if (!supabase) return;
@@ -1739,6 +1743,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
             text,
             file_url: fileUrl ? decryptText(fileUrl, chatKey) : null,
             burn_on_read: burnOnRead,
+            vanish,
             reply_to_id: replyToId,
             read_by: [],
             created_at: now,
@@ -1754,6 +1759,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
           text: encryptedText,
           file_url: fileUrl,
           burn_on_read: burnOnRead,
+          vanish,
           reply_to_id: replyToId ?? null,
           read_by: [] as string[],
           created_at: now,
@@ -1779,6 +1785,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
               text: encryptedText,
               file_url: fileUrl,
               burn_on_read: burnOnRead,
+              vanish,
               reply_to_id: replyToId ?? null,
               read_by: [],
               created_at: now,
@@ -1814,6 +1821,7 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
       text: encryptedText,
       file_url: fileUrl,
       burn_on_read: burnOnRead,
+      vanish,
       reply_to_id: replyToId,
       read_by: [],
       created_at: new Date().toISOString(),

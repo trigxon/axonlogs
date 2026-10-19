@@ -1518,3 +1518,51 @@ $$;
 
 revoke execute on function public.admin_list_accounts(text) from public, anon;
 grant execute on function public.admin_list_accounts(text) to authenticated;
+
+-- ============================================================
+-- SECTION 13 — VANISHING MESSAGES (seen + leave semantics)
+-- ============================================================
+-- A dedicated per-chat toggle (Instagram vanish mode). Messages sent
+-- while it is ON stay fully readable in the conversation, then
+-- disappear for EVERYONE once they have been seen and a member leaves
+-- the chat (route change, chat switch, back-out, unmount).
+
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'vanish') then
+    alter table public.messages add column vanish boolean not null default false;
+  end if;
+end $$;
+
+-- Called when a member leaves the conversation: tombstones every
+-- vanish-mode message that has been seen, for everyone.
+create or replace function public.vanish_seen_messages(p_chat_id uuid)
+returns integer
+language plpgsql security definer set search_path = public as
+$$
+declare
+  v_count integer;
+begin
+  if not exists (
+    select 1 from public.chat_participants
+    where chat_id = p_chat_id and username = public.my_username()
+  ) then
+    return 0; -- only members may trigger the sweep
+  end if;
+
+  update public.messages
+     set text = '', file_url = null, reactions = '[]'::jsonb,
+         unsent = true, vanish = true
+   where chat_id = p_chat_id
+     and vanish = true
+     and unsent = false
+     and cardinality(read_by) > 0;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+revoke execute on function public.vanish_seen_messages(uuid) from public, anon;
+grant execute on function public.vanish_seen_messages(uuid) to authenticated;

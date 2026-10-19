@@ -3,7 +3,7 @@ import {
   ArrowLeft, Phone, Video, Info, Paperclip, SendHorizontal, Flame, X,
   Reply, Pin, Clipboard, Edit2, Trash2, Lock, LockOpen,
   ChevronDown, Search, Check, KeyRound, Archive, Smile, Undo2, CornerUpRight,
-  BellOff, Bell, Palette, Image as ImageIcon, Ban, Flag, User, Users, UserPlus, Loader2,
+  BellOff, Bell, Palette, Image as ImageIcon, Ban, Flag, User, Users, UserPlus, Loader2, Ghost,
 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
@@ -186,6 +186,12 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [burnNext, setBurnNext] = useState(false);
+  // VANISH MODE — a separate, dedicated toggle (Instagram vanish mode).
+  // Messages sent while it's ON stay fully readable in the chat, then
+  // disappear for EVERYONE once they've been seen and the chat is left.
+  const [vanishMode, setVanishMode] = useState(() => {
+    try { return localStorage.getItem(`axon_vanish_${chat.id}`) === '1'; } catch { return false; }
+  });
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [menuPanel, setMenuPanel] = useState<'none' | 'theme' | 'nicks' | 'media'>('none');
   const [nickValue, setNickValue] = useState('');
@@ -261,7 +267,27 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     setMenuPanel('none');
     setMediaOpen(false);
     setMuted(isChatMuted(chat.id));
+    setVanishMode(() => {
+      try { return localStorage.getItem(`axon_vanish_${chat.id}`) === '1'; } catch { return false; }
+    });
     requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ block: 'end' }));
+  }, [chat.id]);
+
+  /* -------- vanish-mode sweep: seen vanishing messages die on leave --------
+   * When this member leaves the conversation (route change, back, chat
+   * switch, unmount), every vanish-mode message that has been SEEN is
+   * tombstoned for everyone via the server RPC. Best-effort. */
+  useEffect(() => {
+    return () => {
+      if (!supabase || document.hidden) return;
+      const cid = chat.id;
+      try { localStorage.removeItem(`axon_vanish_${cid}`); } catch { /* noop */ }
+      supabase.rpc('vanish_seen_messages', { p_chat_id: cid }).then(
+        () => undefined,
+        () => undefined
+      );
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id]);
 
   // Instagram activity status + block state for the DM peer
@@ -356,9 +382,17 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
     }
 
     const file = settings.allowFiles ? selectedFile : null;
-    await sendMessage(cmd, file, replyToId, burnNext);
+    await sendMessage(cmd, file, replyToId, burnNext, undefined, vanishMode);
     setReplyToId(null);
     setBurnNext(false);
+  };
+
+  const toggleVanishMode = () => {
+    setVanishMode(v => {
+      const next = !v;
+      try { localStorage.setItem(`axon_vanish_${chat.id}`, next ? '1' : '0'); } catch { /* noop */ }
+      return next;
+    });
   };
 
   /* ------------------- double-tap heart (Instagram) ------------------ */
@@ -911,17 +945,24 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                             isSelf
                               ? 'bubble-mine text-white'
                               : 'bubble-theirs text-zinc-100'
-                          } ${msg.burn_on_read && !msg.unsent ? 'ring-1 ring-red-500/40' : ''} ${msg.pinned ? 'ring-1 ring-amber-400/50' : ''}`}
+                          } ${msg.burn_on_read && !msg.unsent ? 'ring-1 ring-red-500/40' : ''} ${msg.vanish && !msg.unsent ? 'ring-1 ring-cyan-400/40' : ''} ${msg.pinned ? 'ring-1 ring-amber-400/50' : ''}`}
                           style={isSelf && theme.name !== 'Default' && !msg.unsent ? { background: theme.mine } : undefined}
                           title={new Date(msg.created_at).toLocaleString()}
                         >
                           {msg.unsent ? (
-                            <span className="italic text-zinc-400 text-xs">Message unsent</span>
+                            <span className="italic text-zinc-400 text-xs inline-flex items-center gap-1.5">
+                              {msg.vanish ? <><Ghost size={11} className="text-cyan-400/70" /> Message vanished</> : 'Message unsent'}
+                            </span>
                           ) : (
                             <>
                               {msg.burn_on_read && (
                                 <span className="inline-flex items-center gap-1 text-[8px] font-bold tracking-widest text-red-400/90 uppercase mr-1.5 align-middle">
                                   <Flame size={9} /> vanish
+                                </span>
+                              )}
+                              {msg.vanish && (
+                                <span className="inline-flex items-center gap-1 text-[8px] font-bold tracking-widest text-cyan-400/90 uppercase mr-1.5 align-middle">
+                                  <Ghost size={9} /> vanishing
                                 </span>
                               )}
                               {msg.pinned && (
@@ -1064,7 +1105,14 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               <button type="button" onClick={() => setSelectedFile(null)} className="text-zinc-500 hover:text-white"><X size={12} /></button>
             </div>
           )}
-          <form onSubmit={handleSubmit} className="flex items-center gap-1.5 px-2.5 sm:px-4 py-2.5">
+          <form onSubmit={handleSubmit} className="relative flex items-center gap-1.5 px-2.5 sm:px-4 py-2.5">
+            {vanishMode && (
+              <div className="absolute left-0 right-0 -top-9 px-4 flex justify-center pointer-events-none">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-400/10 border border-cyan-400/30 text-[10px] font-bold tracking-widest uppercase text-cyan-300 backdrop-blur">
+                  <Ghost size={11} /> Vanish mode on — messages vanish after they're seen and you leave
+                </span>
+              </div>
+            )}
             <input
               type="file"
               ref={fileInputRef}
@@ -1098,6 +1146,17 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 className={`p-1 shrink-0 transition-colors ${burnNext ? 'text-red-400' : 'text-zinc-600 hover:text-red-400'}`}
               >
                 <Flame className={`w-4 h-4 ${burnNext ? 'drop-shadow-[0_0_6px_rgba(239,68,68,0.7)]' : ''}`} />
+              </button>
+              {/* VANISH MODE — separate dedicated toggle: messages stay until
+                  seen, then disappear for everyone when the chat is left */}
+              <button
+                type="button"
+                onClick={toggleVanishMode}
+                aria-pressed={vanishMode}
+                title={vanishMode ? 'Vanish mode ON — new messages disappear after they\'re seen and you leave the chat' : 'Vanish mode: messages disappear after they\'re seen and you leave the chat'}
+                className={`p-1 shrink-0 transition-colors ${vanishMode ? 'text-cyan-300' : 'text-zinc-600 hover:text-cyan-300'}`}
+              >
+                <Ghost className={`w-4 h-4 ${vanishMode ? 'drop-shadow-[0_0_6px_rgba(34,211,238,0.7)]' : ''}`} />
               </button>
             </div>
 

@@ -10,10 +10,11 @@ import {
   fetchFollowing, fetchAccountsByUsernames, type Account, type FollowState,
 } from '../../utils/auth';
 import { isChatMuted } from '../../utils/chatMeta';
-import { syncChatLockRuntime } from '../../utils/chatLock';
+import { syncChatLockRuntime, enableChatLock, setConversationLocked } from '../../utils/chatLock';
 import {
   isPrivacyLocked, lockAllConversations,
   getChatLockEnabledState, chatLockProtectedIds, getAutoLockOnHide,
+  validateChatLockPassword,
 } from '../../utils/chatLockCore';
 import { fetchUnreadCount } from '../../utils/notifications';
 import InboxPanel from '../chat/InboxPanel';
@@ -74,6 +75,9 @@ export const ChatApp: React.FC = () => {
   const [protectedIds, setProtectedIds] = useState<Set<string>>(() => new Set());
   const bumpLock = () => setLockTick(t => t + 1);
   const lockRoute = useLocation();
+  // Instagram-style "Lock chat" from the row's right-click / long-press menu:
+  // opens the setup modal (master passcode + protect this conversation).
+  const [lockSetupChat, setLockSetupChat] = useState<Chat | null>(null);
 
   const resyncChatLock = React.useCallback(async () => {
     await syncChatLockRuntime();
@@ -861,6 +865,7 @@ export const ChatApp: React.FC = () => {
                   onJoinCode={() => setShowJoinModal(true)}
                   refreshKey={refreshKey}
                   lockTick={lockTick}
+                  onRequestLockChat={(chat: Chat) => setLockSetupChat(chat)}
                 />
               </div>
             </div>
@@ -1229,11 +1234,128 @@ export const ChatApp: React.FC = () => {
         </ModalShell>
       )}
 
+      {/* Instagram-style "Lock chat" setup (from the row's context menu) */}
+      {lockSetupChat && (
+        <LockChatSetupModal
+          chat={lockSetupChat}
+          displayName={displayChatName(lockSetupChat)}
+          masterEnabled={chatLockOn}
+          onClose={() => setLockSetupChat(null)}
+          onDone={async () => {
+            setLockSetupChat(null);
+            await resyncChatLock();
+          }}
+        />
+      )}
+
       {/* call overlays */}
       <CallOverlay />
       <IncomingCallScreen />
       {/* Phase 5 / S3: one-time keyring unlock on new devices */}
       <KeyringGate />
+    </div>
+  );
+};
+
+/**
+ * Lock-chat setup — opened from the inbox row's right-click / long-press
+ * menu. If the account has no chat-lock passcode yet, this one modal sets
+ * it (stored as a salted hash verifier server-side) AND protects the
+ * chosen conversation; otherwise it just protects the conversation.
+ */
+const LockChatSetupModal: React.FC<{
+  chat: Chat;
+  displayName: string;
+  masterEnabled: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}> = ({ chat, displayName, masterEnabled, onClose, onDone }) => {
+  const [pass1, setPass1] = useState('');
+  const [pass2, setPass2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const needsMaster = !masterEnabled;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    if (needsMaster) {
+      if (pass1 !== pass2) { setError("Passcodes don't match."); return; }
+      const v = validateChatLockPassword(pass1);
+      if (v) { setError(v); return; }
+      setBusy(true);
+      try {
+        const res = await enableChatLock(pass1);
+        if (!res.ok) { setError(res.error || 'Could not enable chat lock.'); return; }
+        const prot = await setConversationLocked(chat.id, true);
+        if (!prot.ok) { setError(prot.error || 'Could not protect this chat.'); return; }
+        onDone();
+      } finally {
+        setBusy(false);
+      }
+    } else {
+      setBusy(true);
+      try {
+        const prot = await setConversationLocked(chat.id, true);
+        if (!prot.ok) { setError(prot.error || 'Could not protect this chat.'); return; }
+        onDone();
+      } finally {
+        setBusy(false);
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <form onSubmit={submit} className="term-panel rounded-2xl p-5 w-full max-w-sm">
+        <div className="w-12 h-12 rounded-full border border-cyan-400/40 bg-cyan-400/[0.07] flex items-center justify-center mb-3 mx-auto">
+          <Lock className="w-6 h-6 text-cyan-400" />
+        </div>
+        <h3 className="text-white font-bold text-lg text-center">Lock this chat</h3>
+        <p className="text-zinc-500 text-xs mt-1.5 text-center leading-relaxed">
+          {displayName} will ask for your chat-lock passcode whenever you open it — after refreshes, tab switches and route changes too. Only a hash is ever stored.
+        </p>
+        {needsMaster && (
+          <div className="space-y-2 mt-4">
+            <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-500 text-center">Choose a chat-lock passcode</p>
+            <input
+              type="password"
+              value={pass1}
+              onChange={e => { setPass1(e.target.value); setError(null); }}
+              placeholder="passcode (4+ characters)"
+              autoFocus
+              aria-label="Chat lock passcode"
+              className="w-full term-input rounded-lg p-3 text-white text-sm outline-none focus:border-cyan-400/60 transition-colors"
+            />
+            <input
+              type="password"
+              value={pass2}
+              onChange={e => { setPass2(e.target.value); setError(null); }}
+              placeholder="confirm passcode"
+              aria-label="Confirm chat lock passcode"
+              className="w-full term-input rounded-lg p-3 text-white text-sm outline-none focus:border-cyan-400/60 transition-colors"
+            />
+          </div>
+        )}
+        {error && (
+          <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-lg mt-3">{error}</div>
+        )}
+        <button
+          type="submit"
+          disabled={busy || (needsMaster && (!pass1 || !pass2))}
+          className="btn-premium w-full py-2.5 rounded-lg mt-4 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {busy ? 'Locking…' : needsMaster ? 'Set passcode & lock chat' : 'Lock chat'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full py-2 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors mt-1"
+        >
+          Cancel
+        </button>
+      </form>
     </div>
   );
 };

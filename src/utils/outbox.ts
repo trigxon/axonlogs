@@ -24,6 +24,7 @@ export interface OutboxEntry {
     text: string;
     file_url: string | null;
     burn_on_read: boolean;
+    vanish?: boolean;
     reply_to_id: string | null;
     read_by: string[];
     created_at: string;

@@ -13,6 +13,7 @@ import { runTier10Tests } from './tier10_full_clone.test.ts';
 import { runTier11Tests } from './tier11_messaging_hardening.test.ts';
 import { runTier12Tests } from './tier12_signup_resilience.test.ts';
 import { runTier13Tests } from './tier13_contact_auth.test.ts';
+import { runTier17Tests } from './tier17_owner_refinements.test.ts';
 import { runTier14Tests } from './tier14_otp_reset_chatlock.test.ts';
 import { runTier15Tests } from './tier15_phase5_crypto.test.ts';
 import { runTier16Tests } from './tier16_admin.test.ts';
@@ -74,8 +75,9 @@ async function main() {
   const t11 = await runTier11Tests(projectRoot);
   allResults.push(...t11);
 
-  const t12 = await runTier12Tests(projectRoot);
-  allResults.push(...t12);
+  console.log('--- Executing Tier 17: Owner Refinements (context menu, vanish, /admin) ---');
+  const t17 = await runTier17Tests(projectRoot);
+  allResults.push(...t17);
 
   const t13 = await runTier13Tests(projectRoot);
   allResults.push(...t13);

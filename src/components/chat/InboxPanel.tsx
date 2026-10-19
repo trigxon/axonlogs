@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Search, PlusSquare, KeyRound, Lock, MessageCircle, Send, Users, Check, X, UserCheck } from 'lucide-react';
+import { Search, PlusSquare, KeyRound, Lock, MessageCircle, Send, Users, Check, X, UserCheck, BellOff, Trash2 } from 'lucide-react';
 import { useCrypto, supabase, type Chat } from '../../contexts/CryptoContext';
-import { isPrivacyLocked } from '../../utils/chatLockCore';
+import { isPrivacyLocked, isChatProtected } from '../../utils/chatLockCore';
+import { setConversationLocked } from '../../utils/chatLock';
 import Avatar from '../profile/Avatar';
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import {
   hydratePreviews,
   readCachedPreview,
@@ -13,6 +15,8 @@ import {
   getNickname,
   markRequestAccepted,
   readAcceptedRequests,
+  isChatMuted,
+  setChatMuted,
   type ChatPreview,
 } from '../../utils/chatMeta';
 import {
@@ -35,6 +39,8 @@ export interface InboxPanelProps {
   refreshKey: number;
   /** bumped by the shell whenever the chat-lock state changes (Phase 4) */
   lockTick?: number;
+  /** "Lock chat" / "Unlock chat" picked from the row's context menu */
+  onRequestLockChat?: (chat: Chat) => void;
 }
 
 /**
@@ -51,6 +57,7 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
   onNewGroup,
   onJoinCode,
   refreshKey,
+  onRequestLockChat,
 }) => {
   const {
     alias, deviceId, chats, archivedChats, activeChat, backendMode,
@@ -226,6 +233,68 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
     setAcceptedTick(t => t + 1);
   };
 
+  // ---- Instagram-style row context menu (right-click / long-press) ----
+  const [ctxMenu, setCtxMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null);
+  const [, setMenuTick] = useState(0); // bump to refresh lock/mute badges
+  const openMenuFor = (chat: Chat, x: number, y: number) => setCtxMenu({ chat, x, y });
+
+  const buildRowMenu = (chat: Chat): ContextMenuItem[] => {
+    const protectedChat = isChatProtected(chat.id);
+    const muted = isChatMuted(chat.id);
+    return [
+      {
+        label: protectedChat ? 'Unlock chat' : 'Lock chat',
+        icon: <Lock className="w-4 h-4" />,
+        onSelect: async () => {
+          if (protectedChat) {
+            await setConversationLocked(chat.id, false);
+            setMenuTick(t => t + 1);
+          } else {
+            // the shell opens the passcode/confirm modal for this chat
+            onRequestLockChat?.(chat);
+          }
+        },
+      },
+      {
+        label: muted ? 'Unmute messages' : 'Mute messages',
+        icon: <BellOff className="w-4 h-4" />,
+        onSelect: () => {
+          setChatMuted(chat.id, !muted);
+          setMenuTick(t => t + 1);
+        },
+      },
+      {
+        label: 'Delete chat',
+        icon: <Trash2 className="w-4 h-4" />,
+        danger: true,
+        onSelect: () => archiveChat(chat.id),
+      },
+    ];
+  };
+
+  /** Long-press handlers (mobile Instagram behaviour) — plain closures, no hooks. */
+  const rowPressHandlers = (chat: Chat) => {
+    let timer: any = null;
+    let moved = false;
+    return {
+      onTouchStart: (e: React.TouchEvent) => {
+        moved = false;
+        const t = e.touches[0];
+        const x = t?.clientX ?? 0;
+        const y = t?.clientY ?? 0;
+        timer = setTimeout(() => {
+          if (!moved) {
+            try { navigator.vibrate?.(12); } catch { /* optional */ }
+            openMenuFor(chat, x, y);
+          }
+        }, 480);
+      },
+      onTouchMove: () => { moved = true; if (timer) clearTimeout(timer); },
+      onTouchEnd: () => { if (timer) clearTimeout(timer); },
+      onTouchCancel: () => { if (timer) clearTimeout(timer); },
+    };
+  };
+
   const renderRow = (chat: Chat) => {
     const isActive = activeChat?.id === chat.id;
     const cachedPreview = previews[chat.id] || readCachedPreview(chat.id);
@@ -243,12 +312,16 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
     const displayName = isDm
       ? (nick || (myHandle ? dmDisplayName(chat.name, myHandle) : chat.name))
       : chat.name;
+    const chatProtected = isChatProtected(chat.id);
 
     return (
       <button
         key={chat.id}
         onClick={() => onOpenChat(chat)}
-        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-left group ${
+        onContextMenu={e => { e.preventDefault(); openMenuFor(chat, e.clientX, e.clientY); }}
+        {...rowPressHandlers(chat)}
+        aria-haspopup="menu"
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-left group select-none ${
           isActive ? 'bg-cyan-500/[0.08] border border-cyan-400/30' : 'hover:bg-white/[0.035] border border-transparent'
         }`}
       >
@@ -268,6 +341,16 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
             ) : (
               <span className={`truncate text-sm ${unread ? 'text-white font-bold' : 'text-zinc-200 font-semibold'}`}>
                 {displayName}
+              </span>
+            )}
+            {chatProtected && (
+              <span title="Locked chat" className="text-cyan-400/90 shrink-0 flex items-center" aria-label="Locked chat">
+                <Lock className="w-3 h-3" />
+              </span>
+            )}
+            {isChatMuted(chat.id) && (
+              <span title="Muted" className="text-zinc-600 shrink-0 flex items-center" aria-label="Muted">
+                <BellOff className="w-3 h-3" />
               </span>
             )}
             {!isDm && (
@@ -391,6 +474,15 @@ export const InboxPanel: React.FC<InboxPanelProps> = ({
 
   return (
     <section className="h-full flex flex-col min-w-0 bg-[#07070d]/60 md:border-r md:border-white/[0.05]">
+      {/* Instagram-style row context menu (right-click / long-press) */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={buildRowMenu(ctxMenu.chat)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
       {/* Header — your @handle + actions (Instagram inbox header) */}
       <header className="flex items-center justify-between gap-2 px-4 pt-4 pb-2 shrink-0">
         <button
