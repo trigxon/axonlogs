@@ -238,6 +238,14 @@ const run = async () => {
     await pageB.screenshot({ path: 'scripts/e2e-shots/4-b-sees-message.png' });
 
     // reply
+    try {
+      await pageB.waitForSelector('textarea[placeholder="Message…"], input[placeholder="Message…"]', { timeout: 20000 });
+    } catch {
+      await pageB.screenshot({ path: 'scripts/e2e-shots/debug-b-composer.png' }).catch(() => {});
+      const dump = await pageB.evaluate(() => document.body.innerText.replace(/\n+/g, ' | ').slice(0, 700)).catch(() => '(no text)');
+      console.log(`  [debug b-composer] TEXT: ${dump}`);
+      throw new Error('composer not visible for B');
+    }
     await pageB.type('textarea[placeholder="Message…"], input[placeholder="Message…"]', `hi-from-${USER_B}`, { delay: 10 });
     await pageB.keyboard.press('Enter');
     await pageB.waitForFunction(t => document.body.innerText.includes(`hi-from-${t}`), { timeout: 20000 }, USER_B);
@@ -261,15 +269,18 @@ const run = async () => {
     check('userB notifications include follow event for userA', notifOk);
     await pageB.screenshot({ path: 'scripts/e2e-shots/6-b-notifications.png' });
 
-    // ---------- logout B ----------
-    await pageB.goto(`${LIVE_URL}/settings`, { waitUntil: 'networkidle2', timeout: 60000 });
+    // ---------- logout B (Profile → "Log out @user" + confirm dialog) ----------
+    pageB.on('dialog', d => d.accept().catch(() => {}));
+    await pageB.goto(`${LIVE_URL}/profile`, { waitUntil: 'networkidle2', timeout: 60000 });
     const loggedOut = await pageB.evaluate(() => {
-      const btn = [...document.querySelectorAll('button')].find(b => /log out\b/i.test(b.innerText) && !/everywhere/i.test(b.innerText));
+      const btn = [...document.querySelectorAll('[role="button"], button, div')]
+        .filter(n => /^log out @/i.test(n.innerText.trim()))
+        .at(-1);
       if (!btn) return false;
       btn.click();
       return true;
     });
-    await sleep(2500);
+    await sleep(3000);
     const backAtAuth = await pageB.evaluate(() => !!document.querySelector('input[type="password"]'));
     check('logout returns to the auth screen', loggedOut && backAtAuth, `clicked=${loggedOut} backAtAuth=${backAtAuth}`);
   } finally {
