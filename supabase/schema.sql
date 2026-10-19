@@ -1479,3 +1479,40 @@ drop policy if exists "ban flags readable" on public.accounts;
 create policy "ban flags readable"
   on public.accounts for select to authenticated
   using (true);
+
+-- ------------------------------------------------------------
+-- 10.6  Read-safe surfaces for the SECTION 10 features.
+--       `accounts` itself stays fully REVOKED (SECTION 5: the legacy
+--       password_hash must never be readable), so:
+--       · account_status — minimal ban flag surface for the login gate;
+--       · admin_list_accounts() — definer RPC for the admin panel search.
+-- ------------------------------------------------------------
+create or replace view public.account_status
+with (security_invoker = true) as
+  select username, banned, ban_reason
+  from public.accounts;
+
+grant select on public.account_status to authenticated;
+
+comment on view public.account_status is
+  'Minimal ban-flag surface (Phase 7). security_invoker keeps RLS in force; accounts itself remains revoked.';
+
+create or replace function public.admin_list_accounts(p_query text default '')
+returns table (
+  username text,
+  created_at timestamptz,
+  banned boolean,
+  ban_reason text,
+  auth_uid uuid
+)
+language sql security definer set search_path = public as $$
+  select a.username, a.created_at, a.banned, a.ban_reason, a.auth_uid
+  from public.accounts a
+  where public.is_admin()
+    and (p_query = '' or a.username ilike '%' || p_query || '%')
+  order by a.created_at desc
+  limit 25;
+$$;
+
+revoke execute on function public.admin_list_accounts(text) from public, anon;
+grant execute on function public.admin_list_accounts(text) to authenticated;

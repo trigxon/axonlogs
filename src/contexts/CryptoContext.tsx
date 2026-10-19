@@ -1117,8 +1117,8 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     const uname = rawUsername.trim().toLowerCase().replace(/^@/, '');
     if (!uname) return { ok: false, error: 'Enter a username.' };
     if (uname === account.username.toLowerCase()) return { ok: false, error: "That's you — you're already in." };
-    // must be a real account
-    const { data: acct } = await supabase.from('accounts').select('username').eq('username', uname).maybeSingle();
+    // must be a real account (profiles view — accounts is privilege-revoked)
+    const { data: acct } = await supabase.from('profiles').select('username').eq('username', uname).maybeSingle();
     if (!acct) return { ok: false, error: `@${uname} doesn't exist.` };
     if (await isBlockedEitherWay(supabase, account.username.toLowerCase(), uname)) {
       return { ok: false, error: `You can't add @${uname}.` };

@@ -960,8 +960,9 @@ export const loginAccount = async (
         // authoritative enforcement is the auth-level ban set by the
         // admin-ops edge function; this keeps the UX message clear).
         try {
+          // account_status view: accounts itself is privilege-revoked (S5)
           const { data: row } = await supabase
-            .from('accounts')
+            .from('account_status')
             .select('banned, ban_reason')
             .eq('username', (account.username || name).toLowerCase())
             .maybeSingle();

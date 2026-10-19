@@ -90,15 +90,10 @@ export const fetchAdminStats = async (): Promise<{ ok: boolean; stats?: AdminSta
 
 export const searchAccountsAdmin = async (query: string): Promise<AccountRow[]> => {
   if (!supabase) return [];
+  // definer RPC (accounts is privilege-revoked for clients — S5)
   const q = query.trim().toLowerCase().replace(/^@/, '');
-  const base = supabase
-    .from('accounts')
-    .select('username, created_at, banned, ban_reason, auth_uid')
-    .order('created_at', { ascending: false })
-    .limit(25);
-  const { data } = q
-    ? await base.ilike('username', `%${q}%`)
-    : await base;
+  const { data, error } = await supabase.rpc('admin_list_accounts', { p_query: q });
+  if (error) return [];
   return (data || []) as AccountRow[];
 };
 

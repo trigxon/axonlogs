@@ -315,9 +315,9 @@ export const AuthScreen: React.FC = () => {
         if (hasActivePrivateKey()) {
           const uid = (await supabase.auth.getUser()).data.user?.id;
           const { data: acct } = await supabase
-            .from('accounts')
+            .from('profiles')
             .select('username')
-            .eq('auth_uid', uid)
+            .eq('id', uid)
             .maybeSingle();
           if (acct?.username) {
             const rw = await rewrapKeyring(supabase, acct.username, rp1);
