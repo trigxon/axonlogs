@@ -656,7 +656,9 @@ export const ChatApp: React.FC = () => {
     const res = await startDmWithUser(`@${username.replace(/^@/, '')}`);
     if (res.ok && res.chat) {
       setActiveChat(res.chat);
-      go('/direct');
+      // Mobile: open the conversation pane, not the inbox behind it.
+      setMobileView('chat');
+      go(`/direct/t/${res.chat.id}`);
     }
     return res;
   };

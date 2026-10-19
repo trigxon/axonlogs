@@ -1487,8 +1487,10 @@ create policy "ban flags readable"
 --       · account_status — minimal ban flag surface for the login gate;
 --       · admin_list_accounts() — definer RPC for the admin panel search.
 -- ------------------------------------------------------------
-create or replace view public.account_status
-with (security_invoker = true) as
+-- Owner-executing view (like `profiles`): the table itself stays revoked,
+-- the view exposes only the minimal ban flags. RLS never applied to accounts
+-- reads through views — the exposure is exactly these three columns.
+create or replace view public.account_status as
   select username, banned, ban_reason
   from public.accounts;
 

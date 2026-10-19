@@ -109,11 +109,16 @@ try {
   // follow B so the follow-gate allows DMs
   await pageA.goto(`${LIVE_URL}/explore`, { waitUntil: 'networkidle2' });
   await sleep(1200);
-  const searchField = await pageA.$('input[placeholder*="Search people"]');
-  check('phone: explore search field present', !!searchField);
-  if (searchField) {
-    await searchField.type(USER_B);
-    await sleep(2200); // debounce + fetch
+  // mobile layout keeps BOTH panes in the DOM — pick the VISIBLE input
+  const searchField = await pageA.evaluateHandle(() =>
+    Array.from(document.querySelectorAll('input[placeholder*="Search people"]'))
+      .find(i => i.offsetWidth || i.offsetHeight || i.getClientRects().length) || null
+  );
+  const searchEl = searchField.asElement();
+  check('phone: explore search field present', !!searchEl);
+  if (searchEl) {
+    await searchEl.type(USER_B, { delay: 30 });
+    await sleep(2600); // debounce + fetch
   }
   // follow via the result row's Follow button (initial state), else already Following
   const followState = await pageA.evaluate(() => {
