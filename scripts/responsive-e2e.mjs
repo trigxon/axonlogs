@@ -140,13 +140,18 @@ try {
   await sleep(2200);
   check('phone: DM composer reachable', chatClicked);
 
-  // send a message (E2EE path)
-  const composer = await pageA.$('input[placeholder="Message…"], textarea, input[placeholder*="essage" i]');
+  // send a message (E2EE path) — pick the VISIBLE composer (mobile renders both panes)
+  const compHandle = await pageA.evaluateHandle(() =>
+    Array.from(document.querySelectorAll('input, textarea'))
+      .find(i => (i.placeholder || '').startsWith('Message') && (i.offsetWidth || i.offsetHeight || i.getClientRects().length)) || null
+  );
+  const composer = compHandle.asElement();
   let dmSent = false;
+  check('phone: composer input visible', !!composer);
   if (composer) {
-    await composer.type(`responsive e2ee ping ${STAMP}`);
+    await composer.type(`responsive e2ee ping ${STAMP}`, { delay: 20 });
     await pageA.keyboard.press('Enter');
-    await sleep(2500);
+    await sleep(3000);
     dmSent = await pageA.evaluate((s) => document.body.innerText.includes(s), `responsive e2ee ping ${STAMP}`);
   }
   check('phone: DM sent + echoed (E2EE or legacy path)', dmSent);
@@ -169,8 +174,19 @@ try {
   await pageB.setViewport({ width: phone.width, height: phone.height, isMobile: true, hasTouch: true });
   await login(pageB, USER_B);
   check('phone B: lands in app', await inApp(pageB));
-  await sleep(1500);
-  const bSees = await pageB.evaluate((s) => document.body.innerText.includes(s), `responsive e2ee ping ${STAMP}`);
+  await sleep(2000);
+  // B opens the DM from the inbox (preview or tap) — check the preview text first
+  let bSees = await pageB.evaluate((s) => document.body.innerText.includes(s), `responsive e2ee ping ${STAMP}`);
+  if (!bSees) {
+    // tap the conversation row if the preview is truncated
+    await pageB.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+      const row = rows.find(el => el.innerText && el.innerText.includes('@'));
+      row?.click();
+    });
+    await sleep(2000);
+    bSees = await pageB.evaluate((s) => document.body.innerText.includes(s), `responsive e2ee ping ${STAMP}`);
+  }
   check('phone B: receives the DM (realtime round-trip)', bSees);
   await pageB.close();
 
