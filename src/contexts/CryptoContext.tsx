@@ -548,12 +548,17 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
         const invites = await fetchMyDmInvites(supabase!, u);
         if (cancelled || invites.length === 0) return;
         for (const inv of invites) {
-          const keys = readJSON<Record<string, string>>('axon_device_keys', {});
-          if (keys[inv.chat_id]) continue; // already admitted on this device
+          // Admit UNCONDITIONALLY on every mount: unlockedChatId is in-memory
+          // state and resets on reload, so skipping invites whose key is
+          // already on this device left invited DMs permanently stuck at the
+          // lock gate ("Locked — enter the key") after any page refresh.
+          // admitDmChat is idempotent (keyring overwrite + dedupe-safe).
           const { data } = await supabase!.from('chats').select('*').eq('id', inv.chat_id).maybeSingle();
           if (data) {
             admitDmChat(data as Chat);
-            addLog(`DM channel with @${inv.from_username} restored`);
+            if (!readJSON<Record<string, string>>('axon_device_keys', {})[inv.chat_id]) {
+              addLog(`DM channel with @${inv.from_username} restored`);
+            }
           }
         }
       } catch {
