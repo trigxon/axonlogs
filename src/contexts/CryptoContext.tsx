@@ -463,6 +463,15 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
     if (session?.username) {
       storedAlias = `@${session.username.toLowerCase()}`;
       localStorage.setItem('axon_alias', storedAlias);
+      // The username IS the cloud identity: every signed-in message must
+      // carry sender_id = my_username() (server-enforced), read receipts
+      // and presence key off this id too. A stale local UUID would make
+      // every send hit 42501 and land forever in the outbox.
+      const uname = session.username.toLowerCase();
+      if (storedId !== uname) {
+        storedId = uname;
+        localStorage.setItem('axon_deviceId', storedId);
+      }
     }
 
     setDeviceId(storedId);
@@ -477,9 +486,16 @@ export const CryptoProvider = ({ children }: { children: ReactNode }) => {
   const loginWithAccount = useCallback((session: AxonSession) => {
     setStoredSession(session);
     setAccount(session);
-    const handle = `@${session.username.toLowerCase()}`;
+    const uname = session.username.toLowerCase();
+    const handle = `@${uname}`;
     setAlias(handle);
     localStorage.setItem('axon_alias', handle);
+    // The username IS the cloud identity (sender_id = my_username() is
+    // server-enforced) — re-point the device id when the session starts
+    // mid-session (login without a page reload) or after a legacy UUID.
+    setDeviceId(uname);
+    localStorage.setItem('axon_deviceId', uname);
+    setMyGradient(getMyAvatar(uname));
     addLog(`Account session started: @${session.username}`);
   }, [addLog]);
 
