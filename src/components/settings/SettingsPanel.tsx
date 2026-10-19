@@ -25,7 +25,7 @@ import { useCrypto, BURN_DELAY_OPTIONS } from '../../contexts/CryptoContext';
 import SecurityNote from '../ui/SecurityNote';
 import { supabase } from '../../contexts/CryptoContext';
 import { getNotifPrefs, setNotifPrefs, type NotifPrefs } from '../../utils/notifications';
-import { fetchAccount, fetchFollowers, fetchFollowing, fetchBlockedUsers } from '../../utils/auth';
+import { fetchAccount, fetchFollowers, fetchFollowing, fetchBlockedUsers, verifyCurrentPassword } from '../../utils/auth';
 import {
   exportAppData,
   exportPdfData,
@@ -53,6 +53,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [exportingData, setExportingData] = useState(false);
@@ -170,6 +171,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
       showStatus('error', 'You need the cloud connection to change your password.');
       return;
     }
+    // Owner spec: the password change is verified with the current password
+    // (re-auth inside the existing session) before anything is updated.
+    const verified = await verifyCurrentPassword(supabase, currentPassword);
+    if (!verified.ok) {
+      showStatus('error', verified.error);
+      return;
+    }
     if (newPassword.length < 6) {
       showStatus('error', 'Choose a password with at least 6 characters.');
       return;
@@ -187,6 +195,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
     }
     setNewPassword('');
     setConfirmPassword('');
+    setCurrentPassword('');
     addLog('Account password changed');
     showStatus('success', 'Password updated');
   };
@@ -449,6 +458,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
           <div className="px-5 pb-4">
             <form onSubmit={handleChangePassword} className="space-y-2">
               <label className="block text-[9px] font-bold tracking-[0.25em] text-zinc-500 uppercase">Change password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={e => setCurrentPassword(e.target.value)}
+                placeholder="Current password — proves it's you"
+                autoComplete="current-password"
+                className="w-full bg-[#050505] border border-zinc-800 focus:border-emerald-500 px-3 py-2 text-white text-xs outline-none rounded-md transition-colors"
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <input
                   type="password"
@@ -469,10 +486,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onBack }) => {
               </div>
               <button
                 type="submit"
-                disabled={changingPassword || !newPassword || !confirmPassword}
+                disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
                 className="w-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25 py-2 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors disabled:opacity-40"
               >
-                {changingPassword ? 'Updating…' : 'Update password'}
+                {changingPassword ? 'Updating…' : 'Verify and update password'}
               </button>
             </form>
           </div>

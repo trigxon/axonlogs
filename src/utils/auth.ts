@@ -476,39 +476,357 @@ const legacyInsertAccount = async (
   return { ok: true, account: data as Account };
 };
 
+/* ----------------- contact-based signup (email / mobile) ----------------- */
 /**
- * Log in — Supabase Auth primary with automatic legacy migration.
+ * The product spec (owner decision 2026-10-19): a new account signs up with
+ * a REAL email address OR a real mobile number — whichever the user prefers.
+ * Verification happens ONCE at signup (email link / SMS OTP) and again only
+ * for password changes. The username stays the public identity.
  *
- * 1. auth.signInWithPassword(synthetic email, password). On success the
- *    profile row is linked (auth_uid) and returned.
- * 2. Legacy accounts (pre-migration): verify PBKDF2 against the
- *    legacy_login view (falls back to accounts on v1 databases), then
- *    provision the Supabase Auth user with the SAME password — a
- *    one-time, invisible migration — and link the profile.
- * 3. No legacy row + no auth user → unknown username; legacy row but
- *    wrong password → Instagram-style "password was incorrect".
+ * Emails/phones live inside Supabase Auth (auth.users) — never in the
+ * public profiles view — so contact details stay private by default.
  */
-export const loginAccount = async (
+
+export const PHONE_SETUP_MSG =
+  "Mobile signup isn't switched on for this site yet (the owner needs to connect an SMS provider in the Supabase dashboard). Use an email address instead.";
+
+export type Contact =
+  | { kind: 'email'; email: string }
+  | { kind: 'phone'; phone: string }; // E.164, e.g. +919876543210
+
+const CONTACT_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Parse a signup/login identifier into an email or an E.164 phone. */
+export const parseContact = (raw: string): Contact | null => {
+  const v = raw.trim();
+  if (!v) return null;
+  if (v.includes('@')) {
+    const email = v.toLowerCase();
+    return CONTACT_EMAIL_RE.test(email) ? { kind: 'email', email } : null;
+  }
+  const digits = v.replace(/[\s\-().]/g, '');
+  const phone = digits.startsWith('+') ? digits : `+${digits}`;
+  return /^\+[1-9]\d{7,14}$/.test(phone) ? { kind: 'phone', phone } : null;
+};
+
+export const validateContact = (raw: string): string | null => {
+  if (!raw.trim()) return 'Add your email or mobile number.';
+  if (parseContact(raw)) return null;
+  return raw.includes('@')
+    ? "That email address doesn't look right."
+    : "That mobile number doesn't look right. Include the country code, like +91 98765 43210.";
+};
+
+/** Private-by-default rendering for confirmation screens. */
+export const maskContact = (c: Contact): string =>
+  c.kind === 'email'
+    ? c.email.replace(/^(.).*?(@.*)$/, '$1•••$2')
+    : c.phone.replace(/^(\+\d{1,3})\d*(\d{2})$/, '$1•••••$2');
+
+export type ContactSignupResult =
+  | { ok: true; account: Account }
+  | { pending: 'confirm_email'; masked: string; email: string }
+  | { pending: 'verify_otp'; masked: string; phone: string }
+  | { ok: false; error: string };
+
+/**
+ * Sign up with a real email OR mobile number. The username is checked first
+ * (same Instagram rules), then the contact route runs through native
+ * Supabase Auth: `signUp` (email) or `signUpWithPhone` (mobile). When the
+ * project asks for confirmation the result is `pending` — NOT an error —
+ * and the screen walks the user through the one-time verification.
+ */
+export const signupWithContact = async (
   supabase: any,
   username: string,
-  password: string
-): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+  password: string,
+  contactRaw: string,
+  avatarGradient: string
+): Promise<ContactSignupResult> => {
   const u = username.trim().toLowerCase();
 
-  // ---- 1. Supabase Auth ----
+  const vUser = validateUsername(u);
+  if (vUser) return { ok: false, error: vUser };
+  const vPass = validatePassword(password);
+  if (vPass) return { ok: false, error: vPass };
+  const vContact = validateContact(contactRaw);
+  if (vContact) return { ok: false, error: vContact };
+
+  const free = await usernameAvailable(supabase, u).catch(() => true);
+  if (!free) return { ok: false, error: 'That username is taken. Try another.' };
+
+  const contact = parseContact(contactRaw)!;
+
+  if (contact.kind === 'email') {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: contact.email,
+        password,
+        options: { data: { username: u, avatar_gradient: avatarGradient } },
+      });
+      if (error) {
+        if (isAlreadyRegisteredError(error)) {
+          return { ok: false, error: 'An account with this email already exists. Try logging in.' };
+        }
+        if (isAuthPasswordFloorError(error)) {
+          return { ok: false, error: 'Choose a password with at least 6 characters.' };
+        }
+        if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
+        if (isInvalidEmailError(error)) {
+          return { ok: false, error: "This site's email settings rejected that address. Try another one." };
+        }
+        return { ok: false, error: error.message || 'Sign up failed.' };
+      }
+      if (data?.session && data?.user) {
+        // Project runs without confirmation — verified enough to provision.
+        const account = await linkProfileToAuthUser(supabase, u, data.user.id, {
+          avatar_gradient: avatarGradient,
+        });
+        if (account) return { ok: true, account };
+        return {
+          ok: true,
+          account: {
+            id: data.user.id,
+            username: u,
+            bio: '',
+            avatar_gradient: avatarGradient,
+            created_at: new Date().toISOString(),
+          },
+        };
+      }
+      if (confirmationRequired(data)) {
+        // The one-time signup verification the product asks for.
+        return { pending: 'confirm_email', masked: maskContact(contact), email: contact.email };
+      }
+      return { ok: false, error: 'Sign up did not return a session. Try again.' };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Sign up failed.' };
+    }
+  }
+
+  // ---- mobile route ----
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: syntheticEmail(u),
+    const { data, error } = await supabase.auth.signUpWithPhone({
+      phone: contact.phone,
       password,
+      options: { data: { username: u, avatar_gradient: avatarGradient } },
     });
+    if (error) {
+      if (isAlreadyRegisteredError(error)) {
+        return { ok: false, error: 'An account with this mobile number already exists. Try logging in.' };
+      }
+      if (isAuthPasswordFloorError(error)) {
+        return { ok: false, error: 'Choose a password with at least 6 characters.' };
+      }
+      if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
+      const msg = String(error.message || error.msg || error.code || '');
+      if (/sms|phone|twilio|messagebird|vonage/i.test(msg) && !/invalid/i.test(msg)) {
+        return { ok: false, error: PHONE_SETUP_MSG };
+      }
+      return { ok: false, error: error.message || 'Sign up failed.' };
+    }
     if (data?.session && data?.user) {
-      const account = await linkProfileToAuthUser(supabase, u, data.user.id);
+      const account = await linkProfileToAuthUser(supabase, u, data.user.id, {
+        avatar_gradient: avatarGradient,
+      });
       if (account) return { ok: true, account };
       return {
         ok: true,
         account: {
           id: data.user.id,
           username: u,
+          bio: '',
+          avatar_gradient: avatarGradient,
+          created_at: new Date().toISOString(),
+        },
+      };
+    }
+    // No session → the OTP was sent; the screen collects it next.
+    return { pending: 'verify_otp', masked: maskContact(contact), phone: contact.phone };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sign up failed.' };
+  }
+};
+
+/** Verify the SMS OTP that completed a mobile signup. */
+export const verifySignupOtp = async (
+  supabase: any,
+  phone: string,
+  token: string,
+  username: string,
+  avatarGradient: string
+): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+  const code = token.trim();
+  if (!/^\d{4,8}$/.test(code)) return { ok: false, error: 'Enter the code from the SMS.' };
+  try {
+    const { data, error } = await supabase.auth.verifyOtp({ phone, token: code, type: 'signup' });
+    if (error) {
+      const msg = String(error.message || '');
+      if (/expired/i.test(msg)) return { ok: false, error: 'That code expired. Send a new one.' };
+      return { ok: false, error: "That code isn't right. Check the SMS and try again." };
+    }
+    if (data?.session && data?.user) {
+      const u = String(data.user.user_metadata?.username || username).toLowerCase();
+      const account = await linkProfileToAuthUser(supabase, u, data.user.id, {
+        avatar_gradient: avatarGradient,
+      });
+      if (account) return { ok: true, account };
+      return {
+        ok: true,
+        account: {
+          id: data.user.id,
+          username: u,
+          bio: '',
+          avatar_gradient: avatarGradient,
+          created_at: new Date().toISOString(),
+        },
+      };
+    }
+    return { ok: false, error: 'Verification did not complete. Try again.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Verification failed.' };
+  }
+};
+
+/** Re-send the one-time signup email (rate-limited by the provider). */
+export const resendContactConfirmation = async (
+  supabase: any,
+  email: string
+): Promise<{ ok: true } | { ok: false; error: string }> => {
+  try {
+    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    if (error) {
+      if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
+      return { ok: false, error: error.message || 'Could not resend the email.' };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not resend the email.' };
+  }
+};
+
+/**
+ * Forgot password — emails a one-time recovery link that opens /reset on
+ * this site with a session attached. Only accounts created with an email
+ * (or migrated to one) can receive it; username-only legacy accounts are
+ * told to use Settings → Account while signed in.
+ */
+export const requestPasswordReset = async (
+  supabase: any,
+  email: string
+): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const v = email.trim().toLowerCase();
+  if (!CONTACT_EMAIL_RE.test(v)) return { ok: false, error: "That email address doesn't look right." };
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(v, {
+      redirectTo: `${window.location.origin}/reset`,
+    });
+    if (error) {
+      if (isRateLimitError(error)) return { ok: false, error: RATE_LIMIT_MSG };
+      return { ok: false, error: error.message || 'Could not send the recovery email.' };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not send the recovery email.' };
+  }
+};
+
+/** Finish a recovery-link session: set the new password. */
+export const completePasswordReset = async (
+  supabase: any,
+  newPassword: string
+): Promise<{ ok: true } | { ok: false; error: string }> => {
+  if (newPassword.length < 6) return { ok: false, error: 'Choose a password with at least 6 characters.' };
+  try {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return { ok: false, error: error.message || 'Could not set the new password.' };
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not set the new password.' };
+  }
+};
+
+/**
+ * Password-change verification (owner spec: verify on password change).
+ * Re-authenticates the CURRENT session with the old password before any
+ * update — works for email accounts, mobile accounts and legacy
+ * synthetic-email accounts alike, because the identifier comes from the
+ * session user itself, never guessed.
+ */
+export const verifyCurrentPassword = async (
+  supabase: any,
+  currentPassword: string
+): Promise<{ ok: true; user: any } | { ok: false; error: string }> => {
+  if (!currentPassword) return { ok: false, error: 'Enter your current password first.' };
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    if (!user) return { ok: false, error: 'Your session expired — log in again.' };
+    const identifier = user.phone
+      ? { phone: user.phone }
+      : { email: user.email || syntheticEmail('') };
+    const { error } = await supabase.auth.signInWithPassword({ ...identifier, password: currentPassword } as any);
+    if (error) {
+      if (isInvalidCredentialsError(error)) return { ok: false, error: 'Your current password is incorrect.' };
+      if (isRateLimitError(error)) return { ok: false, error: 'Too many attempts — wait a minute and try again.' };
+      return { ok: false, error: error.message || 'Could not verify your password.' };
+    }
+    return { ok: true, user };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not verify your password.' };
+  }
+};
+
+/**
+ * Log in — Supabase Auth primary with automatic legacy migration.
+ *
+ * Identifiers: username (mapped to its synthetic email — every pre-contact
+ * account), OR the real email / mobile the account was created with.
+ *
+ * 1. auth.signInWithPassword(identifier, password). On success the
+ *    profile row is linked (auth_uid) and returned.
+ * 2. Legacy accounts (pre-migration): verify PBKDF2 against the
+ *    legacy_login view (falls back to accounts on v1 databases), then
+ *    provision the Supabase Auth user with the SAME password — a
+ *    one-time, invisible migration — and link the profile.
+ * 3. No legacy row + no auth user → unknown identifier; legacy row but
+ *    wrong password → Instagram-style "password was incorrect".
+ */
+export const loginAccount = async (
+  supabase: any,
+  identifier: string,
+  password: string
+): Promise<{ ok: true; account: Account } | { ok: false; error: string }> => {
+  const raw = identifier.trim();
+  const contact = parseContact(raw);
+  // Username-only accounts keep the synthetic-email mapping; accounts created
+  // with a real email / mobile sign in with that same identifier.
+  const authTarget: { email: string } | { phone: string } = contact
+    ? contact.kind === 'email'
+      ? { email: contact.email }
+      : { phone: contact.phone }
+    : { email: syntheticEmail(raw.toLowerCase()) };
+  const u = contact ? '' : raw.toLowerCase();
+
+  // ---- 1. Supabase Auth ----
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      ...authTarget,
+      password,
+    } as any);
+    if (data?.session && data?.user) {
+      const metaName = String(data.user.user_metadata?.username || '').toLowerCase();
+      const name = u || metaName;
+      if (!name) {
+        return { ok: false, error: 'This account has no username on record — log in with your username instead.' };
+      }
+      const account = await linkProfileToAuthUser(supabase, name, data.user.id);
+      if (account) return { ok: true, account };
+      return {
+        ok: true,
+        account: {
+          id: data.user.id,
+          username: name,
           bio: '',
           avatar_gradient: '',
           created_at: new Date().toISOString(),
@@ -521,6 +839,15 @@ export const loginAccount = async (
     }
   } catch {
     // network/auth endpoint down — try legacy verification below
+  }
+
+  // Contact-identifier accounts have no legacy row and no synthetic email:
+  // wrong credentials stay wrong, with the honest Instagram-style copy.
+  if (contact) {
+    return {
+      ok: false,
+      error: 'Sorry, your password was incorrect. Signed up with a username? Log in with that instead.',
+    };
   }
 
   // ---- 2. Legacy verification (+ invisible migration) ----

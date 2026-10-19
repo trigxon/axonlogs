@@ -33,7 +33,7 @@ export async function runTier7Tests(projectRoot: string): Promise<TestResult[]> 
       [authUtil.includes('verifyPassword'), 'auth.ts must verify passwords locally'],
       [authUtil.includes('signupAccount') && authUtil.includes('loginAccount'), 'auth.ts must implement signup + login'],
       [authUtil.includes("SESSION_KEY = 'axon_session'"), 'auth.ts must persist the account session'],
-      [authScreen.includes("placeholder=\"username\""), 'AuthScreen must collect a username'],
+      [authScreen.includes("'username, email or mobile' : 'username'"), 'AuthScreen must collect a username (login accepts email/mobile too)'],
       [authUtil.includes('validateUsername') && authScreen.includes('validateUsername'), 'AuthScreen must validate the username'],
       [appTsx.includes('AuthScreen') && appTsx.includes('account'), 'App.tsx must gate ChatApp behind the account session'],
       [secNote.includes("Your password is scrambled on your device before it's saved") && secNote.includes('Only you and the person you message can read your chats.'), 'SecurityNote must highlight both security guarantees in plain language'],

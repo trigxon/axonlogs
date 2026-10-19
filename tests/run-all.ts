@@ -12,6 +12,7 @@ import { runTier9Tests } from './tier9_security_auth.test.ts';
 import { runTier10Tests } from './tier10_full_clone.test.ts';
 import { runTier11Tests } from './tier11_messaging_hardening.test.ts';
 import { runTier12Tests } from './tier12_signup_resilience.test.ts';
+import { runTier13Tests } from './tier13_contact_auth.test.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +73,9 @@ async function main() {
 
   const t12 = await runTier12Tests(projectRoot);
   allResults.push(...t12);
+
+  const t13 = await runTier13Tests(projectRoot);
+  allResults.push(...t13);
 
   const totalDuration = Date.now() - startTime;
 

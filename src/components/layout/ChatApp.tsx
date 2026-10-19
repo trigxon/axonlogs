@@ -20,10 +20,11 @@ import SecurityNote from '../ui/SecurityNote';
 import NotificationsPanel from '../notifications/NotificationsPanel';
 import ExplorePanel from '../search/ExplorePanel';
 import UserProfilePage from '../profile/UserProfilePage';
+import ResetPasswordPanel from '../auth/ResetPasswordPanel';
 
 const SettingsPanel = lazy(() => import('../settings/SettingsPanel'));
 
-type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'user' | 'notfound';
+type Pane = 'chat' | 'profile' | 'settings' | 'explore' | 'notifications' | 'user' | 'reset' | 'notfound';
 
 let audioCtx: AudioContext | null = null;
 const playPing = () => {
@@ -69,6 +70,7 @@ export const ChatApp: React.FC = () => {
       return rest ? 'user' : 'profile';
     }
     if (p.startsWith('/settings')) return 'settings';
+    if (p.startsWith('/reset')) return 'reset';
     return 'notfound';
   };
   const [pane, setPane] = useState<Pane>(paneFromPath);
@@ -638,6 +640,9 @@ export const ChatApp: React.FC = () => {
           onMessage={handleExploreMessage}
         />
       );
+    }
+    if (pane === 'reset') {
+      return <ResetPasswordPanel onBack={() => go('/direct')} />;
     }
     if (pane === 'notfound') {
       return <NotFoundPane onHome={() => go('/direct')} />;

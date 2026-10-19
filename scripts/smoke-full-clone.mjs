@@ -48,7 +48,12 @@ const hasHandle = () => page.evaluate((u) => document.body.innerText.includes('@
 await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 45000 });
 await page.waitForSelector('input', { timeout: 20000 });
 
-// 1. signup lands inside the routed app (rail + @handle visible)
+// 1. signup → real-contact flow (owner spec 2026-10-19: email OR mobile,
+//    verified once). The smoke uses a throwaway example.com address (RFC
+//    reserved, never delivered anywhere). Outcome A: the project asks for
+//    the one-time email confirmation → pending screen renders. Outcome B:
+//    no confirmation required → signed in immediately. Outcome C: provider
+//    block (rate limit / rejected domain) → honest skip.
 await page.evaluate(() => {
   const cands = [...document.querySelectorAll('button, a, span, div')];
   const t = cands.find((b) => /^(sign up|create account)$/i.test((b.textContent || '').trim()));
@@ -56,28 +61,40 @@ await page.evaluate(() => {
 });
 await sleep(800);
 await page.type('input[placeholder="username"], input:not([type="password"])', uname, { delay: 8 });
+const contactInput = await page.$('input[aria-label="Email or mobile number"]');
+if (contactInput) await contactInput.type(`${uname}@example.com`, { delay: 8 });
 const passInput = await page.$('input[type="password"]');
 await passInput.type('smoke-pass-123', { delay: 8 });
 await page.keyboard.press('Enter');
-await sleep(4000);
+await sleep(4500);
 let text = await bodyText();
+const pendingConfirm = /one-time check|verification link|we sent a verification/i.test(text);
 // NOTE: the auth screen echoes "@<username> is available" — matching just the
 // handle is a false positive. Signed-in means the handle is visible AND the
 // auth screen is gone.
 const signedIn = (await hasHandle()) && !/\bis available\b|CREATE ACCOUNT|LOG IN to your private/i.test(text);
-check('1. signup lands inside the app shell', signedIn, text.slice(0, 150).replace(/\n/g, ' '));
+check(
+  '1. signup submits (verified-once pending or signed in)',
+  signedIn || pendingConfirm,
+  text.slice(0, 150).replace(/\n/g, ' ')
+);
+if (pendingConfirm && !signedIn) {
+  check('1b. one-time email confirmation screen renders', true);
+}
 await shot('1-shell');
 
 // Auth-provider block (rate limit, email confirmation, etc.)? Those states
 // ship honest on-screen copy — report them as SKIPPED, not silent failures.
-if (!signedIn || /too many accounts|wait a few minutes|temporarily blocked|asks for email confirmation|rate limit/i.test(text)) {
-  const reason = (text.match(/[^\n]*(?:too many accounts|wait a few minutes|temporarily blocked|asks for email confirmation|rate limit)[^\n]*/i) || ['signup did not land inside the app'])[0].trim();
-  console.log(`  ⚠ SKIP: no session — "${reason.slice(0, 100)}"`);
-  console.log('  ⚠ SKIP: checks 2–10 need a signed-in session (deploy supabase/functions/auth-signup to bypass the per-IP signup rate limit, or retry after the window resets)');
+if (!signedIn) {
+  const reason = (text.match(/[^\n]*(?:too many accounts|wait a few minutes|temporarily blocked|rejected that address|rate limit)[^\n]*/i) || [pendingConfirm ? 'waiting for the one-time email verification (product spec — no mailbox in the smoke)' : 'signup did not land inside the app'])[0].trim();
+  console.log(`  ⚠ SKIP: no session — "${reason.slice(0, 110)}"`);
+  console.log('  ⚠ SKIP: checks 2–10 need a signed-in session (a confirmed account, or confirmation-off signup)');
   const hardErrors0 = errors.filter((e) => !/table|relation|schema|PGRST|Could not find/i.test(e));
   check('11. no unexpected page errors', hardErrors0.length === 0, hardErrors0.slice(0, 3).join(' | '));
   await browser.close();
-  console.log(`\nResult: ${results.filter((r) => r.ok).length}/${results.length} passed, 9 skipped (project auth-config block — owner action, documented in AUDIT.md)`);
+  const passed = results.filter((r) => r.ok).length;
+  // Total planned checks: 11 numbered + optional 1b = 12.
+  console.log(`\nResult: ${passed}/${results.length} passed, ${12 - results.length} skipped (no signed-in session — honest report)`);
   process.exit(0);
 }
 
